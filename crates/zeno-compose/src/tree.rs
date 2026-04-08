@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use zeno_core::Size;
 use zeno_graphics::{DrawCommand, Scene, SceneBlock};
@@ -17,6 +17,7 @@ pub struct RetainedComposeTree {
     available_by_node: HashMap<NodeId, Size>,
     parent_by_node: HashMap<NodeId, NodeId>,
     dirty_by_node: HashMap<NodeId, DirtyFlags>,
+    layout_dirty_roots: HashSet<NodeId>,
     fragments_by_node: HashMap<NodeId, Vec<DrawCommand>>,
     scene: Scene,
     dirty: DirtyFlags,
@@ -47,6 +48,7 @@ impl RetainedComposeTree {
             available_by_node,
             parent_by_node,
             dirty_by_node,
+            layout_dirty_roots: HashSet::new(),
             fragments_by_node,
             scene,
             dirty: DirtyFlags::clean(),
@@ -96,6 +98,7 @@ impl RetainedComposeTree {
         self.available_by_node = available_by_node;
         self.parent_by_node = parent_by_node;
         self.dirty_by_node = dirty_by_node;
+        self.layout_dirty_roots.clear();
         self.fragments_by_node = fragments_by_node;
         self.scene = scene;
         self.dirty = DirtyFlags::clean();
@@ -105,6 +108,10 @@ impl RetainedComposeTree {
         self.dirty.mark(reason);
         if let Some(root_flags) = self.dirty_by_node.get_mut(&self.root.id()) {
             root_flags.mark(reason);
+        }
+        if reason != DirtyReason::Paint {
+            self.layout_dirty_roots.clear();
+            self.layout_dirty_roots.insert(self.root.id());
         }
     }
 
@@ -124,6 +131,7 @@ impl RetainedComposeTree {
             }
             current = self.parent_by_node.get(&id).copied();
         }
+        self.insert_layout_dirty_root(self.layout_root_for(node_id));
     }
 
     #[must_use]
@@ -135,6 +143,15 @@ impl RetainedComposeTree {
     }
 
     #[must_use]
+    pub fn layout_dirty_roots(&self) -> Vec<NodeId> {
+        if self.layout_dirty_roots.is_empty() && self.dirty.requires_layout() {
+            vec![self.root.id()]
+        } else {
+            self.layout_dirty_roots.iter().copied().collect()
+        }
+    }
+
+    #[must_use]
     pub fn measured_for(&self, node_id: NodeId) -> Option<&MeasuredNode> {
         self.measured_by_node.get(&node_id)
     }
@@ -142,14 +159,6 @@ impl RetainedComposeTree {
     #[must_use]
     pub fn available_for(&self, node_id: NodeId) -> Option<Size> {
         self.available_by_node.get(&node_id).copied()
-    }
-
-    #[must_use]
-    pub fn dirty_for(&self, node_id: NodeId) -> DirtyFlags {
-        self.dirty_by_node
-            .get(&node_id)
-            .copied()
-            .unwrap_or_else(DirtyFlags::clean)
     }
 
     pub fn update_fragment(&mut self, node_id: NodeId, fragment: Vec<DrawCommand>) {
@@ -169,6 +178,44 @@ impl RetainedComposeTree {
         );
         self.scene = Scene::from_blocks(self.viewport, blocks);
         self.dirty = DirtyFlags::clean();
+        self.layout_dirty_roots.clear();
+    }
+
+    fn layout_root_for(&self, node_id: NodeId) -> NodeId {
+        self.parent_by_node.get(&node_id).copied().unwrap_or(node_id)
+    }
+
+    fn insert_layout_dirty_root(&mut self, candidate: NodeId) {
+        if self
+            .layout_dirty_roots
+            .iter()
+            .any(|existing| self.is_ancestor_or_same(*existing, candidate))
+        {
+            return;
+        }
+        let to_remove: Vec<NodeId> = self
+            .layout_dirty_roots
+            .iter()
+            .copied()
+            .filter(|existing| self.is_ancestor_or_same(candidate, *existing))
+            .collect();
+        for existing in to_remove {
+            self.layout_dirty_roots.remove(&existing);
+        }
+        self.layout_dirty_roots.insert(candidate);
+    }
+
+    fn is_ancestor_or_same(&self, ancestor: NodeId, mut node_id: NodeId) -> bool {
+        if ancestor == node_id {
+            return true;
+        }
+        while let Some(parent) = self.parent_by_node.get(&node_id).copied() {
+            if parent == ancestor {
+                return true;
+            }
+            node_id = parent;
+        }
+        false
     }
 }
 

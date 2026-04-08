@@ -28,9 +28,15 @@ use skia_safe as sk;
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
 use zeno_backend_impeller::MetalSceneRenderer;
 #[cfg(feature = "desktop_winit")]
-use zeno_backend_skia::{render_scene_to_canvas, SkiaTextCache};
-use zeno_core::{Backend, Platform, Size, WindowConfig, ZenoError, ZenoErrorCode};
-use zeno_graphics::{FrameReport, RenderCapabilities, RenderSession, RenderSurface, Scene, SceneSubmit};
+use zeno_backend_skia::{render_scene_region_to_canvas, render_scene_to_canvas, SkiaTextCache};
+use zeno_core::{
+    Backend, BackendUnavailableReason, Color, Platform, Rect, Size, WindowConfig, ZenoError,
+    ZenoErrorCode,
+};
+use zeno_graphics::{
+    Brush, DrawCommand, FrameReport, RenderCapabilities, RenderSession, RenderSurface, Scene,
+    SceneSubmit, Shape,
+};
 use zeno_runtime::ResolvedSession;
 #[cfg(feature = "desktop_winit")]
 use winit::dpi::LogicalSize;
@@ -62,7 +68,8 @@ pub fn create_desktop_render_session(
     resolved: &ResolvedSession,
     event_loop: &ActiveEventLoop,
 ) -> Result<BoxedDesktopRenderSession, ZenoError> {
-    DesktopRenderSession::new(event_loop, resolved)
+    DesktopSessionPlan::from_resolved(resolved)?
+        .build(event_loop, &resolved.window)
         .map(|session| Box::new(session) as BoxedDesktopRenderSession)
         .map_err(|error| {
             desktop_session_error(ZenoErrorCode::SessionCreateRenderSessionFailed, "create_render_session", error)
@@ -70,25 +77,62 @@ pub fn create_desktop_render_session(
 }
 
 #[cfg(feature = "desktop_winit")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopPresenterKind {
+    SkiaGl,
+    #[cfg(target_os = "macos")]
+    ImpellerMetal,
+}
+
+#[cfg(feature = "desktop_winit")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DesktopSessionPlan {
+    backend: Backend,
+    presenter: DesktopPresenterKind,
+}
+
+#[cfg(feature = "desktop_winit")]
+impl DesktopSessionPlan {
+    fn from_resolved(resolved: &ResolvedSession) -> Result<Self, ZenoError> {
+        match resolved.backend.backend_kind {
+            Backend::Skia => Ok(Self {
+                backend: Backend::Skia,
+                presenter: DesktopPresenterKind::SkiaGl,
+            }),
+            Backend::Impeller if resolved.platform == Platform::MacOs => Ok(Self {
+                backend: Backend::Impeller,
+                #[cfg(target_os = "macos")]
+                presenter: DesktopPresenterKind::ImpellerMetal,
+            }),
+            Backend::Impeller => Err(ZenoError::BackendUnavailable {
+                backend: Backend::Impeller,
+                reason: BackendUnavailableReason::NotImplementedForPlatform,
+            }),
+        }
+    }
+
+    fn build(
+        self,
+        event_loop: &ActiveEventLoop,
+        config: &WindowConfig,
+    ) -> Result<DesktopRenderSession, String> {
+        match self.presenter {
+            DesktopPresenterKind::SkiaGl => {
+                SkiaGlSession::new(event_loop, config).map(DesktopRenderSession::Skia)
+            }
+            #[cfg(target_os = "macos")]
+            DesktopPresenterKind::ImpellerMetal => {
+                ImpellerMetalSession::new(event_loop, config).map(DesktopRenderSession::Impeller)
+            }
+        }
+    }
+}
+
+#[cfg(feature = "desktop_winit")]
 enum DesktopRenderSession {
     Skia(SkiaGlSession),
     #[cfg(target_os = "macos")]
     Impeller(ImpellerMetalSession),
-}
-
-#[cfg(feature = "desktop_winit")]
-impl DesktopRenderSession {
-    fn new(event_loop: &ActiveEventLoop, resolved: &ResolvedSession) -> Result<Self, String> {
-        match resolved.backend.backend_kind {
-            Backend::Skia => SkiaGlSession::new(event_loop, &resolved.window).map(Self::Skia),
-            #[cfg(target_os = "macos")]
-            Backend::Impeller => ImpellerMetalSession::new(event_loop, &resolved.window).map(Self::Impeller),
-            #[cfg(not(target_os = "macos"))]
-            Backend::Impeller => {
-                Err("impeller desktop presenter is not implemented for this platform".to_string())
-            }
-        }
-    }
 }
 
 #[cfg(feature = "desktop_winit")]
@@ -286,17 +330,32 @@ impl SkiaGlSession {
             )
         })?;
 
-        render_scene_to_canvas(surface.canvas(), &scene, &mut self.text_cache);
+        let dirty_bounds = match submit {
+            SceneSubmit::Full(_) => None,
+            SceneSubmit::Patch { patch, .. } if self.last_scene.is_some() => {
+                patch.dirty_bounds(self.last_scene.as_ref())
+            }
+            SceneSubmit::Patch { .. } => None,
+        };
+        if let Some(bounds) = dirty_bounds {
+            render_scene_region_to_canvas(surface.canvas(), &scene, bounds, &mut self.text_cache);
+        } else {
+            render_scene_to_canvas(surface.canvas(), &scene, &mut self.text_cache);
+        }
         self.gr_context.flush_and_submit();
         self.gl_surface
             .swap_buffers(&self.gl_context)
             .map_err(|error| {
                 desktop_session_error(ZenoErrorCode::SessionSwapBuffersFailed, "swap_buffers", error.to_string())
             })?;
+        let (patch_upserts, patch_removes) = patch_stats(submit);
         Ok(FrameReport {
             backend: Backend::Skia,
             command_count: scene.commands.len(),
             resource_count: scene.resource_keys().len(),
+            block_count: scene.blocks.len(),
+            patch_upserts,
+            patch_removes,
             surface_id: self.surface.id.clone(),
         })
         .map(|report| {
@@ -394,11 +453,28 @@ impl ImpellerMetalSession {
                 "metal layer did not provide a drawable",
             )
         })?;
-        self.renderer.render_to_drawable(drawable, &scene)?;
+        let dirty_bounds = match submit {
+            SceneSubmit::Full(_) => None,
+            SceneSubmit::Patch { patch, .. } if self.last_scene.is_some() => {
+                patch.dirty_bounds(self.last_scene.as_ref())
+            }
+            SceneSubmit::Patch { .. } => None,
+        };
+        if let Some(bounds) = dirty_bounds {
+            let partial_scene = partial_scene_for_dirty_bounds(&scene, bounds);
+            self.renderer
+                .render_to_drawable_with_load(drawable, &partial_scene, true)?;
+        } else {
+            self.renderer.render_to_drawable(drawable, &scene)?;
+        }
+        let (patch_upserts, patch_removes) = patch_stats(submit);
         Ok(FrameReport {
             backend: Backend::Impeller,
             command_count: scene.commands.len(),
             resource_count: scene.resource_keys().len(),
+            block_count: scene.blocks.len(),
+            patch_upserts,
+            patch_removes,
             surface_id: self.surface.id.clone(),
         })
         .map(|report| {
@@ -474,4 +550,97 @@ fn create_gr_context(gl_config: &Config) -> Result<sk::gpu::DirectContext, Strin
     .ok_or_else(|| "failed to load Skia GL interface".to_string())?;
     sk::gpu::direct_contexts::make_gl(interface, None)
         .ok_or_else(|| "failed to create Skia GL direct context".to_string())
+}
+
+fn patch_stats(submit: &SceneSubmit) -> (usize, usize) {
+    match submit {
+        SceneSubmit::Full(scene) => (scene.blocks.len(), 0),
+        SceneSubmit::Patch { patch, .. } => (patch.upserts.len(), patch.removes.len()),
+    }
+}
+
+fn partial_scene_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) -> Scene {
+    let mut commands = Vec::new();
+    commands.push(DrawCommand::Fill {
+        shape: Shape::Rect(dirty_bounds),
+        brush: Brush::Solid(clear_color_for_scene(scene)),
+    });
+    for block in &scene.blocks {
+        if block.bounds.intersects(&dirty_bounds) {
+            commands.extend(block.commands.iter().cloned());
+        }
+    }
+    Scene {
+        size: scene.size,
+        commands,
+        blocks: scene
+            .blocks
+            .iter()
+            .filter(|block| block.bounds.intersects(&dirty_bounds))
+            .cloned()
+            .collect(),
+    }
+}
+
+fn clear_color_for_scene(scene: &Scene) -> Color {
+    scene
+        .commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            DrawCommand::Clear(color) => Some(*color),
+            _ => None,
+        })
+        .unwrap_or(Color::TRANSPARENT)
+}
+
+#[cfg(all(test, feature = "desktop_winit"))]
+mod tests {
+    use super::{DesktopPresenterKind, DesktopSessionPlan};
+    use zeno_core::{Backend, Platform, WindowConfig};
+    use zeno_runtime::{BackendAttempt, ResolvedBackend, ResolvedSession};
+
+    fn resolved_session(platform: Platform, backend: Backend) -> ResolvedSession {
+        ResolvedSession::new(
+            platform,
+            WindowConfig::default(),
+            ResolvedBackend {
+                backend_kind: backend,
+                attempts: vec![BackendAttempt {
+                    backend,
+                    reason: None,
+                }],
+            },
+            false,
+        )
+    }
+
+    #[test]
+    fn skia_plan_is_available_on_desktop_platforms() {
+        let plan = DesktopSessionPlan::from_resolved(&resolved_session(Platform::Linux, Backend::Skia))
+            .expect("skia desktop plan");
+
+        assert_eq!(plan.backend, Backend::Skia);
+        assert_eq!(plan.presenter, DesktopPresenterKind::SkiaGl);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_impeller_plan_uses_metal_presenter() {
+        let plan =
+            DesktopSessionPlan::from_resolved(&resolved_session(Platform::MacOs, Backend::Impeller))
+                .expect("macos impeller plan");
+
+        assert_eq!(plan.backend, Backend::Impeller);
+        assert_eq!(plan.presenter, DesktopPresenterKind::ImpellerMetal);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_impeller_plan_is_rejected() {
+        let error =
+            DesktopSessionPlan::from_resolved(&resolved_session(Platform::Linux, Backend::Impeller))
+                .expect_err("impeller desktop plan should fail outside macos");
+
+        assert_eq!(error.error_code().as_str(), "backend.not_implemented_for_platform");
+    }
 }

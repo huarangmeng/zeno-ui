@@ -29,6 +29,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+crate-type = ["rlib", "staticlib", "cdylib"]
+
 [dependencies]
 zeno-compose = { path = "crates/zeno-compose" }
 zeno-core = { path = "crates/zeno-core" }
@@ -39,6 +42,11 @@ zeno-shell = { path = "crates/zeno-shell", default-features = false }
 
 [features]
 default = []
-desktop_demo = ["zeno-shell/desktop_winit"]
+desktop = ["zeno-shell/desktop_winit"]
+macos = ["desktop"]
+linux = ["desktop"]
+windows = ["desktop"]
 mobile_android = ["zeno-shell/mobile_android"]
 mobile_ios = ["zeno-shell/mobile_ios"]
+android = ["mobile_android"]
+ios = ["mobile_ios"]

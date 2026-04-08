@@ -42,6 +42,9 @@ impl Renderer for SkiaRenderer {
             backend: self.kind(),
             command_count: scene.commands.len(),
             resource_count: scene.resource_keys().len(),
+            block_count: scene.blocks.len(),
+            patch_upserts: 0,
+            patch_removes: 0,
             surface_id: "skia-raster".to_string(),
         })
     }

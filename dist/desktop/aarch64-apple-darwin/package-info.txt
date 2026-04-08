@@ -1,0 +1,3 @@
+target=aarch64-apple-darwin
+features=desktop_demo
+profile=release

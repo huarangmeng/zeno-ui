@@ -1,9 +1,9 @@
 use zeno_core::{
-    AppConfig, Backend, WindowConfig, ZenoError, ZenoErrorCode, zeno_window_error,
+    AppConfig, Backend, Platform, WindowConfig, ZenoError, ZenoErrorCode, zeno_window_error,
     zeno_frame_log, zeno_session_log,
 };
 use zeno_graphics::{DrawCommand, FrameReport, Scene, SceneSubmit};
-use zeno_runtime::{BackendAttempt, BackendResolver, FrameScheduler, ResolvedBackend, ResolvedRenderer, ResolvedSession};
+use zeno_runtime::{BackendAttempt, FrameScheduler, ResolvedBackend, ResolvedSession};
 #[cfg(feature = "desktop_winit")]
 use crate::desktop_session::{create_desktop_render_session, BoxedDesktopRenderSession};
 
@@ -35,10 +35,16 @@ pub struct ResolvedWindowRun {
 impl DesktopShell {
     #[cfg(feature = "desktop_winit")]
     pub fn run_window(&self, config: &WindowConfig) -> Result<(), ZenoError> {
-        self.run_backend_scene_window(
-            config,
-            Backend::Skia,
-            false,
+        self.run_pending_scene_window(
+            ResolvedSession::new(
+                Platform::current(),
+                config.clone(),
+                ResolvedBackend {
+                    backend_kind: Backend::Skia,
+                    attempts: Vec::new(),
+                },
+                false,
+            ),
             SceneSubmit::Full(Scene {
                 size: config.size,
                 commands: vec![DrawCommand::Clear(zeno_core::Color::WHITE)],
@@ -49,20 +55,16 @@ impl DesktopShell {
 
     #[cfg(feature = "desktop_winit")]
     pub fn run_scene_window(&self, config: &WindowConfig, scene: Scene) -> Result<(), ZenoError> {
-        self.run_backend_scene_window(config, Backend::Skia, false, SceneSubmit::Full(scene))
-    }
-
-    #[cfg(feature = "desktop_winit")]
-    pub fn run_resolved_scene_window(
-        &self,
-        config: &WindowConfig,
-        resolved: ResolvedRenderer,
-        scene: Scene,
-    ) -> Result<(), ZenoError> {
-        self.run_backend_scene_window(
-            config,
-            resolved.backend_kind,
-            false,
+        self.run_pending_scene_window(
+            ResolvedSession::new(
+                Platform::current(),
+                config.clone(),
+                ResolvedBackend {
+                    backend_kind: Backend::Skia,
+                    attempts: Vec::new(),
+                },
+                false,
+            ),
             SceneSubmit::Full(scene),
         )
     }
@@ -88,13 +90,7 @@ impl DesktopShell {
         app_config: &AppConfig,
     ) -> Result<ResolvedSession, ZenoError> {
         let native_surface = Shell::create_surface(self, &app_config.window);
-        let resolved =
-            BackendResolver::new().resolve_backend(native_surface.descriptor.platform, &app_config.renderer)?;
-        Ok(ResolvedSession::new(
-            app_config.window.clone(),
-            resolved,
-            app_config.debug.frame_stats,
-        ))
+        ResolvedSession::resolve(native_surface.descriptor.platform, app_config)
     }
 
     #[cfg(feature = "desktop_winit")]
@@ -103,20 +99,13 @@ impl DesktopShell {
         pending: ResolvedSession,
         submit: SceneSubmit,
     ) -> Result<(), ZenoError> {
-        self.run_backend_scene_window(
-            &pending.window,
-            pending.backend.backend_kind,
-            pending.frame_stats,
-            submit,
-        )
+        self.run_window_session(pending, submit)
     }
 
     #[cfg(feature = "desktop_winit")]
-    pub fn run_backend_scene_window(
+    fn run_window_session(
         &self,
-        config: &WindowConfig,
-        backend: Backend,
-        frame_stats: bool,
+        resolved_session: ResolvedSession,
         submit: SceneSubmit,
     ) -> Result<(), ZenoError> {
         use winit::event_loop::EventLoop;
@@ -132,14 +121,7 @@ impl DesktopShell {
             })?;
         event_loop.set_control_flow(ControlFlow::Wait);
         let mut app = DesktopWindowApp {
-            resolved_session: ResolvedSession::new(
-                config.clone(),
-                ResolvedBackend {
-                    backend_kind: backend,
-                    attempts: Vec::new(),
-                },
-                frame_stats,
-            ),
+            resolved_session,
             scene_submit: submit,
             session: None,
             scheduler: FrameScheduler::new(),
@@ -302,6 +284,9 @@ impl DesktopWindowApp {
                     backend = ?report.backend,
                     command_count = report.command_count,
                     resource_count = report.resource_count,
+                    block_count = report.block_count,
+                    patch_upserts = report.patch_upserts,
+                    patch_removes = report.patch_removes,
                     layout = phases.needs_layout,
                     paint = phases.needs_paint,
                     present = phases.needs_present,
@@ -316,6 +301,9 @@ impl DesktopWindowApp {
                     backend = ?report.backend,
                     command_count = report.command_count,
                     resource_count = report.resource_count,
+                    block_count = report.block_count,
+                    patch_upserts = report.patch_upserts,
+                    patch_removes = report.patch_removes,
                     layout = phases.needs_layout,
                     paint = phases.needs_paint,
                     present = phases.needs_present,

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use skia_safe as sk;
-use zeno_core::Color;
+use zeno_core::{Color, Rect};
 use zeno_graphics::{DrawCommand, Scene, SceneResourceKey, Shape};
 
 #[derive(Default)]
@@ -21,38 +21,83 @@ pub struct SkiaTextCacheStats {
 
 pub fn render_scene_to_canvas(canvas: &sk::Canvas, scene: &Scene, text_cache: &mut SkiaTextCache) {
     for cmd in &scene.commands {
-        match cmd {
-            DrawCommand::Clear(color) => {
-                canvas.clear(sk_color(*color));
+        draw_command(canvas, cmd, text_cache);
+    }
+}
+
+pub fn render_scene_region_to_canvas(
+    canvas: &sk::Canvas,
+    scene: &Scene,
+    dirty_rect: Rect,
+    text_cache: &mut SkiaTextCache,
+) {
+    let clip = sk::Rect::from_xywh(
+        dirty_rect.origin.x,
+        dirty_rect.origin.y,
+        dirty_rect.size.width,
+        dirty_rect.size.height,
+    );
+    canvas.save();
+    canvas.clip_rect(clip, None, Some(false));
+    canvas.draw_rect(clip, &clear_paint(scene));
+    for block in &scene.blocks {
+        if block.bounds.intersects(&dirty_rect) {
+            for cmd in &block.commands {
+                draw_command(canvas, cmd, text_cache);
             }
-            DrawCommand::Fill { shape, brush } => {
-                let mut paint = sk::Paint::default();
-                paint.set_style(skia_safe::paint::Style::Fill);
-                paint.set_anti_alias(true);
-                let zeno_graphics::Brush::Solid(c) = brush;
-                paint.set_color(sk_color(*c));
-                draw_shape(canvas, shape, &paint);
-            }
-            DrawCommand::Stroke { shape, stroke } => {
-                let mut paint = sk::Paint::default();
-                paint.set_style(skia_safe::paint::Style::Stroke);
-                paint.set_anti_alias(true);
-                paint.set_stroke_width(stroke.width);
-                paint.set_color(sk_color(stroke.color));
-                draw_shape(canvas, shape, &paint);
-            }
-            DrawCommand::Text { position, layout, color } => {
-                let mut paint = sk::Paint::default();
-                paint.set_anti_alias(true);
-                paint.set_color(sk_color(*color));
-                let mut font = text_cache.resolve_font(
-                    cmd.resource_key(),
-                    &layout.paragraph.font.family,
-                    layout.paragraph.font_size.max(12.0),
-                );
-                font.set_edging(sk::font::Edging::AntiAlias);
-                canvas.draw_str(layout.paragraph.text.as_str(), (position.x, position.y), &font, &paint);
-            }
+        }
+    }
+    canvas.restore();
+}
+
+fn clear_paint(scene: &Scene) -> sk::Paint {
+    let mut paint = sk::Paint::default();
+    paint.set_style(skia_safe::paint::Style::Fill);
+    paint.set_anti_alias(true);
+    let clear = scene
+        .commands
+        .iter()
+        .find_map(|cmd| match cmd {
+            DrawCommand::Clear(color) => Some(*color),
+            _ => None,
+        })
+        .unwrap_or(Color::TRANSPARENT);
+    paint.set_color(sk_color(clear));
+    paint
+}
+
+fn draw_command(canvas: &sk::Canvas, cmd: &DrawCommand, text_cache: &mut SkiaTextCache) {
+    match cmd {
+        DrawCommand::Clear(color) => {
+            canvas.clear(sk_color(*color));
+        }
+        DrawCommand::Fill { shape, brush } => {
+            let mut paint = sk::Paint::default();
+            paint.set_style(skia_safe::paint::Style::Fill);
+            paint.set_anti_alias(true);
+            let zeno_graphics::Brush::Solid(c) = brush;
+            paint.set_color(sk_color(*c));
+            draw_shape(canvas, shape, &paint);
+        }
+        DrawCommand::Stroke { shape, stroke } => {
+            let mut paint = sk::Paint::default();
+            paint.set_style(skia_safe::paint::Style::Stroke);
+            paint.set_anti_alias(true);
+            paint.set_stroke_width(stroke.width);
+            paint.set_color(sk_color(stroke.color));
+            draw_shape(canvas, shape, &paint);
+        }
+        DrawCommand::Text { position, layout, color } => {
+            let mut paint = sk::Paint::default();
+            paint.set_anti_alias(true);
+            paint.set_color(sk_color(*color));
+            let mut font = text_cache.resolve_font(
+                cmd.resource_key(),
+                &layout.paragraph.font.family,
+                layout.paragraph.font_size.max(12.0),
+            );
+            font.set_edging(sk::font::Edging::AntiAlias);
+            canvas.draw_str(layout.paragraph.text.as_str(), (position.x, position.y), &font, &paint);
         }
     }
 }

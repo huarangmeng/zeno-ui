@@ -17,7 +17,7 @@ pub use widgets::{column, container, row, spacer, text};
 mod tests {
     use super::{column, compose_scene, container, row, spacer, text, ComposeEngine, DirtyReason};
     use zeno_core::{Color, Size};
-    use zeno_graphics::DrawCommand;
+    use zeno_graphics::{DrawCommand, SceneSubmit};
     use zeno_text::FallbackTextSystem;
 
     #[test]
@@ -110,5 +110,26 @@ mod tests {
 
         assert_eq!(first.id(), second.id());
         assert_ne!(first.id(), third.id());
+    }
+
+    #[test]
+    fn compose_submit_returns_patch_stats_for_paint_only_updates() {
+        let title = text("Title").key("title");
+        let title_id = title.id();
+        let root = column(vec![title, text("Body").key("body")]).spacing(4.0);
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&root, Size::new(320.0, 240.0));
+        engine.invalidate_node(title_id, DirtyReason::Paint);
+        let submit = engine.compose_submit(&root, Size::new(320.0, 240.0));
+
+        match submit {
+            SceneSubmit::Patch { patch, current } => {
+                assert_eq!(patch.upserts.len(), 1);
+                assert_eq!(patch.removes.len(), 0);
+                assert!(!current.blocks.is_empty());
+            }
+            SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
     }
 }

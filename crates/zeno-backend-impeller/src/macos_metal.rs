@@ -68,6 +68,15 @@ impl MetalSceneRenderer {
         drawable: &MetalDrawableRef,
         scene: &Scene,
     ) -> Result<(), ZenoError> {
+        self.render_to_drawable_with_load(drawable, scene, false)
+    }
+
+    pub fn render_to_drawable_with_load(
+        &mut self,
+        drawable: &MetalDrawableRef,
+        scene: &Scene,
+        preserve_contents: bool,
+    ) -> Result<(), ZenoError> {
         let render_pass = RenderPassDescriptor::new();
         let attachment = render_pass
             .color_attachments()
@@ -81,9 +90,15 @@ impl MetalSceneRenderer {
                 )
             })?;
         attachment.set_texture(Some(drawable.texture()));
-        attachment.set_load_action(MTLLoadAction::Clear);
+        attachment.set_load_action(if preserve_contents {
+            MTLLoadAction::Load
+        } else {
+            MTLLoadAction::Clear
+        });
         attachment.set_store_action(MTLStoreAction::Store);
-        attachment.set_clear_color(clear_color_for_scene(scene));
+        if !preserve_contents {
+            attachment.set_clear_color(clear_color_for_scene(scene));
+        }
 
         let command_buffer = self.queue.new_command_buffer();
         let encoder = command_buffer.new_render_command_encoder(&render_pass);

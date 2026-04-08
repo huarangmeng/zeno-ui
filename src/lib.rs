@@ -19,11 +19,16 @@ pub use zeno_graphics::{
     RenderSession, Renderer, Scene, SceneBlock, ScenePatch, SceneSubmit, Shape,
 };
 pub use zeno_runtime::{
-    BackendAttempt, BackendResolver, FramePhases, FrameScheduler, ResolvedRenderer, ResolvedSession,
+    BackendAttempt, BackendResolver, FramePhases, FrameScheduler, ResolvedSession,
 };
 pub use zeno_shell::{MinimalShell, NativeSurface, PlatformDescriptor, Shell};
 #[cfg(any(feature = "mobile_android", feature = "mobile_ios"))]
-pub use zeno_shell::{MobilePlatform, MobileSessionBinding, MobileShell, MobileViewport};
+pub use zeno_shell::{
+    AndroidAttachContext, IosMetalLayerAttachContext, IosViewAttachContext, MobileAttachContext,
+    MobileAttachedSession, MobileHostKind, MobilePlatform, MobilePresenterAttachment,
+    MobilePresenterKind, MobileRenderSessionHandle, MobileSessionBinding, MobileShell,
+    MobileViewport, BoxedMobileRenderSession, create_mobile_render_session,
+};
 #[cfg(feature = "mobile_android")]
 pub use zeno_shell::AndroidShell;
 #[cfg(feature = "mobile_ios")]
@@ -33,5 +38,5 @@ pub use zeno_text::{
 };
 pub use ui_runtime::{UiFrame, UiRuntime};
 
-#[cfg(feature = "desktop_demo")]
+#[cfg(feature = "desktop")]
 pub use zeno_shell::{DesktopShell, DesktopWindowHandle, ResolvedWindowRun};

@@ -38,4 +38,31 @@ impl Rect {
             size: Size::new(width, height),
         }
     }
+
+    #[must_use]
+    pub fn right(&self) -> f32 {
+        self.origin.x + self.size.width
+    }
+
+    #[must_use]
+    pub fn bottom(&self) -> f32 {
+        self.origin.y + self.size.height
+    }
+
+    #[must_use]
+    pub fn union(&self, other: &Self) -> Self {
+        let left = self.origin.x.min(other.origin.x);
+        let top = self.origin.y.min(other.origin.y);
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+        Self::new(left, top, right - left, bottom - top)
+    }
+
+    #[must_use]
+    pub fn intersects(&self, other: &Self) -> bool {
+        !(self.right() <= other.origin.x
+            || other.right() <= self.origin.x
+            || self.bottom() <= other.origin.y
+            || other.bottom() <= self.origin.y)
+    }
 }

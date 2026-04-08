@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use zeno_core::{Point, Size};
 use zeno_graphics::{Brush, DrawCommand, Scene, ScenePatch, SceneSubmit, Shape};
@@ -86,12 +86,15 @@ impl<'a> ComposeEngine<'a> {
             if retained.dirty().requires_layout() && retained.can_repaint(root, viewport) {
                 self.stats.compose_passes += 1;
                 self.stats.layout_passes += 1;
+                let layout_dirty_roots: HashSet<NodeId> =
+                    retained.layout_dirty_roots().into_iter().collect();
                 let measured = relayout_node(
                     root,
                     Point::new(0.0, 0.0),
                     viewport,
                     self.text_system,
                     retained,
+                    &layout_dirty_roots,
                     false,
                 )
                 .0;
@@ -342,9 +345,10 @@ fn relayout_node(
     available: Size,
     text_system: &dyn TextSystem,
     retained: &RetainedComposeTree,
+    layout_dirty_roots: &HashSet<NodeId>,
     force_relayout: bool,
 ) -> (MeasuredNode, bool) {
-    let dirty = retained.dirty_for(node.id()).requires_layout();
+    let dirty = layout_dirty_roots.contains(&node.id());
     if !force_relayout && !dirty {
         if let (Some(measured), Some(cached_available)) =
             (retained.measured_for(node.id()), retained.available_for(node.id()))
@@ -375,6 +379,7 @@ fn relayout_node(
                 child_available,
                 text_system,
                 retained,
+                layout_dirty_roots,
                 force_relayout || dirty,
             );
             let size = crate::layout::finalize_size(node, available, measured_child.frame.size);
@@ -393,6 +398,7 @@ fn relayout_node(
                 available,
                 text_system,
                 retained,
+                layout_dirty_roots,
                 force_relayout || dirty,
             );
             (measured, false)
@@ -408,6 +414,7 @@ fn relayout_stack(
     available: Size,
     text_system: &dyn TextSystem,
     retained: &RetainedComposeTree,
+    layout_dirty_roots: &HashSet<NodeId>,
     force_relayout: bool,
 ) -> MeasuredNode {
     let mut measured_children = Vec::with_capacity(children.len());
@@ -440,6 +447,7 @@ fn relayout_stack(
             remaining,
             text_system,
             retained,
+            layout_dirty_roots,
             downstream_relayout,
         );
         downstream_relayout = downstream_relayout || !reused;

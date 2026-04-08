@@ -3,7 +3,7 @@
 ## 状态
 - 状态：进行中
 - 目标：把当前“桌面双后端原型”演进成适合 Compose 风格跨平台 UI 的高性能架构，同时提升调试、验证与接入体验。
-- 当前完成度：P0 基本完成；P1 已完成 retained/dirty 与局部重发射基础；P2 仍以文本系统与工程化能力为主。
+- 当前完成度：P0 已完成；P1 已完成 retained tree、layout dirty roots 与 Structured Scene 的 MVP 主链路；P2 仍以文本系统与 bench/devtools 工程化能力为主。
 
 ## 当前阶段判断
 - 当前主链路已经成立：`zeno-compose -> zeno-graphics::Scene -> zeno-runtime -> zeno-shell -> backend-*`。
@@ -12,15 +12,16 @@
 
 ## 当前瓶颈
 
-### 1. 全树布局与全量 Scene 生成
-- `zeno-compose` 目前仍采用即时模型：节点树每次都重新测量并生成完整 `Scene`。
-- 这意味着小改动也会触发全树 `measure_node` 与全量 `emit_node`。
+### 1. 局部更新能力已具备 MVP，仍待继续细化
+- `zeno-compose` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径。
+- `Scene` 已从单纯扁平命令流升级到 block/patch 提交模型，session 可消费 `SceneSubmit`。
+- 当前剩余差距主要在更细粒度的 dirty root 归并、layer/clip/transform 结构和后端真局部 GPU 提交能力。
 
 ### 2. 持续重绘
 - 桌面事件循环仍会在空闲阶段持续请求 redraw。
 - 这种模型对 CPU 占用、功耗与未来动画调度都不友好。
 
-### 3. runtime 与 shell 边界收敛中
+### 3. runtime 与 shell 边界已完成收敛
 - runtime 已负责解析 backend，并直接生成 `ResolvedSession`。
 - `ResolvedSession` 现在作为纯 descriptor 保留在 runtime；具体桌面 `RenderSession` 创建已统一收敛到 `zeno-shell` 这一平台集成层。
 - 当前剩余工作主要是继续把移动端 presenter 能力接入同一平台集成 crate，而不是拆成多个平台专用 crate。
@@ -69,12 +70,14 @@
 - 用 invalidate 驱动下一帧，而不是让事件循环持续自旋。
 
 ### P1：引入 retained tree 与 dirty propagation
-- 为 `zeno-compose` 增加稳定节点标识。
-- 为布局和 Scene 生成增加缓存与失效传播。
+- 状态：已完成（MVP）
+- 已完成稳定 `NodeId`、retained tree、dirty propagation、paint-only 快路径。
+- 已完成 layout dirty roots 与局部 relayout 主链路，小范围 layout 更新不再必然退化为全树测量。
 
 ### P1：升级 Scene 结构
-- 引入资源键、可缓存文本布局、路径/笔刷复用入口。
-- 为后端批处理保留结构空间。
+- 状态：已完成（MVP）
+- 已完成 `SceneBlock`、`ScenePatch`、`SceneSubmit` 主数据结构，并打通 compose/runtime/shell/session 提交流。
+- 已完成 block 统计、patch upserts/removes 统计与 session 侧 patch 消费入口。
 
 ### P2：升级文本系统
 - 统一布局、绘制与缓存的文本数据模型。
@@ -82,7 +85,9 @@
 
 ### P2：补工程化体验
 - 提供 bench gallery、layout dump、scene dump、frame stats。
-- 提供更直接的平台 preset feature，减少首次接入成本。
+- 状态：部分完成
+- 已提供根 crate 级平台 preset feature：`macos`、`linux`、`windows`、`android`、`ios`。
+- 剩余工作聚焦在 bench gallery、layout dump、scene dump 等工程化工具。
 
 ## 对各 crate 的具体建议
 
@@ -96,7 +101,7 @@
 
 ### zeno-runtime
 - 继续保留 backend probe/fallback 逻辑。
-- 但把当前 `ResolvedRenderer` 演进为更完整的 resolved session 或 resolved presenter。
+- 让 `ResolvedSession` 继续承担统一 descriptor 角色，并把平台、attempts 与调试元数据稳定沉淀在这一层。
 
 ### zeno-shell
 - 保持 shell 只负责窗口、surface、事件循环和宿主对象。
@@ -114,7 +119,8 @@
 
 ### 更清晰的 feature 预设
 - 核心库默认保持轻量。
-- 通过 workspace 级 preset feature 提供更直接的体验，如桌面 demo、桌面 auto backend 等。
+- 已通过根 crate 级 preset feature 提供更直接的平台入口：`macos`、`linux`、`windows`、`android`、`ios`。
+- 同时保留 `desktop`、`mobile_android`、`mobile_ios` 作为更底层的能力 feature。
 
 ### 更可重复的验证手段
 - 增加 benchmark 示例，而不是只依赖最小 demo。
@@ -136,10 +142,15 @@
 - `ResolvedSession` 已成为统一 session descriptor，平台集成层可基于它创建具体桌面 `RenderSession`。
 - `UiRuntime` 已成为内部重绘决策与 frame 准备入口，对上层隐藏 `ComposeEngine`。
 - `FrameScheduler` 已将桌面空闲态持续 redraw 改为按需重绘。
+- `RetainedComposeTree` 已具备 `NodeId`、dirty propagation、layout dirty roots 与局部 relayout 主链路。
+- `Scene` 已具备 `SceneBlock` / `ScenePatch` / `SceneSubmit`，桌面 session 已按结构化提交模型消费场景。
 - `SkiaTextCache` 已具备 typeface/font 缓存与命中统计。
+- 帧统计已输出 `block_count`、`patch_upserts`、`patch_removes`，可直接观察增量提交行为。
+- 根 crate 已提供 `macos`、`linux`、`windows`、`android`、`ios` 平台 preset feature，降低首次接入成本。
 
 ## 当前未完成项
-- layout dirty 仍未做到真正脏子树局部重测量。
-- `Scene` 仍是扁平命令流，尚未演进到 layer/clip/transform/局部块提交模型。
+- layout dirty 仍可继续细化到更小祖先集合与更精确的兄弟影响范围，当前为 MVP 级 dirty roots 策略。
+- `Scene` 已有 block/patch，但尚未演进到 layer/clip/transform 等更高阶结构化模型。
+- Skia 已具备 dirty bounds 局部提交路径，Impeller 仍以全量为主，真局部 GPU 提交尚未完全落地。
 - 文本主路径仍是 fallback 测量，真实 shaping / glyph cache / paragraph cache 尚未接入。
 - bench gallery、scene dump、layout dump 等工程化工具仍未完成。

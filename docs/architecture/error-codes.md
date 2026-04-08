@@ -51,6 +51,8 @@
 | `ui_runtime.root_not_set` | ui_runtime | UI 根节点未设置 |
 | `ui_runtime.viewport_not_configured` | ui_runtime | viewport 未配置 |
 | `mobile.viewport_invalid` | mobile | 移动端 viewport 非法 |
+| `mobile.session_platform_mismatch` | mobile | 移动端 shell 平台与 resolved session 平台不一致 |
+| `mobile.attach_platform_mismatch` | mobile | 移动端 attach context 与 session 平台不一致 |
 
 ## 使用规范
 

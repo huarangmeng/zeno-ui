@@ -1,7 +1,7 @@
 use zeno_compose::{ComposeEngine, ComposeStats, DirtyReason, Node, NodeId};
 use zeno_core::{AppConfig, Platform, Size, ZenoError, ZenoErrorCode, zeno_runtime_log};
 use zeno_graphics::{Scene, SceneSubmit};
-use zeno_runtime::{BackendResolver, FramePhases, FrameScheduler, ResolvedSession};
+use zeno_runtime::{FramePhases, FrameScheduler, ResolvedSession};
 use zeno_text::TextSystem;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -113,20 +113,15 @@ impl<'a> UiRuntime<'a> {
         let Some(frame) = self.prepare_frame()? else {
             return Ok(None);
         };
-        let backend = BackendResolver::new().resolve_backend(platform, &app_config.renderer)?;
+        let session = ResolvedSession::resolve(platform, app_config)?;
         zeno_runtime_log!(
             trace,
             app = %app_config.app_name,
             platform = ?platform,
-            backend = ?backend.backend_kind,
-            attempts = backend.attempts.len(),
-            frame_stats = app_config.debug.frame_stats,
+            backend = ?session.backend.backend_kind,
+            attempts = session.backend.attempts.len(),
+            frame_stats = session.frame_stats,
             "resolved backend session"
-        );
-        let session = ResolvedSession::new(
-            app_config.window.clone(),
-            backend,
-            app_config.debug.frame_stats,
         );
         Ok(Some((session, frame)))
     }

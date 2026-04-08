@@ -34,6 +34,8 @@ pub enum ZenoErrorCode {
     UiRuntimeRootNotSet,
     UiRuntimeViewportNotConfigured,
     MobileViewportInvalid,
+    MobileSessionPlatformMismatch,
+    MobileAttachPlatformMismatch,
 }
 
 impl ZenoErrorCode {
@@ -86,6 +88,8 @@ impl ZenoErrorCode {
             Self::UiRuntimeRootNotSet => "ui_runtime.root_not_set",
             Self::UiRuntimeViewportNotConfigured => "ui_runtime.viewport_not_configured",
             Self::MobileViewportInvalid => "mobile.viewport_invalid",
+            Self::MobileSessionPlatformMismatch => "mobile.session_platform_mismatch",
+            Self::MobileAttachPlatformMismatch => "mobile.attach_platform_mismatch",
         }
     }
 }

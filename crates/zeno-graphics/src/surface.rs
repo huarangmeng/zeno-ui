@@ -13,5 +13,8 @@ pub struct FrameReport {
     pub backend: Backend,
     pub command_count: usize,
     pub resource_count: usize,
+    pub block_count: usize,
+    pub patch_upserts: usize,
+    pub patch_removes: usize,
     pub surface_id: String,
 }

@@ -2,7 +2,7 @@
 
 ## 状态
 - 状态：进行中
-- 阶段判断：后端优先级与 fallback 策略已经成立，但平台矩阵还不是“真正全平台可用”，目前主要验证的是桌面路径，尤其是 macOS 的 Impeller 原型和 Skia 兜底。
+- 阶段判断：后端优先级、fallback 策略与统一 `ResolvedSession` 描述符已经成立；当前缺口主要收敛为“非 macOS 的 Impeller presenter 尚未实现”与“移动端尚未接入真实原生 presenter”。
 
 ## 选择策略
 - 默认偏好是 `PreferImpeller`。
@@ -15,15 +15,16 @@
 ## 平台矩阵
 | 平台 | Impeller 路径 | Skia 路径 | 当前状态 |
 | --- | --- | --- | --- |
-| Windows | 规划中，尚未实现 | 已规划兜底 | 当前解析到 Skia |
-| macOS | 已有 Metal presenter 原型 | 已有真实桌面路径 | 默认优先解析到 Impeller |
-| Linux | 规划中，尚未实现 | 已规划兜底 | 当前解析到 Skia |
-| Android | 概念存在，尚未实现 | 仅策略层存在 | 当前 Impeller probe 返回未实现 |
-| iOS | 概念存在，尚未实现 | 仅策略层存在 | 当前 Impeller probe 返回未实现 |
+| Windows | probe 返回未实现 | 策略层可解析，桌面实现以 Skia 为主 | 当前解析到 Skia |
+| macOS | 已有 Metal presenter 路径 | 已有真实桌面路径 | 默认优先解析到 Impeller |
+| Linux | probe 返回未实现 | 策略层可解析，桌面实现以 Skia 为主 | 当前解析到 Skia |
+| Android | probe 返回未实现 | 已有 session factory / binding / attach context / render session 工厂路径，原生 presenter 未实现 | 当前 Impeller probe 返回未实现 |
+| iOS | probe 返回未实现 | 已有 session factory / binding / attach context / render session 工厂路径，原生 presenter 未实现 | 当前 Impeller probe 返回未实现 |
 
 ## 当前限制
 - `ImpellerBackend::probe` 目前只有 macOS 返回 available，其他平台仍返回 `NotImplementedForPlatform`。
-- macOS 上 runtime 虽然会优先选 Impeller，但 `Renderer` trait 对应的 Impeller 实现仍偏占位，真实桌面渲染依赖 shell 里的 Metal presenter。
+- `ResolvedSession` 现在已显式携带 `platform + backend + attempts + frame_stats`，shell 已能在桌面/移动两侧基于统一 session descriptor 规划会话绑定；移动端还新增了 `MobileAttachContext` 与 `create_render_session` 工厂，但 presenter 仍是占位实现。
+- macOS 上 runtime 虽然会优先选 Impeller，但 `Renderer` trait 对应的 Impeller 实现仍偏占位，真实桌面渲染依赖 shell 内的 Metal session。
 - Skia 作为兜底策略已经成立，但真实 GPU 桌面呈现依然主要由 shell 持有 surface 与上下文。
 
 ## 失败分类
@@ -31,8 +32,9 @@
 - `MissingPlatformSurface`：shell 未能提供后端所需的原生 surface 类型。
 - `MissingGpuContext`：GPU 路径存在，但当前运行环境无法初始化。
 - `RuntimeProbeFailed`：发生了未预期的 probe 失败，并携带字符串说明。
+- `MobileAttachPlatformMismatch`：移动端 attach context 与当前 session 所属平台不一致。
 
 ## 下一步
-- 将“runtime 解析 backend”和“shell 再按 backend 分发 presenter”收敛到统一的 render session 抽象。
-- 让平台矩阵只描述真实可用状态，不再提前写入尚未打通的移动端能力。
-- 为 resolver 增加更清晰的验证用例，覆盖默认策略、fallback 和强制失败三类场景。
+- 为 Android/iOS 的 `RenderSession` 工厂继续接入真实原生句柄与 presenter 创建，让当前占位 session 演进为真实 backend presenter。
+- 继续补齐非 macOS 平台的 Impeller presenter，实现 probe available 与真实可创建 session 的一致性。
+- 持续扩展验证用例，保持默认策略、fallback、强制失败以及 desktop/mobile session 规划逻辑都可回归验证。

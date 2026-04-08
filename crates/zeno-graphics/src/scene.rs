@@ -126,6 +126,15 @@ impl Scene {
         blocks.sort_by_key(|block| block.order);
         Self::from_blocks(patch.size, blocks)
     }
+
+    #[must_use]
+    pub fn dirty_bounds_for_nodes(&self, node_ids: &[u64]) -> Option<Rect> {
+        self.blocks
+            .iter()
+            .filter(|block| node_ids.contains(&block.node_id))
+            .map(|block| block.bounds)
+            .reduce(|acc, bounds| acc.union(&bounds))
+    }
 }
 
 impl SceneBlock {
@@ -146,6 +155,22 @@ impl ScenePatch {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.upserts.is_empty() && self.removes.is_empty()
+    }
+
+    #[must_use]
+    pub fn dirty_bounds(&self, previous: Option<&Scene>) -> Option<Rect> {
+        let upsert_bounds = self
+            .upserts
+            .iter()
+            .map(|block| block.bounds)
+            .reduce(|acc, bounds| acc.union(&bounds));
+        let remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_nodes(&self.removes));
+        match (upsert_bounds, remove_bounds) {
+            (Some(a), Some(b)) => Some(a.union(&b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        }
     }
 }
 

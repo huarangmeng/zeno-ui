@@ -46,6 +46,15 @@ fn main() {
         .expect("second frame");
     let stats_after_paint = frame.compose_stats;
     let resource_count = frame.scene.resource_keys().len();
+    let block_count = frame.scene.blocks.len();
+    let (patch_upserts, patch_removes, scene_submit) = match frame.scene_submit {
+        SceneSubmit::Full(scene) => (scene.blocks.len(), 0usize, SceneSubmit::Full(scene)),
+        SceneSubmit::Patch { patch, current } => (
+            patch.upserts.len(),
+            patch.removes.len(),
+            SceneSubmit::Patch { patch, current },
+        ),
+    };
 
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
@@ -54,13 +63,7 @@ fn main() {
             attempts: session.backend.attempts.clone(),
         };
         DesktopShell
-            .run_pending_scene_window(
-                session,
-                match frame.scene_submit {
-                    SceneSubmit::Full(scene) => SceneSubmit::Full(scene),
-                    SceneSubmit::Patch { patch, current } => SceneSubmit::Patch { patch, current },
-                },
-            )
+            .run_pending_scene_window(session, scene_submit)
             .expect("desktop window should stay open until closed");
         zeno_session_log!(
             info,
@@ -70,6 +73,9 @@ fn main() {
             layout_passes = stats_after_paint.layout_passes,
             cache_hits = stats_after_paint.cache_hits,
             resources = resource_count,
+            blocks = block_count,
+            patch_upserts,
+            patch_removes,
             recomposed_after_invalidate = stats_after_paint.compose_passes > 1,
             "demo session summary"
         );

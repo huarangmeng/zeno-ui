@@ -3,19 +3,19 @@ mod resolver;
 mod session;
 
 pub use frame_scheduler::{FramePhases, FrameScheduler};
-pub use resolver::{BackendAttempt, BackendResolver, ResolvedBackend, ResolvedRenderer};
+pub use resolver::{BackendAttempt, BackendResolver, ResolvedBackend};
 pub use session::ResolvedSession;
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendResolver, FrameScheduler};
-    use zeno_core::{Backend, BackendPreference, Platform, RendererConfig, ZenoError};
+    use super::{BackendResolver, FrameScheduler, ResolvedSession};
+    use zeno_core::{Backend, BackendPreference, Platform, RendererConfig, WindowConfig, ZenoError};
 
     #[test]
     fn falls_back_to_skia_when_impeller_is_not_implemented_yet() {
         let resolver = BackendResolver::new();
         let resolved = resolver
-            .resolve(Platform::Android, &RendererConfig::default())
+            .resolve_backend(Platform::Android, &RendererConfig::default())
             .expect("android should fall back to skia until impeller is implemented");
 
         assert_eq!(resolved.backend_kind, Backend::Skia);
@@ -27,7 +27,7 @@ mod tests {
     fn falls_back_to_skia_when_impeller_is_unavailable() {
         let resolver = BackendResolver::new();
         let resolved = resolver
-            .resolve(Platform::Linux, &RendererConfig::default())
+            .resolve_backend(Platform::Linux, &RendererConfig::default())
             .expect("linux should fall back to skia");
 
         assert_eq!(resolved.backend_kind, Backend::Skia);
@@ -43,7 +43,7 @@ mod tests {
             allow_fallback: false,
         };
 
-        let error = match resolver.resolve(Platform::Windows, &config) {
+        let error = match resolver.resolve_backend(Platform::Windows, &config) {
             Ok(_) => panic!("forced impeller should fail on windows"),
             Err(error) => error,
         };
@@ -64,11 +64,28 @@ mod tests {
             allow_fallback: false,
         };
         let resolved = resolver
-            .resolve(Platform::Android, &config)
+            .resolve_backend(Platform::Android, &config)
             .expect("skia should resolve everywhere");
 
         assert_eq!(resolved.backend_kind, Backend::Skia);
         assert_eq!(resolved.attempts.len(), 1);
+    }
+
+    #[test]
+    fn resolved_session_captures_platform_and_attempts() {
+        let session = ResolvedSession::from_parts(
+            Platform::Linux,
+            WindowConfig::default(),
+            &RendererConfig::default(),
+            true,
+        )
+        .expect("linux should produce a resolved session");
+
+        assert_eq!(session.platform, Platform::Linux);
+        assert_eq!(session.backend.backend_kind, Backend::Skia);
+        assert_eq!(session.attempts().len(), 2);
+        assert!(session.attempts()[0].reason.is_some());
+        assert!(session.frame_stats);
     }
 
     #[test]

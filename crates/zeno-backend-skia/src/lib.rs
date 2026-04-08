@@ -7,6 +7,6 @@ mod renderer;
 mod stub;
 
 #[cfg(feature = "native_skia")]
-pub use canvas::{render_scene_to_canvas, SkiaTextCache, SkiaTextCacheStats};
+pub use canvas::{render_scene_region_to_canvas, render_scene_to_canvas, SkiaTextCache, SkiaTextCacheStats};
 
 pub use backend::SkiaBackend;
