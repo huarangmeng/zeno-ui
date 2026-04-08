@@ -9,7 +9,7 @@ zeno-core = { path = "../zeno-core" }
 zeno-graphics = { path = "../zeno-graphics" }
 
 [dependencies.skia-safe]
-version = "0.77"
+version = "0.93"
 optional = true
 default-features = false
 features = ["textlayout"]

@@ -5,6 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-zeno-ui = { path = "../.." }
-zeno-shell = { path = "../../crates/zeno-shell" }
+zeno-ui = { path = "../..", features = ["desktop_demo"] }
+zeno-shell = { path = "../../crates/zeno-shell", features = ["desktop_winit"] }
 zeno-text = { path = "../../crates/zeno-text" }

@@ -1,5 +1,5 @@
 [package]
-name = "zeno-backend-impeller"
+name = "zeno-compose"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,8 +7,4 @@ license.workspace = true
 [dependencies]
 zeno-core = { path = "../zeno-core" }
 zeno-graphics = { path = "../zeno-graphics" }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-font-kit = "0.14"
-fontdue = "0.9"
-metal = "0.33.0"
+zeno-text = { path = "../zeno-text" }
