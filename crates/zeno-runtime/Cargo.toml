@@ -1,0 +1,11 @@
+[package]
+name = "zeno-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zeno-backend-impeller = { path = "../zeno-backend-impeller" }
+zeno-backend-skia = { path = "../zeno-backend-skia" }
+zeno-core = { path = "../zeno-core" }
+zeno-graphics = { path = "../zeno-graphics" }

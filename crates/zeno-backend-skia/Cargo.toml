@@ -1,0 +1,18 @@
+[package]
+name = "zeno-backend-skia"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zeno-core = { path = "../zeno-core" }
+zeno-graphics = { path = "../zeno-graphics" }
+
+[dependencies.skia-safe]
+version = "0.77"
+optional = true
+default-features = false
+features = ["textlayout"]
+
+[features]
+real_skia = ["skia-safe"]

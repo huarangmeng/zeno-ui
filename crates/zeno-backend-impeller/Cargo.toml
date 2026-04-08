@@ -1,0 +1,9 @@
+[package]
+name = "zeno-backend-impeller"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zeno-core = { path = "../zeno-core" }
+zeno-graphics = { path = "../zeno-graphics" }
