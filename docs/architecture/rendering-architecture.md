@@ -1,8 +1,8 @@
 # Rendering Architecture
 
 ## 状态
-- 状态：已完成基础分层
-- 阶段判断：主渲染链路已经成立，但当前仍是以桌面原型验证为主，尚未进入 retained tree 和高性能增量刷新阶段。
+- 状态：已完成主链路 MVP
+- 阶段判断：主渲染链路已经从“桌面双后端原型”推进到“统一 session + retained/patch 提交”阶段；桌面最成熟，移动端已经具备 attachment、platform presenter builder 与 render session 工厂链路。
 
 ## 目标
 - 让 Rust 保持框架控制平面。
@@ -16,31 +16,37 @@
 - `zeno-graphics` 负责 `Scene`、`DrawCommand`、`Renderer` trait 与 backend probe 契约。
 - `zeno-runtime` 负责后端优先级、探测、回退选择与初始化策略。
 - `zeno-backend-impeller` 与 `zeno-backend-skia` 负责具体后端实现。
-- `zeno-shell` 负责宿主窗口、事件循环、surface 生命周期与桌面 presenter 启动。
-- `zeno-compose` 负责声明式节点树、最小布局以及从节点树到 `Scene` 的转换。
+- `zeno-shell` 负责宿主窗口、事件循环、surface 生命周期，以及桌面/移动端 render session 创建与 attachment。
+- `zeno-compose` 负责声明式节点树、retained tree、最小布局以及从节点树到 `SceneSubmit` 的转换。
 
 ## 当前渲染流程
 1. Shell 根据当前平台生成 `NativeSurface` 与平台描述。
 2. Runtime 读取 `RendererConfig` 并生成后端尝试顺序。
 3. 各 backend 根据平台执行 probe，返回可用性与失败原因。
-4. Runtime 选出第一个可用 backend，并返回解析结果。
-5. Compose 层将声明式节点树翻译成后端无关的 `Scene`。
-6. Shell 根据后端类型启动对应桌面 presenter，把 `Scene` 提交给具体 GPU 或 Canvas 路径。
+4. Runtime 选出第一个可用 backend，并返回 `ResolvedSession`。
+5. Compose 层将声明式节点树翻译成后端无关的 `SceneSubmit`，在 paint-only 或局部更新时可走 patch 路径。
+6. Shell 基于 `ResolvedSession` 创建桌面或移动端 render session，并把 `SceneSubmit` 提交给具体 GPU 或 Canvas 路径。
+7. 移动端在进入 render session 前，还会经过 `MobileAttachContext -> MobilePresenterInterface -> platform presenter builder` 的宿主绑定与 presenter 规划过程。
 
 ## 已验证能力
 - Workspace 已按 `core / graphics / runtime / shell / compose / text / backend-*` 垂直拆分。
 - Runtime 已支持 Impeller 优先、Skia 兜底，并能记录每次解析尝试。
-- Skia 已能把 `Scene` 翻译为真实 Canvas 绘制命令。
-- macOS 已具备 Impeller Metal presenter 原型，可走桌面窗口渲染路径。
+- `zeno-compose` 已具备 retained tree、dirty propagation、layout dirty roots 与局部 relayout 路径。
+- `zeno-graphics` 已具备 `SceneBlock`、`ScenePatch`、`SceneSubmit` 数据结构。
+- Skia 已能消费结构化 scene，并具备 dirty bounds 局部提交路径。
+- macOS 已具备 Impeller Metal presenter，可走桌面窗口渲染路径。
+- 移动端 shell 已具备 `session binding -> attachment -> presenter interface -> render session` 主链路。
+- Android/iOS 已分别具备 native-window / view / metal-layer presenter builder，session 不再直接持有通用 renderer。
 
-## 仍然缺少的关键层
-- 保留式 UI 树与脏标记传播。
-- 局部布局、局部重绘与资源缓存。
-- 统一的 render session 抽象，避免 runtime 和 shell 双重按 backend 分发。
-- 真实文本 shaping、glyph cache 与 paragraph cache。
+## 当前仍待补齐
+- `Scene` 仍未演进到 layer、clip、transform 等更高阶结构。
+- Impeller 真局部 GPU 提交仍未完整落地，非 macOS 桌面路径也未完成。
+- 移动端 presenter 虽已成型，但 `ANativeWindow / UIView / CAMetalLayer` 到真实 swapchain、drawable、command buffer 生命周期的最后一跳仍未完全原生化。
+- 文本主路径仍缺少真实 shaping、glyph cache 与 paragraph cache。
+- 工程化验证能力仍缺少 bench gallery、scene dump、layout dump。
 
 ## 为什么保持这种形状
 - 选择器放在 runtime，可避免上层直接硬编码 Skia 或 Impeller。
 - graphics API 可以在平台策略变化时尽量保持稳定。
 - 文本系统独立存在，便于后续单独升级到真实 shaping 和缓存模型。
-- shell 与 backend 分离，便于将来把桌面验证结果迁移到移动端宿主实现。
+- shell 与 backend 分离，便于把桌面与移动端宿主能力统一收敛在同一平台集成层。

@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[test]
-    fn compose_submit_returns_patch_stats_for_paint_only_updates() {
+    fn compose_submit_returns_full_scene_when_paint_invalidation_keeps_commands_identical() {
         let title = text("Title").key("title");
         let title_id = title.id();
         let root = column(vec![title, text("Body").key("body")]).spacing(4.0);
@@ -123,13 +123,56 @@ mod tests {
         engine.invalidate_node(title_id, DirtyReason::Paint);
         let submit = engine.compose_submit(&root, Size::new(320.0, 240.0));
 
+        assert!(matches!(submit, SceneSubmit::Full(_)));
+    }
+
+    #[test]
+    fn compose_submit_reconciles_keyed_rebuild_as_paint_patch() {
+        let first = column(vec![text("Title").key("title"), text("Body").key("body")])
+            .spacing(4.0)
+            .key("root");
+        let second = column(vec![
+            text("Title").key("title").foreground(Color::WHITE),
+            text("Body").key("body"),
+        ])
+        .spacing(4.0)
+        .key("root");
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+        let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
         match submit {
-            SceneSubmit::Patch { patch, current } => {
+            SceneSubmit::Patch { patch, .. } => {
                 assert_eq!(patch.upserts.len(), 1);
-                assert_eq!(patch.removes.len(), 0);
-                assert!(!current.blocks.is_empty());
+                assert!(patch.removes.is_empty());
             }
             SceneSubmit::Full(_) => panic!("expected patch submit"),
         }
+        assert_eq!(engine.stats().layout_passes, 1);
+        assert_eq!(engine.stats().compose_passes, 2);
+    }
+
+    #[test]
+    fn compose_submit_tracks_removed_blocks_for_keyed_rebuilds() {
+        let first = column(vec![text("Title").key("title"), text("Body").key("body")])
+            .spacing(4.0)
+            .key("root");
+        let second = column(vec![text("Title").key("title")])
+            .spacing(4.0)
+            .key("root");
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+        let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+        match submit {
+            SceneSubmit::Patch { patch, .. } => {
+                assert_eq!(patch.removes, vec![text("Body").key("body").id().0]);
+                assert!(!patch.upserts.is_empty());
+            }
+            SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
+        assert_eq!(engine.stats().layout_passes, 2);
     }
 }

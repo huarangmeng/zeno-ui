@@ -13,8 +13,8 @@
 - Windows：计划桥接 Win32 surface；当前以 Skia 兜底策略为主。
 - macOS：计划桥接 `NSView` 与 Metal layer；当前已有 Metal presenter 原型，Impeller 风格路径优先。
 - Linux：计划桥接 Wayland/X11；当前以 Skia 兜底策略为主。
-- Android：计划桥接 `Surface`/`ANativeWindow`；当前已具备 session factory / viewport 绑定骨架。
-- iOS：计划桥接 `UIView`/`CAMetalLayer`；当前已具备 session factory / viewport 绑定骨架。
+- Android：计划桥接 `Surface`/`ANativeWindow`；当前已具备 session factory、attach context 与 native-window presenter builder。
+- iOS：计划桥接 `UIView`/`CAMetalLayer`；当前已具备 session factory、attach context 与 view/metal-layer presenter builder。
 
 ## 当前实现
 - `MinimalShell` 是跨平台 fallback，只生成 `NativeSurface`（用于配置与 backend 解析），不创建实际窗口。
@@ -23,11 +23,13 @@
 - `MobileShell::prepare_app_session / bind_session` 已能基于统一 `ResolvedSession`、viewport 与 backend 规划移动端 session 绑定结果。
 - `MobileShell::attach_session / prepare_attached_app_session` 已引入 `MobileAttachContext`，把 Android `ANativeWindow`、iOS `UIView/CAMetalLayer` 的宿主交接抽象成统一 attach 骨架。
 - `MobileShell::create_render_session / prepare_render_session` 已可把 attached session 转成真实 `RenderSession` 对象，形成与桌面一致的 `descriptor -> attach -> session build` 链路。
+- Android/iOS 的 presenter 创建接口已经固定到 `MobilePresenterInterface`：区分 `AndroidSkiaNativeWindow`、`AndroidImpellerNativeWindow`、`IosSkiaView`、`IosSkiaMetalLayer`、`IosImpellerMetalLayer` 五类构建入口。
+- `platform::android` 与 `platform::ios` 现在分别承载具体 presenter builder，移动端 session 不再直接持有通用 renderer，而是通过平台 presenter 适配层提交场景。
 
 ## 当前限制
 - `NativeSurface` 目前更多承担“平台描述 + 逻辑尺寸”角色，不携带可用于 backend 直接呈现的原生句柄。
 - 桌面 presenter 的初始化依赖运行窗口路径，与 `create_surface` 分离；当前虽然 descriptor 已统一，但原生句柄仍未前置到 surface 抽象里。
-- 移动端虽然已可构建 `RenderSession`，但当前 session 仍以统一占位实现为主，尚未真正桥接 `ANativeWindow` / `UIView` / `CAMetalLayer` 到各 backend 的原生 presenter。
+- 移动端虽然已具备平台 presenter 适配层，但 Skia GLES / Skia Metal / Impeller Vulkan / Impeller Metal 目前仍通过 backend renderer 完成提交，尚未持有真实 swapchain / command buffer / drawable 生命周期。
 
 ## 下一步
 - 让 shell 能提供更强的 surface 描述（可选携带原生句柄 / layer / swapchain 相关信息），并把这一模型继续外推到移动端 presenter 创建链路。

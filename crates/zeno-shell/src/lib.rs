@@ -14,8 +14,9 @@ pub use shell::{
 pub use mobile::{
     AndroidAttachContext, IosMetalLayerAttachContext, IosViewAttachContext, MobileAttachContext,
     MobileAttachedSession, MobileHostKind, MobilePlatform, MobilePresenterAttachment,
-    MobilePresenterKind, MobileRenderSessionHandle, MobileSessionBinding, MobileShell,
-    MobileViewport, BoxedMobileRenderSession, create_mobile_render_session,
+    MobilePresenterInterface, MobilePresenterKind, MobileRenderSessionHandle,
+    MobileSessionBinding, MobileShell, MobileViewport, BoxedMobileRenderSession,
+    create_mobile_render_session,
 };
 #[cfg(feature = "mobile_android")]
 pub use mobile::AndroidShell;

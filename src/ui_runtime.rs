@@ -136,6 +136,8 @@ impl<'a> UiRuntime<'a> {
 mod tests {
     use super::UiRuntime;
     use crate::{column, text, Backend, FallbackTextSystem, Size};
+    use zeno_core::Color;
+    use zeno_graphics::SceneSubmit;
 
     #[test]
     fn runtime_reuses_cached_scene_for_paint_requests() {
@@ -200,5 +202,36 @@ mod tests {
         let second = runtime.prepare_frame().expect("frame").expect("scene");
 
         assert_eq!(second.compose_stats.layout_passes, first.compose_stats.layout_passes + 1);
+    }
+
+    #[test]
+    fn runtime_downgrades_keyed_root_rebuild_to_paint_patch() {
+        let mut runtime = UiRuntime::new(&FallbackTextSystem);
+        runtime.set_root(
+            column(vec![text("Hello").key("title"), text("World").key("body")])
+                .spacing(4.0)
+                .key("root"),
+        );
+        runtime.resize(Size::new(320.0, 240.0));
+
+        let first = runtime.prepare_frame().expect("frame").expect("scene");
+        runtime.set_root(
+            column(vec![
+                text("Hello").key("title").foreground(Color::WHITE),
+                text("World").key("body"),
+            ])
+            .spacing(4.0)
+            .key("root"),
+        );
+        let second = runtime.prepare_frame().expect("frame").expect("scene");
+
+        assert_eq!(second.compose_stats.layout_passes, first.compose_stats.layout_passes);
+        match second.scene_submit {
+            SceneSubmit::Patch { patch, .. } => {
+                assert_eq!(patch.upserts.len(), 1);
+                assert!(patch.removes.is_empty());
+            }
+            SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
     }
 }

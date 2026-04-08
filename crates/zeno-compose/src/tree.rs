@@ -56,18 +56,13 @@ impl RetainedComposeTree {
     }
 
     #[must_use]
-    pub fn can_reuse(&self, root: &Node, viewport: Size) -> bool {
-        self.dirty.is_clean() && self.viewport == viewport && self.root == *root
-    }
-
-    #[must_use]
-    pub fn can_repaint(&self, root: &Node, viewport: Size) -> bool {
-        self.viewport == viewport && self.root == *root
-    }
-
-    #[must_use]
     pub fn scene(&self) -> &Scene {
         &self.scene
+    }
+
+    #[must_use]
+    pub fn root(&self) -> &Node {
+        &self.root
     }
 
     #[must_use]
@@ -179,6 +174,11 @@ impl RetainedComposeTree {
         self.scene = Scene::from_blocks(self.viewport, blocks);
         self.dirty = DirtyFlags::clean();
         self.layout_dirty_roots.clear();
+    }
+
+    pub fn sync_root(&mut self, root: Node) {
+        self.parent_by_node = index_parent_nodes(&root);
+        self.root = root;
     }
 
     fn layout_root_for(&self, node_id: NodeId) -> NodeId {

@@ -60,20 +60,30 @@ impl<'a> ComposeEngine<'a> {
 
     #[must_use]
     pub fn compose_submit(&mut self, root: &Node, viewport: Size) -> SceneSubmit {
-        if let Some(retained) = self.retained.as_ref() {
-            if retained.can_reuse(root, viewport) {
+        if let Some(retained) = self.retained.as_mut() {
+            if retained.scene().size == viewport && retained.root() != root {
+                reconcile_root_change(retained, root);
+            }
+        }
+
+        if let Some(retained) = self.retained.as_mut() {
+            if retained.dirty().is_clean() && retained.scene().size == viewport {
+                if retained.root() != root {
+                    retained.sync_root(root.clone());
+                }
                 self.stats.cache_hits += 1;
                 return SceneSubmit::Full(retained.scene().clone());
             }
         }
 
         if let Some(retained) = self.retained.as_mut() {
-            if retained.dirty().requires_paint_only() && retained.can_repaint(root, viewport) {
+            if retained.dirty().requires_paint_only() && retained.scene().size == viewport {
                 self.stats.compose_passes += 1;
-                let dirty_node_ids = retained.dirty_node_ids();
+                let previous_scene = retained.scene().clone();
                 repaint_dirty_nodes(root, retained);
+                retained.sync_root(root.clone());
                 let scene = retained.scene().clone();
-                let patch = patch_for_nodes(&scene, &dirty_node_ids);
+                let patch = diff_scenes(&previous_scene, &scene);
                 return if patch.is_empty() {
                     SceneSubmit::Full(scene)
                 } else {
@@ -83,9 +93,10 @@ impl<'a> ComposeEngine<'a> {
         }
 
         if let Some(retained) = self.retained.as_mut() {
-            if retained.dirty().requires_layout() && retained.can_repaint(root, viewport) {
+            if retained.dirty().requires_layout() && retained.scene().size == viewport {
                 self.stats.compose_passes += 1;
                 self.stats.layout_passes += 1;
+                let previous_scene = retained.scene().clone();
                 let layout_dirty_roots: HashSet<NodeId> =
                     retained.layout_dirty_roots().into_iter().collect();
                 let measured = relayout_node(
@@ -108,7 +119,12 @@ impl<'a> ComposeEngine<'a> {
                     fragments_by_node,
                     scene.clone(),
                 );
-                return SceneSubmit::Full(scene);
+                let patch = diff_scenes(&previous_scene, &scene);
+                return if patch.is_empty() {
+                    SceneSubmit::Full(scene)
+                } else {
+                    SceneSubmit::Patch { patch, current: scene }
+                };
             }
         }
 
@@ -296,19 +312,156 @@ fn build_scene(
     Scene::from_blocks(viewport, blocks)
 }
 
-fn patch_for_nodes(scene: &Scene, node_ids: &[NodeId]) -> ScenePatch {
-    let upserts = scene
+fn diff_scenes(previous: &Scene, current: &Scene) -> ScenePatch {
+    let previous_by_id: HashMap<u64, &zeno_graphics::SceneBlock> = previous
         .blocks
         .iter()
-        .filter(|block| node_ids.iter().any(|node_id| node_id.0 == block.node_id))
+        .map(|block| (block.node_id, block))
+        .collect();
+    let upserts = current
+        .blocks
+        .iter()
+        .filter(|block| previous_by_id.get(&block.node_id).copied() != Some(block))
         .cloned()
         .collect();
+    let removes = previous
+        .blocks
+        .iter()
+        .filter(|block| !current.blocks.iter().any(|current_block| current_block.node_id == block.node_id))
+        .map(|block| block.node_id)
+        .collect();
     ScenePatch {
-        size: scene.size,
-        base_block_count: scene.blocks.len(),
+        size: current.size,
+        base_block_count: previous.blocks.len(),
         upserts,
-        removes: Vec::new(),
+        removes,
     }
+}
+
+fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &Node) {
+    let previous_root = retained.root().clone();
+    if previous_root.id() != root.id() {
+        retained.mark_dirty(DirtyReason::Structure);
+        return;
+    }
+    let mut previous_by_id = HashMap::new();
+    index_nodes(&previous_root, &mut previous_by_id);
+    reconcile_node(retained, &previous_by_id, root);
+}
+
+fn reconcile_node<'a>(
+    retained: &mut RetainedComposeTree,
+    previous_by_id: &HashMap<NodeId, &'a Node>,
+    current: &Node,
+) {
+    match previous_by_id.get(&current.id()).copied() {
+        Some(previous) => {
+            if let Some(reason) = local_change_reason(previous, current) {
+                retained.mark_node_dirty(current.id(), reason);
+            }
+        }
+        None => {
+            retained.mark_dirty(DirtyReason::Structure);
+            return;
+        }
+    }
+
+    match &current.kind {
+        NodeKind::Container(child) => reconcile_node(retained, previous_by_id, child),
+        NodeKind::Stack { children, .. } => {
+            for child in children {
+                reconcile_node(retained, previous_by_id, child);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn index_nodes<'a>(node: &'a Node, indexed: &mut HashMap<NodeId, &'a Node>) {
+    indexed.insert(node.id(), node);
+    match &node.kind {
+        NodeKind::Container(child) => index_nodes(child, indexed),
+        NodeKind::Stack { children, .. } => {
+            for child in children {
+                index_nodes(child, indexed);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn local_change_reason(previous: &Node, current: &Node) -> Option<DirtyReason> {
+    if previous.id() != current.id() {
+        return Some(DirtyReason::Structure);
+    }
+
+    match (&previous.kind, &current.kind) {
+        (NodeKind::Text(previous_text), NodeKind::Text(current_text)) => {
+            if previous_text.content != current_text.content
+                || previous_text.font != current_text.font
+                || previous_text.font_size != current_text.font_size
+            {
+                return Some(DirtyReason::Text);
+            }
+            style_change_reason(previous, current, true, false)
+        }
+        (NodeKind::Spacer(previous_spacer), NodeKind::Spacer(current_spacer)) => {
+            if previous_spacer != current_spacer {
+                return Some(DirtyReason::Layout);
+            }
+            style_change_reason(previous, current, false, false)
+        }
+        (NodeKind::Container(previous_child), NodeKind::Container(current_child)) => {
+            if previous_child.id() != current_child.id() {
+                return Some(DirtyReason::Structure);
+            }
+            style_change_reason(previous, current, false, false)
+        }
+        (
+            NodeKind::Stack {
+                axis: previous_axis,
+                children: previous_children,
+            },
+            NodeKind::Stack {
+                axis: current_axis,
+                children: current_children,
+            },
+        ) => {
+            if previous_axis != current_axis || child_ids(previous_children) != child_ids(current_children) {
+                return Some(DirtyReason::Structure);
+            }
+            style_change_reason(previous, current, false, true)
+        }
+        _ => Some(DirtyReason::Structure),
+    }
+}
+
+fn style_change_reason(
+    previous: &Node,
+    current: &Node,
+    text_node: bool,
+    stack_node: bool,
+) -> Option<DirtyReason> {
+    let previous_style = &previous.style;
+    let current_style = &current.style;
+    if previous_style.padding != current_style.padding
+        || previous_style.width != current_style.width
+        || previous_style.height != current_style.height
+        || (stack_node && previous_style.spacing != current_style.spacing)
+    {
+        return Some(DirtyReason::Layout);
+    }
+    if previous_style.background != current_style.background
+        || previous_style.corner_radius != current_style.corner_radius
+        || (text_node && previous_style.foreground != current_style.foreground)
+    {
+        return Some(DirtyReason::Paint);
+    }
+    None
+}
+
+fn child_ids(children: &[Node]) -> Vec<NodeId> {
+    children.iter().map(Node::id).collect()
 }
 
 fn collect_scene_blocks(

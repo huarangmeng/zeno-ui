@@ -17,18 +17,18 @@
 - `Scene` 已从单纯扁平命令流升级到 block/patch 提交模型，session 可消费 `SceneSubmit`。
 - 当前剩余差距主要在更细粒度的 dirty root 归并、layer/clip/transform 结构和后端真局部 GPU 提交能力。
 
-### 2. 持续重绘
-- 桌面事件循环仍会在空闲阶段持续请求 redraw。
-- 这种模型对 CPU 占用、功耗与未来动画调度都不友好。
+### 2. 按需重绘主链路已完成，仍待继续细化动画与 invalidation 策略
+- 桌面事件循环已经从空闲态持续 redraw 切换为按需驱动。
+- 当前剩余问题主要在动画驱动、未来更细粒度 invalidation 与观测工具，而不是空闲态自旋本身。
 
 ### 3. runtime 与 shell 边界已完成收敛
 - runtime 已负责解析 backend，并直接生成 `ResolvedSession`。
-- `ResolvedSession` 现在作为纯 descriptor 保留在 runtime；具体桌面 `RenderSession` 创建已统一收敛到 `zeno-shell` 这一平台集成层。
-- 当前剩余工作主要是继续把移动端 presenter 能力接入同一平台集成 crate，而不是拆成多个平台专用 crate。
+- `ResolvedSession` 现在作为纯 descriptor 保留在 runtime；具体桌面/移动端 `RenderSession` 创建已统一收敛到 `zeno-shell` 这一平台集成层。
+- 当前剩余工作主要是把移动端已成型的 presenter builder 继续推进到真实 GPU 生命周期，而不是拆成多个平台专用 crate。
 
-### 4. Scene 模型过于扁平
-- 当前 `Scene` 本质上是 `Vec<DrawCommand>`。
-- 这足够验证“能画出来”，但不利于局部重绘、批处理、资源句柄化和后端缓存。
+### 4. Scene 已完成第一阶段结构化，第二阶段仍待推进
+- 当前 `Scene` 已具备 `SceneBlock`、`ScenePatch`、`SceneSubmit`，不再只是单纯扁平命令流。
+- 当前剩余差距主要是 layer、clip、transform、更强的资源句柄化与更缓存友好的结构。
 
 ### 5. 文本系统仍偏占位
 - 当前 `zeno-text` 仍以 fallback 测量为主。
@@ -64,6 +64,7 @@
 - 状态：已完成
 - 已完成 `ResolvedSession -> RenderSession` 链路，runtime 保持解析与调度职责，shell 作为单一平台集成层负责具体会话创建。
 - 已移除 shell 内“按 backend 二次分发再决定谁负责”的旧模式，统一入口现在是 `ResolvedSession` + 平台集成工厂。
+- 移动端已进一步收敛为 `binding -> attachment -> presenter interface -> platform presenter builder -> render session` 单链路。
 
 ### P0：改造帧调度
 - 去掉空闲态持续 redraw。
@@ -139,7 +140,7 @@
 - 新开发者可以通过 preset feature 与 benchmark 场景快速理解系统行为。
 
 ## 当前已完成项
-- `ResolvedSession` 已成为统一 session descriptor，平台集成层可基于它创建具体桌面 `RenderSession`。
+- `ResolvedSession` 已成为统一 session descriptor，平台集成层可基于它创建具体桌面/移动端 `RenderSession`。
 - `UiRuntime` 已成为内部重绘决策与 frame 准备入口，对上层隐藏 `ComposeEngine`。
 - `FrameScheduler` 已将桌面空闲态持续 redraw 改为按需重绘。
 - `RetainedComposeTree` 已具备 `NodeId`、dirty propagation、layout dirty roots 与局部 relayout 主链路。
@@ -147,6 +148,7 @@
 - `SkiaTextCache` 已具备 typeface/font 缓存与命中统计。
 - 帧统计已输出 `block_count`、`patch_upserts`、`patch_removes`，可直接观察增量提交行为。
 - 根 crate 已提供 `macos`、`linux`、`windows`、`android`、`ios` 平台 preset feature，降低首次接入成本。
+- 移动端已固定 `MobilePresenterInterface`，并为 Android/iOS 建立 platform presenter builder 与 renderer-backed session 适配层。
 
 ## 当前未完成项
 - layout dirty 仍可继续细化到更小祖先集合与更精确的兄弟影响范围，当前为 MVP 级 dirty roots 策略。
