@@ -1,8 +1,6 @@
 use skia_safe as sk;
-use zeno_core::{Backend, Color, ZenoError};
-use zeno_graphics::{
-    DrawCommand, FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene, Shape,
-};
+use zeno_core::Color;
+use zeno_graphics::{DrawCommand, Scene, Shape};
 
 pub fn render_scene_to_canvas(canvas: &sk::Canvas, scene: &Scene) {
     for cmd in &scene.commands {
@@ -47,63 +45,23 @@ pub fn render_scene_to_canvas(canvas: &sk::Canvas, scene: &Scene) {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
-pub struct SkiaRenderer;
-
-impl Renderer for SkiaRenderer {
-    fn kind(&self) -> Backend {
-        Backend::Skia
-    }
-
-    fn capabilities(&self) -> RenderCapabilities {
-        RenderCapabilities {
-            gpu_compositing: false,
-            text_shaping: true,
-            filters: true,
-            offscreen_rendering: true,
-        }
-    }
-
-    fn render(&self, _surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
-        let mut surface = sk::surfaces::raster_n32_premul((
-            scene.size.width as i32,
-            scene.size.height as i32,
-        ))
-        .ok_or_else(|| ZenoError::InvalidConfiguration("failed to create skia surface".into()))?;
-        let canvas = surface.canvas();
-        render_scene_to_canvas(canvas, scene);
-
-        let image = surface.image_snapshot();
-        if let Some(data) = image.encode(None, sk::EncodedImageFormat::PNG, 100) {
-            let _ = std::fs::create_dir_all("target");
-            let _ = std::fs::write("target/zeno_skia_output.png", data.as_bytes().to_vec());
-        }
-
-        Ok(FrameReport {
-            backend: self.kind(),
-            command_count: scene.commands.len(),
-            surface_id: "skia-raster".to_string(),
-        })
-    }
-}
-
-pub fn sk_color(c: Color) -> sk::Color {
-    sk::Color::from_argb(c.alpha, c.red, c.green, c.blue)
+pub fn sk_color(color: Color) -> sk::Color {
+    sk::Color::from_argb(color.alpha, color.red, color.green, color.blue)
 }
 
 fn draw_shape(canvas: &sk::Canvas, shape: &Shape, paint: &sk::Paint) {
     match shape {
-        Shape::Rect(r) => {
-            let rect = sk::Rect::from_xywh(r.origin.x, r.origin.y, r.size.width, r.size.height);
+        Shape::Rect(rect) => {
+            let rect = sk::Rect::from_xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
             canvas.draw_rect(rect, paint);
         }
         Shape::RoundedRect { rect, radius } => {
-            let rr = sk::RRect::new_rect_xy(
+            let rounded = sk::RRect::new_rect_xy(
                 sk::Rect::from_xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height),
                 *radius,
                 *radius,
             );
-            canvas.draw_rrect(rr, paint);
+            canvas.draw_rrect(rounded, paint);
         }
         Shape::Circle { center, radius } => {
             canvas.draw_circle((center.x, center.y), *radius, paint);

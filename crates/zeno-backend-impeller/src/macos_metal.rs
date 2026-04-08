@@ -1,4 +1,6 @@
-use font_kit::source::SystemSource;
+mod shaders;
+mod text;
+
 use fontdue::Font;
 use metal::{
     Buffer, CommandQueue, CompileOptions, Device, MTLClearColor, MTLBlendFactor, MTLLoadAction,
@@ -8,78 +10,8 @@ use metal::{
 };
 use zeno_core::{Color, Rect, ZenoError};
 use zeno_graphics::{DrawCommand, Scene, Shape};
-
-const SHADERS: &str = r#"
-    #include <metal_stdlib>
-    using namespace metal;
-
-    struct ColorVertex {
-        float2 clip_position;
-        float2 local_position;
-        float2 size;
-        float4 color;
-        float radius;
-    };
-
-    struct ColorOut {
-        float4 position [[position]];
-        float2 local_position;
-        float2 size;
-        float4 color;
-        float radius;
-    };
-
-    vertex ColorOut color_vertex(uint vid [[vertex_id]], const device ColorVertex* vertices [[buffer(0)]]) {
-        ColorVertex v = vertices[vid];
-        ColorOut out;
-        out.position = float4(v.clip_position, 0.0, 1.0);
-        out.local_position = v.local_position;
-        out.size = v.size;
-        out.color = v.color;
-        out.radius = v.radius;
-        return out;
-    }
-
-    fragment float4 color_fragment(ColorOut in [[stage_in]]) {
-        float radius = min(in.radius, min(in.size.x, in.size.y) * 0.5);
-        if (radius > 0.0) {
-            float2 nearest = clamp(in.local_position, float2(radius, radius), in.size - float2(radius, radius));
-            float2 delta = in.local_position - nearest;
-            if (dot(delta, delta) > radius * radius) {
-                discard_fragment();
-            }
-        }
-        return in.color;
-    }
-
-    struct TextVertex {
-        float2 clip_position;
-        float2 uv;
-        float4 color;
-    };
-
-    struct TextOut {
-        float4 position [[position]];
-        float2 uv;
-        float4 color;
-    };
-
-    vertex TextOut text_vertex(uint vid [[vertex_id]], const device TextVertex* vertices [[buffer(0)]]) {
-        TextVertex v = vertices[vid];
-        TextOut out;
-        out.position = float4(v.clip_position, 0.0, 1.0);
-        out.uv = v.uv;
-        out.color = v.color;
-        return out;
-    }
-
-    constexpr sampler text_sampler(address::clamp_to_edge, filter::linear);
-
-    fragment float4 text_fragment(TextOut in [[stage_in]], texture2d<float> mask [[texture(0)]]) {
-        float alpha = mask.sample(text_sampler, in.uv).r;
-        return float4(in.color.rgb, in.color.a * alpha);
-    }
-"#;
+use shaders::SHADERS;
+use text::{load_system_font, rasterize_text};
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -327,48 +259,6 @@ fn build_text_vertices(
     .collect()
 }
 
-fn rasterize_text(font: &Font, text: &str, font_size: f32) -> Option<(Vec<u8>, u32, u32, f32)> {
-    let size = font_size.max(12.0);
-    let line_metrics = font.horizontal_line_metrics(size)?;
-    let mut glyphs = Vec::new();
-    let mut total_width = 0.0f32;
-    let mut max_height = 0usize;
-
-    for ch in text.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, size);
-        total_width += metrics.advance_width.max(1.0);
-        max_height = max_height.max(metrics.height.max(line_metrics.new_line_size.ceil() as usize));
-        glyphs.push((metrics, bitmap));
-    }
-
-    let width = total_width.ceil().max(1.0) as usize;
-    let height = max_height.max(1);
-    let mut alpha = vec![0u8; width * height];
-    let baseline = line_metrics.ascent.ceil() as isize;
-    let mut pen_x = 0.0f32;
-
-    for (metrics, bitmap) in glyphs {
-        let glyph_x = (pen_x + metrics.xmin as f32).max(0.0) as usize;
-        let glyph_y = (baseline - metrics.height as isize - metrics.ymin as isize).max(0) as usize;
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let src = bitmap[row * metrics.width + col];
-                if src == 0 {
-                    continue;
-                }
-                let x = glyph_x + col;
-                let y = glyph_y + row;
-                if x < width && y < height {
-                    alpha[y * width + x] = alpha[y * width + x].max(src);
-                }
-            }
-        }
-        pen_x += metrics.advance_width;
-    }
-
-    Some((alpha, width as u32, height as u32, baseline as f32))
-}
-
 fn make_text_texture(device: &Device, alpha: &[u8], width: u32, height: u32) -> Texture {
     let descriptor = TextureDescriptor::new();
     descriptor.set_texture_type(MTLTextureType::D2);
@@ -391,27 +281,6 @@ fn make_text_texture(device: &Device, alpha: &[u8], width: u32, height: u32) -> 
         width as u64,
     );
     texture
-}
-
-fn load_system_font() -> Option<Font> {
-    let families = [
-        "PingFang SC",
-        "Helvetica Neue",
-        "Arial",
-        "Noto Sans CJK SC",
-        "Noto Sans",
-    ];
-    for family in families {
-        if let Ok(handle) = SystemSource::new().select_family_by_name(family)
-            && let Some(font_handle) = handle.fonts().first()
-            && let Ok(font) = font_handle.load()
-            && let Some(bytes) = font.copy_font_data()
-            && let Ok(parsed) = Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default())
-        {
-            return Some(parsed);
-        }
-    }
-    None
 }
 
 fn clear_color_for_scene(scene: &Scene) -> MTLClearColor {

@@ -15,4 +15,4 @@ default-features = false
 features = ["textlayout"]
 
 [features]
-real_skia = ["skia-safe"]
+native_skia = ["skia-safe"]

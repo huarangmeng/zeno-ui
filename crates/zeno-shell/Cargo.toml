@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 zeno-backend-impeller = { path = "../zeno-backend-impeller" }
-zeno-backend-skia = { path = "../zeno-backend-skia", features = ["real_skia"] }
+zeno-backend-skia = { path = "../zeno-backend-skia", features = ["native_skia"] }
 zeno-core = { path = "../zeno-core" }
 zeno-graphics = { path = "../zeno-graphics" }
 
