@@ -12,5 +12,6 @@ pub struct RenderSurface {
 pub struct FrameReport {
     pub backend: Backend,
     pub command_count: usize,
+    pub resource_count: usize,
     pub surface_id: String,
 }

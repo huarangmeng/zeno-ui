@@ -1,6 +1,6 @@
 use zeno_ui::{
-    column, compose_scene, container, text, AppConfig, BackendResolver, Color, DrawCommand,
-    EdgeInsets, WindowConfig,
+    column, container, text, zeno_session_log, AppConfig, Color, DebugConfig, EdgeInsets,
+    SceneSubmit, UiRuntime, WindowConfig,
 };
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -15,23 +15,12 @@ fn main() {
             title: "Zeno Minimal App".to_string(),
             ..WindowConfig::default()
         },
+        debug: DebugConfig {
+            frame_stats: true,
+            ..DebugConfig::default()
+        },
         ..AppConfig::default()
     };
-    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    let native_surface = {
-        let shell = DesktopShell;
-        shell.create_surface(&config.window)
-    };
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    let native_surface = {
-        let shell = MinimalShell;
-        shell.create_surface(&config.window)
-    };
-    let resolver = BackendResolver::new();
-    let resolved = resolver
-        .resolve(native_surface.descriptor.platform, &config.renderer)
-        .expect("renderer should resolve");
     let root = container(
         column(vec![
             text("Zeno UI").font_size(28.0).foreground(Color::WHITE),
@@ -45,20 +34,49 @@ fn main() {
     .background(Color::rgba(39, 110, 241, 255))
     .corner_radius(24.0)
     .width(420.0);
-    let mut scene = compose_scene(&root, config.window.size, &zeno_ui::FallbackTextSystem);
-    scene.push(DrawCommand::Clear(Color::WHITE));
-    scene.commands.rotate_right(1);
-
-    println!(
-        "platform={} backend={} commands={} surface={}",
-        native_surface.descriptor.platform,
-        resolved.backend_kind,
-        scene.commands.len(),
-        native_surface.surface.id
-    );
+    let mut runtime = UiRuntime::new(&zeno_ui::FallbackTextSystem);
+    runtime.set_root(root);
+    runtime.resize(config.window.size);
+    let _first_frame = runtime.prepare_frame().expect("first frame").expect("scene");
+    runtime.request_paint();
+    let native_surface = DesktopShell.create_surface(&config.window);
+    let (session, frame) = runtime
+        .prepare_resolved_frame(native_surface.descriptor.platform, &config)
+        .expect("resolved frame")
+        .expect("second frame");
+    let stats_after_paint = frame.compose_stats;
+    let resource_count = frame.scene.resource_keys().len();
 
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-    DesktopShell
-        .run_backend_scene_window(&config.window, resolved.backend_kind, scene)
-        .expect("desktop window should stay open until closed");
+    {
+        let outcome = zeno_ui::ResolvedWindowRun {
+            backend: session.backend.backend_kind,
+            attempts: session.backend.attempts.clone(),
+        };
+        DesktopShell
+            .run_pending_scene_window(
+                session,
+                match frame.scene_submit {
+                    SceneSubmit::Full(scene) => SceneSubmit::Full(scene),
+                    SceneSubmit::Patch { patch, current } => SceneSubmit::Patch { patch, current },
+                },
+            )
+            .expect("desktop window should stay open until closed");
+        zeno_session_log!(
+            info,
+            backend = ?outcome.backend,
+            attempts = outcome.attempts.len(),
+            compose_passes = stats_after_paint.compose_passes,
+            layout_passes = stats_after_paint.layout_passes,
+            cache_hits = stats_after_paint.cache_hits,
+            resources = resource_count,
+            recomposed_after_invalidate = stats_after_paint.compose_passes > 1,
+            "demo session summary"
+        );
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+    {
+        let _ = MinimalShell.create_surface(&config.window);
+    }
 }

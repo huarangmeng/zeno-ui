@@ -22,6 +22,7 @@ impl Renderer for StubSkiaRenderer {
         Ok(FrameReport {
             backend: self.kind(),
             command_count: scene.commands.len(),
+            resource_count: scene.resource_keys().len(),
             surface_id: surface.id.clone(),
         })
     }

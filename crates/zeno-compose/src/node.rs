@@ -1,7 +1,10 @@
+use zeno_core::Color;
 use zeno_text::FontDescriptor;
 
 use crate::style::{Axis, EdgeInsets, Style};
-use zeno_core::Color;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct NodeId(pub u64);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextNode {
@@ -26,11 +29,28 @@ pub enum NodeKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
+    pub id: NodeId,
     pub kind: NodeKind,
     pub style: Style,
 }
 
 impl Node {
+    #[must_use]
+    pub(crate) fn new(id: NodeId, kind: NodeKind, style: Style) -> Self {
+        Self { id, kind, style }
+    }
+
+    #[must_use]
+    pub const fn id(&self) -> NodeId {
+        self.id
+    }
+
+    #[must_use]
+    pub fn key(mut self, key: impl AsRef<str>) -> Self {
+        self.id = NodeId(stable_node_key(key.as_ref().as_bytes()));
+        self
+    }
+
     #[must_use]
     pub fn padding_all(mut self, value: f32) -> Self {
         self.style.padding = EdgeInsets::all(value);
@@ -86,4 +106,13 @@ impl Node {
         }
         self
     }
+}
+
+fn stable_node_key(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }

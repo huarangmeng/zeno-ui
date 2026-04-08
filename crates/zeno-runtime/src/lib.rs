@@ -1,10 +1,14 @@
+mod frame_scheduler;
 mod resolver;
+mod session;
 
-pub use resolver::{BackendAttempt, BackendResolver, ResolvedRenderer};
+pub use frame_scheduler::{FramePhases, FrameScheduler};
+pub use resolver::{BackendAttempt, BackendResolver, ResolvedBackend, ResolvedRenderer};
+pub use session::ResolvedSession;
 
 #[cfg(test)]
 mod tests {
-    use super::BackendResolver;
+    use super::{BackendResolver, FrameScheduler};
     use zeno_core::{Backend, BackendPreference, Platform, RendererConfig, ZenoError};
 
     #[test]
@@ -65,5 +69,33 @@ mod tests {
 
         assert_eq!(resolved.backend_kind, Backend::Skia);
         assert_eq!(resolved.attempts.len(), 1);
+    }
+
+    #[test]
+    fn resolve_backend_returns_attempts_without_constructing_renderer() {
+        let resolver = BackendResolver::new();
+        let resolved = resolver
+            .resolve_backend(Platform::Linux, &RendererConfig::default())
+            .expect("linux should resolve backend");
+
+        assert_eq!(resolved.backend_kind, Backend::Skia);
+        assert_eq!(resolved.attempts.len(), 2);
+        assert!(resolved.attempts[0].reason.is_some());
+    }
+
+    #[test]
+    fn scheduler_only_requests_frames_when_invalidated() {
+        let mut scheduler = FrameScheduler::new();
+
+        assert!(!scheduler.has_pending_frame());
+
+        scheduler.invalidate_layout();
+        assert!(scheduler.has_pending_frame());
+        assert!(scheduler.pending().needs_layout);
+        assert!(scheduler.pending().needs_paint);
+        assert!(scheduler.pending().needs_present);
+
+        scheduler.finish_frame();
+        assert!(!scheduler.has_pending_frame());
     }
 }

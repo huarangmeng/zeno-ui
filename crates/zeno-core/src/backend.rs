@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use crate::platform::Platform;
+use crate::{platform::Platform, ZenoErrorCode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Backend {
@@ -57,18 +57,64 @@ pub enum BackendUnavailableReason {
     MissingPlatformSurface,
     MissingGpuContext,
     ExplicitlyDisabled,
-    RuntimeProbeFailed(String),
+    RuntimeProbeFailed {
+        code: ZenoErrorCode,
+        operation: &'static str,
+        message: String,
+    },
+}
+
+impl BackendUnavailableReason {
+    #[must_use]
+    pub fn runtime_probe_failed(
+        code: ZenoErrorCode,
+        operation: &'static str,
+        message: impl Into<String>,
+    ) -> Self {
+        Self::RuntimeProbeFailed {
+            code,
+            operation,
+            message: message.into(),
+        }
+    }
+
+    #[must_use]
+    pub const fn error_code(&self) -> ZenoErrorCode {
+        match self {
+            Self::NotImplementedForPlatform => ZenoErrorCode::BackendNotImplementedForPlatform,
+            Self::MissingPlatformSurface => ZenoErrorCode::BackendMissingPlatformSurface,
+            Self::MissingGpuContext => ZenoErrorCode::BackendMissingGpuContext,
+            Self::ExplicitlyDisabled => ZenoErrorCode::BackendExplicitlyDisabled,
+            Self::RuntimeProbeFailed { code, .. } => *code,
+        }
+    }
+
+    #[must_use]
+    pub const fn operation(&self) -> &'static str {
+        match self {
+            Self::NotImplementedForPlatform => "probe_backend",
+            Self::MissingPlatformSurface => "probe_backend",
+            Self::MissingGpuContext => "probe_backend",
+            Self::ExplicitlyDisabled => "probe_backend",
+            Self::RuntimeProbeFailed { operation, .. } => operation,
+        }
+    }
+
+    #[must_use]
+    pub fn message(&self) -> &str {
+        match self {
+            Self::NotImplementedForPlatform => "backend is not implemented for platform",
+            Self::MissingPlatformSurface => "platform surface is unavailable",
+            Self::MissingGpuContext => "gpu context is unavailable",
+            Self::ExplicitlyDisabled => "backend is explicitly disabled",
+            Self::RuntimeProbeFailed { message, .. } => message,
+        }
+    }
 }
 
 impl Display for BackendUnavailableReason {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::NotImplementedForPlatform => f.write_str("backend is not implemented for platform"),
-            Self::MissingPlatformSurface => f.write_str("platform surface is unavailable"),
-            Self::MissingGpuContext => f.write_str("gpu context is unavailable"),
-            Self::ExplicitlyDisabled => f.write_str("backend is explicitly disabled"),
-            Self::RuntimeProbeFailed(message) => f.write_str(message),
-        }
+        f.write_str(self.message())
     }
 }
 

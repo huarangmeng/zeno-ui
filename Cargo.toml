@@ -19,6 +19,10 @@ version = "0.1.0"
 license = "MIT OR Apache-2.0"
 authors = ["zeno-ui"]
 
+[workspace.dependencies]
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+
 [package]
 name = "zeno-ui"
 version.workspace = true
@@ -36,3 +40,5 @@ zeno-shell = { path = "crates/zeno-shell", default-features = false }
 [features]
 default = []
 desktop_demo = ["zeno-shell/desktop_winit"]
+mobile_android = ["zeno-shell/mobile_android"]
+mobile_ios = ["zeno-shell/mobile_ios"]

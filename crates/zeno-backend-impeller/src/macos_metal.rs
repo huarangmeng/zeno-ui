@@ -8,7 +8,7 @@ use metal::{
     MTLStoreAction, MTLTextureType, MTLTextureUsage, MetalDrawableRef, RenderPassDescriptor,
     RenderPipelineDescriptor, RenderPipelineState, Texture, TextureDescriptor,
 };
-use zeno_core::{Color, Rect, ZenoError};
+use zeno_core::{Color, Rect, ZenoError, ZenoErrorCode};
 use zeno_graphics::{DrawCommand, Scene, Shape};
 use shaders::SHADERS;
 use text::{load_system_font, rasterize_text};
@@ -45,7 +45,14 @@ impl MetalSceneRenderer {
     pub fn new(device: Device, queue: CommandQueue) -> Result<Self, ZenoError> {
         let library = device
             .new_library_with_source(SHADERS, &CompileOptions::new())
-            .map_err(|error| ZenoError::InvalidConfiguration(error.to_string()))?;
+            .map_err(|error| {
+                ZenoError::invalid_configuration(
+                    ZenoErrorCode::BackendImpellerShaderCompileFailed,
+                    "backend.impeller",
+                    "compile_shaders",
+                    error.to_string(),
+                )
+            })?;
 
         Ok(Self {
             color_pipeline: create_color_pipeline(&device, &library)?,
@@ -65,7 +72,14 @@ impl MetalSceneRenderer {
         let attachment = render_pass
             .color_attachments()
             .object_at(0)
-            .ok_or_else(|| ZenoError::InvalidConfiguration("missing metal color attachment".to_string()))?;
+            .ok_or_else(|| {
+                ZenoError::invalid_configuration(
+                    ZenoErrorCode::BackendImpellerRenderPassAttachmentMissing,
+                    "backend.impeller",
+                    "render_to_drawable",
+                    "missing metal color attachment",
+                )
+            })?;
         attachment.set_texture(Some(drawable.texture()));
         attachment.set_load_action(MTLLoadAction::Clear);
         attachment.set_store_action(MTLStoreAction::Store);
@@ -137,16 +151,37 @@ fn create_color_pipeline(
     let descriptor = RenderPipelineDescriptor::new();
     let vertex = library
         .get_function("color_vertex", None)
-        .map_err(|error| ZenoError::InvalidConfiguration(error.to_string()))?;
+        .map_err(|error| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerColorPipelineFunctionMissing,
+                "backend.impeller",
+                "create_color_pipeline",
+                error.to_string(),
+            )
+        })?;
     let fragment = library
         .get_function("color_fragment", None)
-        .map_err(|error| ZenoError::InvalidConfiguration(error.to_string()))?;
+        .map_err(|error| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerColorPipelineFunctionMissing,
+                "backend.impeller",
+                "create_color_pipeline",
+                error.to_string(),
+            )
+        })?;
     descriptor.set_vertex_function(Some(&vertex));
     descriptor.set_fragment_function(Some(&fragment));
     let attachment = descriptor
         .color_attachments()
         .object_at(0)
-        .ok_or_else(|| ZenoError::InvalidConfiguration("missing color attachment".to_string()))?;
+        .ok_or_else(|| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerColorPipelineAttachmentMissing,
+                "backend.impeller",
+                "create_color_pipeline",
+                "missing color attachment",
+            )
+        })?;
     attachment.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
     attachment.set_blending_enabled(true);
     attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
@@ -155,7 +190,14 @@ fn create_color_pipeline(
     attachment.set_destination_alpha_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
     device
         .new_render_pipeline_state(&descriptor)
-        .map_err(|error| ZenoError::InvalidConfiguration(error.to_string()))
+        .map_err(|error| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerColorPipelineStateCreateFailed,
+                "backend.impeller",
+                "create_color_pipeline",
+                error.to_string(),
+            )
+        })
 }
 
 fn create_text_pipeline(
@@ -165,16 +207,37 @@ fn create_text_pipeline(
     let descriptor = RenderPipelineDescriptor::new();
     let vertex = library
         .get_function("text_vertex", None)
-        .map_err(|error| ZenoError::InvalidConfiguration(error.to_string()))?;
+        .map_err(|error| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerTextPipelineFunctionMissing,
+                "backend.impeller",
+                "create_text_pipeline",
+                error.to_string(),
+            )
+        })?;
     let fragment = library
         .get_function("text_fragment", None)
-        .map_err(|error| ZenoError::InvalidConfiguration(error.to_string()))?;
+        .map_err(|error| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerTextPipelineFunctionMissing,
+                "backend.impeller",
+                "create_text_pipeline",
+                error.to_string(),
+            )
+        })?;
     descriptor.set_vertex_function(Some(&vertex));
     descriptor.set_fragment_function(Some(&fragment));
     let attachment = descriptor
         .color_attachments()
         .object_at(0)
-        .ok_or_else(|| ZenoError::InvalidConfiguration("missing color attachment".to_string()))?;
+        .ok_or_else(|| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerTextPipelineAttachmentMissing,
+                "backend.impeller",
+                "create_text_pipeline",
+                "missing color attachment",
+            )
+        })?;
     attachment.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
     attachment.set_blending_enabled(true);
     attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
@@ -183,7 +246,14 @@ fn create_text_pipeline(
     attachment.set_destination_alpha_blend_factor(MTLBlendFactor::OneMinusSourceAlpha);
     device
         .new_render_pipeline_state(&descriptor)
-        .map_err(|error| ZenoError::InvalidConfiguration(error.to_string()))
+        .map_err(|error| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerTextPipelineStateCreateFailed,
+                "backend.impeller",
+                "create_text_pipeline",
+                error.to_string(),
+            )
+        })
 }
 
 fn build_shape_vertices(

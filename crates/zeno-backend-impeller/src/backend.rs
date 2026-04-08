@@ -1,4 +1,4 @@
-use zeno_core::{Backend, BackendUnavailableReason, Platform, ZenoError};
+use zeno_core::{Backend, BackendUnavailableReason, Platform, ZenoError, ZenoErrorCode};
 use zeno_graphics::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
 
 use crate::renderer::ImpellerRenderer;
@@ -27,7 +27,11 @@ impl GraphicsBackend for ImpellerBackend {
             ),
             Platform::Unknown => BackendProbe::unavailable(
                 self.kind(),
-                BackendUnavailableReason::RuntimeProbeFailed("unknown target platform".to_string()),
+                BackendUnavailableReason::runtime_probe_failed(
+                    ZenoErrorCode::BackendProbeUnknownPlatform,
+                    "probe_backend",
+                    "unknown target platform",
+                ),
             ),
         }
     }

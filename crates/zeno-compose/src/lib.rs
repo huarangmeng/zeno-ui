@@ -3,15 +3,19 @@ mod node;
 mod render;
 mod style;
 mod widgets;
+mod invalidation;
+mod tree;
 
+pub use invalidation::{DirtyFlags, DirtyReason};
 pub use node::{Node, NodeKind, SpacerNode, TextNode};
-pub use render::{compose_scene, ComposeRenderer};
+pub use node::NodeId;
+pub use render::{compose_scene, ComposeEngine, ComposeRenderer, ComposeStats};
 pub use style::{Axis, EdgeInsets, Style};
 pub use widgets::{column, container, row, spacer, text};
 
 #[cfg(test)]
 mod tests {
-    use super::{column, compose_scene, container, row, spacer, text};
+    use super::{column, compose_scene, container, row, spacer, text, ComposeEngine, DirtyReason};
     use zeno_core::{Color, Size};
     use zeno_graphics::DrawCommand;
     use zeno_text::FallbackTextSystem;
@@ -56,5 +60,55 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn compose_engine_reuses_retained_scene_until_invalidated() {
+        let root = column(vec![text("Cache"), text("Hit")]).spacing(4.0);
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let first = engine.compose(&root, Size::new(320.0, 240.0));
+        let second = engine.compose(&root, Size::new(320.0, 240.0));
+
+        assert_eq!(first, second);
+        assert_eq!(engine.stats().compose_passes, 1);
+        assert_eq!(engine.stats().layout_passes, 1);
+        assert_eq!(engine.stats().cache_hits, 1);
+
+        engine.invalidate(DirtyReason::Paint);
+        let third = engine.compose(&root, Size::new(320.0, 240.0));
+
+        assert_eq!(third.commands.len(), second.commands.len());
+        assert_eq!(engine.stats().compose_passes, 2);
+        assert_eq!(engine.stats().layout_passes, 1);
+        assert_eq!(engine.stats().cache_hits, 1);
+    }
+
+    #[test]
+    fn compose_engine_can_repaint_single_dirty_node_without_layout() {
+        let title = text("Title").foreground(Color::WHITE);
+        let title_id = title.id();
+        let root = column(vec![title, text("Body")])
+            .spacing(4.0)
+            .background(Color::rgba(39, 110, 241, 255));
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let baseline = engine.compose(&root, Size::new(320.0, 240.0));
+        engine.invalidate_node(title_id, DirtyReason::Paint);
+        let repainted = engine.compose(&root, Size::new(320.0, 240.0));
+
+        assert_eq!(baseline.commands.len(), repainted.commands.len());
+        assert_eq!(engine.stats().layout_passes, 1);
+        assert_eq!(engine.stats().compose_passes, 2);
+    }
+
+    #[test]
+    fn keyed_nodes_keep_stable_ids_across_rebuilds() {
+        let first = text("Label").key("title");
+        let second = text("Label").key("title");
+        let third = text("Label").key("body");
+
+        assert_eq!(first.id(), second.id());
+        assert_ne!(first.id(), third.id());
     }
 }

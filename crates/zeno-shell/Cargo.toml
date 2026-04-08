@@ -9,6 +9,7 @@ zeno-backend-impeller = { path = "../zeno-backend-impeller" }
 zeno-backend-skia = { path = "../zeno-backend-skia", features = ["native_skia"] }
 zeno-core = { path = "../zeno-core" }
 zeno-graphics = { path = "../zeno-graphics" }
+zeno-runtime = { path = "../zeno-runtime" }
 
 [dependencies.winit]
 version = "0.30.13"
@@ -50,3 +51,5 @@ desktop_winit = [
     "raw-window-handle",
     "skia-safe",
 ]
+mobile_android = []
+mobile_ios = []

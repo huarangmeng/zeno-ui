@@ -33,7 +33,7 @@ pub(crate) fn measure_node(
     }
 }
 
-fn measure_text(
+pub(crate) fn measure_text(
     node: &Node,
     text: &TextNode,
     origin: Point,
@@ -135,7 +135,7 @@ fn measure_stack(
     }
 }
 
-fn measure_spacer(
+pub(crate) fn measure_spacer(
     node: &Node,
     spacer: &SpacerNode,
     origin: Point,
@@ -149,14 +149,14 @@ fn measure_spacer(
     }
 }
 
-fn inner_available(node: &Node, available: Size) -> Size {
+pub(crate) fn inner_available(node: &Node, available: Size) -> Size {
     Size::new(
         (available.width - node.style.padding.horizontal()).max(0.0),
         (available.height - node.style.padding.vertical()).max(0.0),
     )
 }
 
-fn finalize_size(node: &Node, available: Size, content: Size) -> Size {
+pub(crate) fn finalize_size(node: &Node, available: Size, content: Size) -> Size {
     let natural = Size::new(
         content.width + node.style.padding.horizontal(),
         content.height + node.style.padding.vertical(),

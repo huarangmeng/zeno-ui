@@ -36,11 +36,23 @@ impl Default for RendererConfig {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebugConfig {
+    pub frame_stats: bool,
+}
+
+impl Default for DebugConfig {
+    fn default() -> Self {
+        Self { frame_stats: false }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppConfig {
     pub app_name: String,
     pub renderer: RendererConfig,
     pub window: WindowConfig,
+    pub debug: DebugConfig,
 }
 
 impl Default for AppConfig {
@@ -49,6 +61,7 @@ impl Default for AppConfig {
             app_name: "zeno-ui".to_string(),
             renderer: RendererConfig::default(),
             window: WindowConfig::default(),
+            debug: DebugConfig::default(),
         }
     }
 }
