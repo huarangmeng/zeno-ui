@@ -1,10 +1,10 @@
 use zeno_core::{Backend, Platform, ZenoError};
 use zeno_graphics::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
 
-#[cfg(not(feature = "native_skia"))]
-use crate::stub::StubSkiaRenderer as SelectedRenderer;
 #[cfg(feature = "native_skia")]
 use crate::renderer::SkiaRenderer as SelectedRenderer;
+#[cfg(not(feature = "native_skia"))]
+use crate::stub::StubSkiaRenderer as SelectedRenderer;
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SkiaBackend;

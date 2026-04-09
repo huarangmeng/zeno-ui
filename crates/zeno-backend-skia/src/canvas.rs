@@ -60,10 +60,12 @@ fn clear_paint(scene: &Scene) -> sk::Paint {
     paint.set_anti_alias(true);
     let clear = scene
         .clear_color
-        .or_else(|| scene.commands.iter().find_map(|cmd| match cmd {
-            DrawCommand::Clear(color) => Some(*color),
-            _ => None,
-        }))
+        .or_else(|| {
+            scene.commands.iter().find_map(|cmd| match cmd {
+                DrawCommand::Clear(color) => Some(*color),
+                _ => None,
+            })
+        })
         .unwrap_or(Color::TRANSPARENT);
     paint.set_color(sk_color(clear));
     paint
@@ -104,17 +106,26 @@ fn apply_transform(canvas: &sk::Canvas, transform: Transform2D) {
 }
 
 fn render_scene_layers(canvas: &sk::Canvas, scene: &Scene, text_cache: &mut SkiaTextCache) {
-    let layers_by_id: HashMap<u64, &SceneLayer> =
-        scene.layers.iter().map(|layer| (layer.layer_id, layer)).collect();
+    let layers_by_id: HashMap<u64, &SceneLayer> = scene
+        .layers
+        .iter()
+        .map(|layer| (layer.layer_id, layer))
+        .collect();
     let mut child_layers_by_parent: HashMap<u64, Vec<&SceneLayer>> = HashMap::new();
     let mut blocks_by_layer: HashMap<u64, Vec<&SceneBlock>> = HashMap::new();
     for layer in &scene.layers {
         if let Some(parent_id) = layer.parent_layer_id {
-            child_layers_by_parent.entry(parent_id).or_default().push(layer);
+            child_layers_by_parent
+                .entry(parent_id)
+                .or_default()
+                .push(layer);
         }
     }
     for block in &scene.blocks {
-        blocks_by_layer.entry(block.layer_id).or_default().push(block);
+        blocks_by_layer
+            .entry(block.layer_id)
+            .or_default()
+            .push(block);
     }
     render_layer(
         canvas,
@@ -294,14 +305,24 @@ fn apply_clip(canvas: &sk::Canvas, clip: SceneClip) {
     match clip {
         SceneClip::Rect(rect) => {
             canvas.clip_rect(
-                sk::Rect::from_xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height),
+                sk::Rect::from_xywh(
+                    rect.origin.x,
+                    rect.origin.y,
+                    rect.size.width,
+                    rect.size.height,
+                ),
                 None,
                 Some(true),
             );
         }
         SceneClip::RoundedRect { rect, radius } => {
             let rrect = sk::RRect::new_rect_xy(
-                sk::Rect::from_xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height),
+                sk::Rect::from_xywh(
+                    rect.origin.x,
+                    rect.origin.y,
+                    rect.size.width,
+                    rect.size.height,
+                ),
                 radius,
                 radius,
             );
@@ -331,7 +352,11 @@ fn draw_command(canvas: &sk::Canvas, cmd: &DrawCommand, text_cache: &mut SkiaTex
             paint.set_color(sk_color(stroke.color));
             draw_shape(canvas, shape, &paint);
         }
-        DrawCommand::Text { position, layout, color } => {
+        DrawCommand::Text {
+            position,
+            layout,
+            color,
+        } => {
             let mut paint = sk::Paint::default();
             paint.set_anti_alias(true);
             paint.set_color(sk_color(*color));
@@ -342,7 +367,8 @@ fn draw_command(canvas: &sk::Canvas, cmd: &DrawCommand, text_cache: &mut SkiaTex
             );
             font.set_edging(sk::font::Edging::AntiAlias);
             if layout.glyphs.iter().all(|glyph| glyph.glyph_id != 0) {
-                let glyph_ids: Vec<u16> = layout.glyphs.iter().map(|glyph| glyph.glyph_id).collect();
+                let glyph_ids: Vec<u16> =
+                    layout.glyphs.iter().map(|glyph| glyph.glyph_id).collect();
                 let positions: Vec<sk::Point> = layout
                     .glyphs
                     .iter()
@@ -356,7 +382,12 @@ fn draw_command(canvas: &sk::Canvas, cmd: &DrawCommand, text_cache: &mut SkiaTex
                     &paint,
                 );
             } else {
-                canvas.draw_str(layout.paragraph.text.as_str(), (position.x, position.y), &font, &paint);
+                canvas.draw_str(
+                    layout.paragraph.text.as_str(),
+                    (position.x, position.y),
+                    &font,
+                    &paint,
+                );
             }
         }
     }
@@ -369,12 +400,22 @@ pub fn sk_color(color: Color) -> sk::Color {
 fn draw_shape(canvas: &sk::Canvas, shape: &Shape, paint: &sk::Paint) {
     match shape {
         Shape::Rect(rect) => {
-            let rect = sk::Rect::from_xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height);
+            let rect = sk::Rect::from_xywh(
+                rect.origin.x,
+                rect.origin.y,
+                rect.size.width,
+                rect.size.height,
+            );
             canvas.draw_rect(rect, paint);
         }
         Shape::RoundedRect { rect, radius } => {
             let rounded = sk::RRect::new_rect_xy(
-                sk::Rect::from_xywh(rect.origin.x, rect.origin.y, rect.size.width, rect.size.height),
+                sk::Rect::from_xywh(
+                    rect.origin.x,
+                    rect.origin.y,
+                    rect.size.width,
+                    rect.size.height,
+                ),
                 *radius,
                 *radius,
             );
@@ -449,7 +490,13 @@ fn build_font(typeface: Option<sk::Typeface>, font_size: f32) -> sk::Font {
 
 fn resolve_typeface_uncached(requested_family: &str) -> Option<sk::Typeface> {
     let font_mgr = sk::FontMgr::default();
-    let mut families = vec![requested_family, "PingFang SC", "Helvetica Neue", "Arial", "Noto Sans"];
+    let mut families = vec![
+        requested_family,
+        "PingFang SC",
+        "Helvetica Neue",
+        "Arial",
+        "Noto Sans",
+    ];
     families.retain(|family| !family.is_empty() && *family != "System");
 
     for family in families {

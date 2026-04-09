@@ -2,7 +2,7 @@
 
 ## 状态
 - 状态：进行中
-- 阶段判断：声明式节点树、最小布局、retained tree 与 `SceneSubmit` 生成已经成立，当前已进入 retained runtime 的 MVP 阶段，但仍需继续细化 dirty root、局部提交与更高阶 scene 结构。
+- 阶段判断：声明式节点树、最小布局、retained tree 与 `SceneSubmit` 生成已经成立，当前已进入 retained runtime 的 MVP 阶段。已完成首批局部化与一致性修复：patch 路径与 full 路径的 layer/offscreen 判定已统一；paint-only、结构不变的 relayout，以及 keyed child insert/remove 的结构变更都将按脏子树生成 `ScenePatch`；macOS Shell 在多层场景下也支持基于 dirty-bounds 的局部提交；keyed child reorder 已收敛为 order-only patch；layout/text dirty root 会尽量保留在叶子与局部分支；Stack reorder 场景已优先复用既有测量结果并仅在必要时扩大 patch。
 
 ## Goal
 - 在渲染抽象之上增加一层声明式 UI 节点树。
@@ -27,12 +27,12 @@
 ## 当前限制
 - keyed rebuild 目前依赖稳定 `NodeId`；未显式 `.key()` 的节点仍会退化为更粗粒度更新。
 - modifier 已覆盖样式、clip、完整 2D transform、transform origin、opacity、显式 layer 以及 blend / blur / drop shadow effect 链，但还没有扩展到 gesture、semantics 与更复杂 effect 参数。
-- dirty root 归并目前仍是 MVP，兄弟影响范围与更细粒度祖先裁剪仍可继续细化。
+- dirty root 归并目前仍是 MVP，但已优先保留最小 dirty-root 集合，layout/text 兄弟节点可作为独立脏根并由父容器按需决定后续重排范围；结构变更会优先停留在最小容器根，避免无意义升级到更高祖先；当前剩余问题主要集中在更复杂 structure edit 下的跨层祖先裁剪策略。
 - `Scene` 已支持 `SceneLayer + SceneBlock + ScenePatch`，并具备 subtree clip / opacity / transform origin / effect stack 驱动的 retained compositor 基础；当前主要待补的是 filter graph、effect fusion 与更复杂 effect tree。
 - 文本布局结果在 `Scene` 发射阶段仍会复制，缺少缓存与共享引用结构。
 
 ## Next Steps
-- 继续细化 dirty root 合并策略与局部 relayout 影响范围。
-- 继续细化 keyed reconcile 的 dirty reason 判断，让更多 rebuild 降级为 paint-only 或更小 patch。
+- 继续细化 dirty root 合并策略与局部 relayout 影响范围，尤其是更复杂 structure edit 下的跨层祖先裁剪与 sibling 影响判定。
+- 继续细化 keyed reconcile 的 dirty reason 判断，把更多插入/删除/嵌套 layer 变化继续压缩成更小 patch，并在必要时扩展到 layer reorder / block reorder 之外的结构化 patch 类型。
 - 把 modifier 从当前样式/compositor/effect 链继续扩展为可承载 filter graph、gesture 与交互语义的通用节点装饰模型。
 - 增加状态驱动、重组模型和更丰富的基础组件。

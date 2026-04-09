@@ -3,8 +3,8 @@ use zeno_runtime::ResolvedSession;
 
 use crate::shell::{NativeSurface, PlatformDescriptor, Shell};
 
-use super::plan::{create_mobile_surface, descriptor_for, MobileSessionPlan};
-use super::sessions::{create_mobile_render_session, BoxedMobileRenderSession};
+use super::plan::{MobileSessionPlan, create_mobile_surface, descriptor_for};
+use super::sessions::{BoxedMobileRenderSession, create_mobile_render_session};
 use super::types::{
     MobileAttachContext, MobileAttachedSession, MobilePlatform, MobileSessionBinding,
     MobileViewport,

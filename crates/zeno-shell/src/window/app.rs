@@ -1,12 +1,12 @@
-use zeno_core::{zeno_frame_log, zeno_session_log, zeno_window_error, ZenoError, ZenoErrorCode};
-use zeno_graphics::{FrameReport, SceneSubmit};
-use zeno_runtime::{FrameScheduler, ResolvedSession};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
+use zeno_core::{ZenoError, ZenoErrorCode, zeno_frame_log, zeno_session_log, zeno_window_error};
+use zeno_graphics::{FrameReport, SceneSubmit};
+use zeno_runtime::{FrameScheduler, ResolvedSession};
 
-use crate::desktop_session::{create_desktop_render_session, BoxedDesktopRenderSession};
+use crate::desktop_session::{BoxedDesktopRenderSession, create_desktop_render_session};
 
 pub(super) struct DesktopWindowApp {
     resolved_session: ResolvedSession,
@@ -184,7 +184,9 @@ impl ApplicationHandler for DesktopWindowApp {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if self.scheduler.has_pending_frame() && let Some(session) = self.session.as_ref() {
+        if self.scheduler.has_pending_frame()
+            && let Some(session) = self.session.as_ref()
+        {
             session.window().request_redraw();
         }
     }

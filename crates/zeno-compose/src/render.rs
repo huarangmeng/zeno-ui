@@ -3,17 +3,17 @@ use std::fmt::Write;
 
 use zeno_core::{Point, Rect, Size, Transform2D};
 use zeno_graphics::{
-    Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneEffect,
-    ScenePatch, SceneSubmit, SceneTransform, Shape,
+    Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneBlockOrder, SceneClip, SceneEffect,
+    SceneLayerOrder, ScenePatch, SceneSubmit, SceneTransform, Shape,
 };
 use zeno_text::TextSystem;
 
 use crate::{
+    Node, NodeId, NodeKind,
     invalidation::DirtyReason,
-    layout::{measure_node, MeasuredKind, MeasuredNode},
+    layout::{MeasuredKind, MeasuredNode, measure_node},
     modifier::{BlendMode, ClipMode, TransformOrigin},
     tree::RetainedComposeTree,
-    Node, NodeId, NodeKind,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +92,8 @@ impl<'a> ComposeEngine<'a> {
         if let Some(retained) = self.retained.as_mut() {
             if retained.dirty().requires_paint_only() && retained.scene().size == viewport {
                 self.stats.compose_passes += 1;
-                let dirty_node_ids: HashSet<NodeId> = retained.dirty_node_ids().into_iter().collect();
+                let dirty_node_ids: HashSet<NodeId> =
+                    retained.dirty_node_ids().into_iter().collect();
                 repaint_dirty_nodes(root, retained);
                 let patch = patch_scene_for_nodes(root, retained, &dirty_node_ids);
                 let scene = retained.scene().clone();
@@ -100,7 +101,10 @@ impl<'a> ComposeEngine<'a> {
                 return if patch.is_empty() {
                     SceneSubmit::Full(scene)
                 } else {
-                    SceneSubmit::Patch { patch, current: scene }
+                    SceneSubmit::Patch {
+                        patch,
+                        current: scene,
+                    }
                 };
             }
         }
@@ -110,7 +114,8 @@ impl<'a> ComposeEngine<'a> {
                 self.stats.compose_passes += 1;
                 self.stats.layout_passes += 1;
                 let previous_dirty = retained.dirty();
-                let dirty_node_ids: HashSet<NodeId> = retained.dirty_node_ids().into_iter().collect();
+                let dirty_node_ids: HashSet<NodeId> =
+                    retained.dirty_node_ids().into_iter().collect();
                 let previous_node_ids: HashSet<NodeId> =
                     retained.available_map().keys().copied().collect();
                 let layout_dirty_roots: HashSet<NodeId> =
@@ -131,11 +136,16 @@ impl<'a> ComposeEngine<'a> {
                     .difference(&previous_node_ids)
                     .copied()
                     .collect();
-                let fragment_update_ids: HashSet<NodeId> = dirty_node_ids
-                    .union(&new_node_ids)
-                    .copied()
-                    .collect();
-                retained.apply_layout_state(root.clone(), viewport, measured.clone(), available_by_node);
+                let fragment_update_ids: HashSet<NodeId> =
+                    dirty_node_ids.union(&new_node_ids).copied().collect();
+                let patch_update_ids =
+                    scene_update_ids_for_relayout(root, &measured, retained, &fragment_update_ids);
+                retained.apply_layout_state(
+                    root.clone(),
+                    viewport,
+                    measured.clone(),
+                    available_by_node,
+                );
                 update_fragments_for_nodes(
                     root,
                     &measured,
@@ -145,17 +155,20 @@ impl<'a> ComposeEngine<'a> {
                 );
                 let structure_changed = previous_dirty.requires_structure_rebuild()
                     || current_node_ids != previous_node_ids;
-                if structure_changed {
-                    retained.rebuild_scene_from_fragments();
-                    let scene = retained.scene().clone();
-                    return SceneSubmit::Full(scene);
-                }
-                let patch = patch_scene_for_nodes(root, retained, &current_node_ids);
+                let patch_update_ids = if structure_changed {
+                    patch_update_ids.union(&dirty_node_ids).copied().collect()
+                } else {
+                    patch_update_ids
+                };
+                let patch = patch_scene_for_nodes(root, retained, &patch_update_ids);
                 let scene = retained.scene().clone();
                 return if patch.is_empty() {
                     SceneSubmit::Full(scene)
                 } else {
-                    SceneSubmit::Patch { patch, current: scene }
+                    SceneSubmit::Patch {
+                        patch,
+                        current: scene,
+                    }
                 };
             }
         }
@@ -277,9 +290,7 @@ fn dump_layout_node(node: &Node, measured: &MeasuredNode, depth: usize, output: 
     let kind = match (&node.kind, &measured.kind) {
         (NodeKind::Text(_), MeasuredKind::Text(layout)) => format!(
             "text lines={} ascent={:.1} descent={:.1}",
-            layout.metrics.line_count,
-            layout.metrics.ascent,
-            layout.metrics.descent
+            layout.metrics.line_count, layout.metrics.ascent, layout.metrics.descent
         ),
         (NodeKind::Container(_), MeasuredKind::Single(_)) => "container".to_string(),
         (NodeKind::Stack { axis, .. }, MeasuredKind::Multiple(children)) => {
@@ -313,7 +324,11 @@ fn structured_scene_from_measured(
     root: &Node,
     viewport: Size,
     measured: &MeasuredNode,
-) -> (HashMap<NodeId, Size>, HashMap<NodeId, Vec<DrawCommand>>, Scene) {
+) -> (
+    HashMap<NodeId, Size>,
+    HashMap<NodeId, Vec<DrawCommand>>,
+    Scene,
+) {
     let mut fragments_by_node = HashMap::new();
     let mut available_by_node = HashMap::new();
     collect_fragments(
@@ -390,14 +405,18 @@ fn collect_available(
         (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
             let content_available = container_child_available(node, available);
             let mut used_main = 0.0f32;
-            for (index, (child, measured_child)) in children.iter().zip(measured_children.iter()).enumerate() {
+            for (index, (child, measured_child)) in
+                children.iter().zip(measured_children.iter()).enumerate()
+            {
                 let child_available = match child_axis(node) {
-                    crate::Axis::Horizontal => {
-                        Size::new((content_available.width - used_main).max(0.0), content_available.height)
-                    }
-                    crate::Axis::Vertical => {
-                        Size::new(content_available.width, (content_available.height - used_main).max(0.0))
-                    }
+                    crate::Axis::Horizontal => Size::new(
+                        (content_available.width - used_main).max(0.0),
+                        content_available.height,
+                    ),
+                    crate::Axis::Vertical => Size::new(
+                        content_available.width,
+                        (content_available.height - used_main).max(0.0),
+                    ),
                 };
                 collect_available(child, measured_child, child_available, available_by_node);
                 used_main += main_axis_extent(measured_child.frame.size, child_axis(node));
@@ -413,7 +432,12 @@ fn collect_available(
 fn node_fragment(node: &Node, measured: &MeasuredNode) -> Vec<DrawCommand> {
     let style = node.resolved_style();
     let mut fragment = Vec::new();
-    let local_bounds = Rect::new(0.0, 0.0, measured.frame.size.width, measured.frame.size.height);
+    let local_bounds = Rect::new(
+        0.0,
+        0.0,
+        measured.frame.size.width,
+        measured.frame.size.height,
+    );
     if let Some(background) = style.background {
         let shape = if style.corner_radius > 0.0 {
             Shape::RoundedRect {
@@ -462,7 +486,7 @@ fn repaint_dirty_nodes(root: &Node, retained: &mut RetainedComposeTree) {
 fn patch_scene_for_nodes(
     root: &Node,
     retained: &mut RetainedComposeTree,
-    _update_ids: &HashSet<NodeId>,
+    update_ids: &HashSet<NodeId>,
 ) -> ScenePatch {
     let previous_scene = retained.scene().clone();
     let previous_layers_by_id: HashMap<u64, &zeno_graphics::SceneLayer> = previous_scene
@@ -476,7 +500,9 @@ fn patch_scene_for_nodes(
         .map(|block| (block.node_id, block))
         .collect();
     let mut layer_upserts = Vec::new();
+    let mut layer_reorders = Vec::new();
     let mut upserts = Vec::new();
+    let mut reorders = Vec::new();
     let mut seen_layers = HashSet::from([Scene::ROOT_LAYER_ID]);
     let mut seen_blocks = HashSet::new();
     let mut next_order = 1u32;
@@ -487,13 +513,17 @@ fn patch_scene_for_nodes(
         Scene::ROOT_LAYER_ID,
         Point::new(0.0, 0.0),
         Transform2D::identity(),
+        false,
+        update_ids,
         &mut next_order,
         &previous_layers_by_id,
         &previous_blocks_by_id,
         &mut seen_layers,
         &mut seen_blocks,
         &mut layer_upserts,
+        &mut layer_reorders,
         &mut upserts,
+        &mut reorders,
     );
     let layer_removes = previous_scene
         .layers
@@ -513,8 +543,10 @@ fn patch_scene_for_nodes(
         base_layer_count: previous_scene.layers.len(),
         base_block_count: previous_scene.blocks.len(),
         layer_upserts,
+        layer_reorders,
         layer_removes,
         upserts,
+        reorders,
         removes,
     };
     let scene = previous_scene.apply_patch(&patch);
@@ -544,14 +576,18 @@ fn update_fragments_for_nodes(
             let content_available = container_child_available(node, available);
             let mut used_main = 0.0f32;
             let axis = child_axis(node);
-            for (index, (child, measured_child)) in children.iter().zip(measured_children.iter()).enumerate() {
+            for (index, (child, measured_child)) in
+                children.iter().zip(measured_children.iter()).enumerate()
+            {
                 let child_available = match axis {
-                    crate::Axis::Horizontal => {
-                        Size::new((content_available.width - used_main).max(0.0), content_available.height)
-                    }
-                    crate::Axis::Vertical => {
-                        Size::new(content_available.width, (content_available.height - used_main).max(0.0))
-                    }
+                    crate::Axis::Horizontal => Size::new(
+                        (content_available.width - used_main).max(0.0),
+                        content_available.height,
+                    ),
+                    crate::Axis::Vertical => Size::new(
+                        content_available.width,
+                        (content_available.height - used_main).max(0.0),
+                    ),
                 };
                 touched |= update_fragments_for_nodes(
                     child,
@@ -581,7 +617,9 @@ fn find_node(node: &Node, node_id: NodeId) -> Option<&Node> {
 
     match &node.kind {
         NodeKind::Container(child) => find_node(child, node_id),
-        NodeKind::Stack { children, .. } => children.iter().find_map(|child| find_node(child, node_id)),
+        NodeKind::Stack { children, .. } => {
+            children.iter().find_map(|child| find_node(child, node_id))
+        }
         _ => None,
     }
 }
@@ -691,7 +729,13 @@ fn local_change_reason(previous: &Node, current: &Node) -> Option<DirtyReason> {
                 children: current_children,
             },
         ) => {
-            if previous_axis != current_axis || child_ids(previous_children) != child_ids(current_children) {
+            if previous_axis != current_axis {
+                return Some(DirtyReason::Structure);
+            }
+            if child_ids(previous_children) != child_ids(current_children) {
+                if same_child_members(previous_children, current_children) {
+                    return Some(DirtyReason::Order);
+                }
                 return Some(DirtyReason::Structure);
             }
             style_change_reason(previous, current, false, true)
@@ -736,6 +780,15 @@ fn child_ids(children: &[Node]) -> Vec<NodeId> {
     children.iter().map(Node::id).collect()
 }
 
+fn same_child_members(previous: &[Node], current: &[Node]) -> bool {
+    if previous.len() != current.len() {
+        return false;
+    }
+    let previous_ids: HashSet<NodeId> = previous.iter().map(Node::id).collect();
+    let current_ids: HashSet<NodeId> = current.iter().map(Node::id).collect();
+    previous_ids == current_ids
+}
+
 fn build_layers_and_blocks(
     node: &Node,
     measured: &MeasuredNode,
@@ -766,16 +819,46 @@ fn collect_scene_patch_items(
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
+    force_update: bool,
+    update_ids: &HashSet<NodeId>,
     next_order: &mut u32,
     previous_layers_by_id: &HashMap<u64, &zeno_graphics::SceneLayer>,
     previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
     seen_layers: &mut HashSet<u64>,
     seen_blocks: &mut HashSet<u64>,
     layer_upserts: &mut Vec<zeno_graphics::SceneLayer>,
+    layer_reorders: &mut Vec<SceneLayerOrder>,
     upserts: &mut Vec<SceneBlock>,
+    reorders: &mut Vec<SceneBlockOrder>,
 ) {
+    if !force_update
+        && !update_ids.contains(&node.id())
+        && !subtree_contains_updates(node, update_ids)
+    {
+        collect_unchanged_scene_items(
+            node,
+            measured,
+            fragments_by_node,
+            current_layer_id,
+            current_layer_origin,
+            current_layer_world_transform,
+            next_order,
+            previous_layers_by_id,
+            previous_blocks_by_id,
+            seen_layers,
+            seen_blocks,
+            layer_reorders,
+            reorders,
+        );
+        return;
+    }
     let style = node.resolved_style();
-    let local_bounds = Rect::new(0.0, 0.0, measured.frame.size.width, measured.frame.size.height);
+    let local_bounds = Rect::new(
+        0.0,
+        0.0,
+        measured.frame.size.width,
+        measured.frame.size.height,
+    );
     if node_creates_layer(&style) {
         let layer_transform = layer_local_transform(
             measured.frame.origin,
@@ -801,12 +884,24 @@ fn collect_scene_patch_items(
             style.opacity,
             scene_blend_mode(style.blend_mode),
             scene_effects(&style),
-            style.layer || style.opacity < 1.0,
+            style.layer
+                || style.opacity < 1.0
+                || style.blend_mode != BlendMode::Normal
+                || style.blur.is_some()
+                || style.drop_shadow.is_some(),
         );
+        let force_descendant_update = force_update
+            || layer_context_changed(
+                previous_layers_by_id.get(&layer_id).copied(),
+                &current_layer,
+            );
         seen_layers.insert(layer_id);
         if previous_layers_by_id
             .get(&layer_id)
-            .map_or(true, |previous| **previous != current_layer)
+            .map_or(true, |previous| {
+                push_layer_patch(previous, &current_layer, layer_upserts, layer_reorders);
+                false
+            })
         {
             layer_upserts.push(current_layer);
         }
@@ -823,7 +918,10 @@ fn collect_scene_patch_items(
             seen_blocks.insert(current_block.node_id);
             if previous_blocks_by_id
                 .get(&current_block.node_id)
-                .map_or(true, |previous| **previous != current_block)
+                .map_or(true, |previous| {
+                    push_block_patch(previous, &current_block, upserts, reorders);
+                    false
+                })
             {
                 upserts.push(current_block);
             }
@@ -836,17 +934,22 @@ fn collect_scene_patch_items(
             layer_id,
             measured.frame.origin,
             world_transform,
+            force_descendant_update,
+            update_ids,
             next_order,
             previous_layers_by_id,
             previous_blocks_by_id,
             seen_layers,
             seen_blocks,
             layer_upserts,
+            layer_reorders,
             upserts,
+            reorders,
         );
         return;
     }
 
+    let force_descendant_update = force_update || previous_layers_by_id.contains_key(&node.id().0);
     if let Some(fragment) = fragments_by_node.get(&node.id()) {
         let block_transform = Transform2D::translation(
             measured.frame.origin.x - current_layer_origin.x,
@@ -865,7 +968,10 @@ fn collect_scene_patch_items(
         seen_blocks.insert(current_block.node_id);
         if previous_blocks_by_id
             .get(&current_block.node_id)
-            .map_or(true, |previous| **previous != current_block)
+            .map_or(true, |previous| {
+                push_block_patch(previous, &current_block, upserts, reorders);
+                false
+            })
         {
             upserts.push(current_block);
         }
@@ -878,13 +984,17 @@ fn collect_scene_patch_items(
         current_layer_id,
         current_layer_origin,
         current_layer_world_transform,
+        force_descendant_update,
+        update_ids,
         next_order,
         previous_layers_by_id,
         previous_blocks_by_id,
         seen_layers,
         seen_blocks,
         layer_upserts,
+        layer_reorders,
         upserts,
+        reorders,
     );
 }
 
@@ -895,13 +1005,17 @@ fn collect_scene_patch_children(
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
+    force_update: bool,
+    update_ids: &HashSet<NodeId>,
     next_order: &mut u32,
     previous_layers_by_id: &HashMap<u64, &zeno_graphics::SceneLayer>,
     previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
     seen_layers: &mut HashSet<u64>,
     seen_blocks: &mut HashSet<u64>,
     layer_upserts: &mut Vec<zeno_graphics::SceneLayer>,
+    layer_reorders: &mut Vec<SceneLayerOrder>,
     upserts: &mut Vec<SceneBlock>,
+    reorders: &mut Vec<SceneBlockOrder>,
 ) {
     match (&node.kind, &measured.kind) {
         (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
@@ -912,13 +1026,17 @@ fn collect_scene_patch_children(
                 current_layer_id,
                 current_layer_origin,
                 current_layer_world_transform,
+                force_update,
+                update_ids,
                 next_order,
                 previous_layers_by_id,
                 previous_blocks_by_id,
                 seen_layers,
                 seen_blocks,
                 layer_upserts,
+                layer_reorders,
                 upserts,
+                reorders,
             );
         }
         (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
@@ -930,18 +1048,330 @@ fn collect_scene_patch_children(
                     current_layer_id,
                     current_layer_origin,
                     current_layer_world_transform,
+                    force_update,
+                    update_ids,
                     next_order,
                     previous_layers_by_id,
                     previous_blocks_by_id,
                     seen_layers,
                     seen_blocks,
                     layer_upserts,
+                    layer_reorders,
                     upserts,
+                    reorders,
                 );
             }
         }
         _ => {}
     }
+}
+
+fn push_layer_patch(
+    previous: &zeno_graphics::SceneLayer,
+    current: &zeno_graphics::SceneLayer,
+    layer_upserts: &mut Vec<zeno_graphics::SceneLayer>,
+    layer_reorders: &mut Vec<SceneLayerOrder>,
+) {
+    if previous == current {
+        return;
+    }
+    if previous.order != current.order {
+        layer_reorders.push(SceneLayerOrder {
+            layer_id: current.layer_id,
+            order: current.order,
+        });
+    }
+    if !layer_equal_except_order(previous, current) {
+        layer_upserts.push(current.clone());
+    }
+}
+
+fn push_block_patch(
+    previous: &SceneBlock,
+    current: &SceneBlock,
+    upserts: &mut Vec<SceneBlock>,
+    reorders: &mut Vec<SceneBlockOrder>,
+) {
+    if previous == current {
+        return;
+    }
+    if previous.order != current.order {
+        reorders.push(SceneBlockOrder {
+            node_id: current.node_id,
+            order: current.order,
+        });
+    }
+    if !block_equal_except_order(previous, current) {
+        upserts.push(current.clone());
+    }
+}
+
+fn layer_equal_except_order(
+    previous: &zeno_graphics::SceneLayer,
+    current: &zeno_graphics::SceneLayer,
+) -> bool {
+    previous.layer_id == current.layer_id
+        && previous.node_id == current.node_id
+        && previous.parent_layer_id == current.parent_layer_id
+        && previous.local_bounds == current.local_bounds
+        && previous.bounds == current.bounds
+        && previous.transform == current.transform
+        && previous.clip == current.clip
+        && previous.opacity == current.opacity
+        && previous.blend_mode == current.blend_mode
+        && previous.effects == current.effects
+        && previous.offscreen == current.offscreen
+}
+
+fn block_equal_except_order(previous: &SceneBlock, current: &SceneBlock) -> bool {
+    previous.node_id == current.node_id
+        && previous.layer_id == current.layer_id
+        && previous.bounds == current.bounds
+        && previous.transform == current.transform
+        && previous.clip == current.clip
+        && previous.commands == current.commands
+        && previous.resource_keys == current.resource_keys
+}
+
+fn subtree_contains_updates(node: &Node, update_ids: &HashSet<NodeId>) -> bool {
+    if update_ids.contains(&node.id()) {
+        return true;
+    }
+    match &node.kind {
+        NodeKind::Container(child) => subtree_contains_updates(child, update_ids),
+        NodeKind::Stack { children, .. } => {
+            for child in children {
+                if subtree_contains_updates(child, update_ids) {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+fn layer_context_changed(
+    previous: Option<&zeno_graphics::SceneLayer>,
+    current: &zeno_graphics::SceneLayer,
+) -> bool {
+    previous.map_or(true, |previous| {
+        previous.parent_layer_id != current.parent_layer_id
+            || previous.transform != current.transform
+    })
+}
+
+fn collect_unchanged_scene_items(
+    node: &Node,
+    measured: &MeasuredNode,
+    fragments_by_node: &HashMap<NodeId, Vec<DrawCommand>>,
+    current_layer_id: u64,
+    current_layer_origin: Point,
+    current_layer_world_transform: Transform2D,
+    next_order: &mut u32,
+    previous_layers_by_id: &HashMap<u64, &zeno_graphics::SceneLayer>,
+    previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
+    seen_layers: &mut HashSet<u64>,
+    seen_blocks: &mut HashSet<u64>,
+    layer_reorders: &mut Vec<SceneLayerOrder>,
+    reorders: &mut Vec<SceneBlockOrder>,
+) {
+    let style = node.resolved_style();
+    let local_bounds = Rect::new(
+        0.0,
+        0.0,
+        measured.frame.size.width,
+        measured.frame.size.height,
+    );
+    if node_creates_layer(&style) {
+        let layer_transform = layer_local_transform(
+            measured.frame.origin,
+            current_layer_origin,
+            measured.frame.size,
+            style.transform,
+            style.transform_origin,
+        );
+        let world_transform = current_layer_world_transform.then(layer_transform);
+        let effect_bounds = scene_effect_bounds(local_bounds, &style);
+        let layer_id = node.id().0;
+        let current_layer = zeno_graphics::SceneLayer::new(
+            layer_id,
+            node.id().0,
+            Some(current_layer_id),
+            *next_order,
+            local_bounds,
+            world_transform.map_rect(effect_bounds),
+            layer_transform,
+            scene_clip(measured.frame.size, style.clip),
+            style.opacity,
+            scene_blend_mode(style.blend_mode),
+            scene_effects(&style),
+            style.layer
+                || style.opacity < 1.0
+                || style.blend_mode != BlendMode::Normal
+                || style.blur.is_some()
+                || style.drop_shadow.is_some(),
+        );
+        seen_layers.insert(layer_id);
+        if let Some(previous) = previous_layers_by_id.get(&layer_id).copied() {
+            push_layer_patch(previous, &current_layer, &mut Vec::new(), layer_reorders);
+        }
+        *next_order += 1;
+        if let Some(fragment) = fragments_by_node.get(&node.id()) {
+            let current_block = SceneBlock::new(
+                node.id().0,
+                layer_id,
+                *next_order,
+                world_transform.map_rect(local_bounds),
+                Transform2D::identity(),
+                None,
+                fragment.clone(),
+            );
+            seen_blocks.insert(current_block.node_id);
+            if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id).copied() {
+                push_block_patch(previous, &current_block, &mut Vec::new(), reorders);
+            }
+            *next_order += 1;
+        }
+        collect_scene_patch_children(
+            node,
+            measured,
+            fragments_by_node,
+            layer_id,
+            measured.frame.origin,
+            world_transform,
+            false,
+            &HashSet::new(),
+            next_order,
+            previous_layers_by_id,
+            previous_blocks_by_id,
+            seen_layers,
+            seen_blocks,
+            &mut Vec::new(),
+            layer_reorders,
+            &mut Vec::new(),
+            reorders,
+        );
+        return;
+    }
+    if let Some(fragment) = fragments_by_node.get(&node.id()) {
+        let block_transform = Transform2D::translation(
+            measured.frame.origin.x - current_layer_origin.x,
+            measured.frame.origin.y - current_layer_origin.y,
+        );
+        let current_block = SceneBlock::new(
+            node.id().0,
+            current_layer_id,
+            *next_order,
+            current_layer_world_transform
+                .then(block_transform)
+                .map_rect(local_bounds),
+            block_transform,
+            None,
+            fragment.clone(),
+        );
+        seen_blocks.insert(current_block.node_id);
+        if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id).copied() {
+            push_block_patch(previous, &current_block, &mut Vec::new(), reorders);
+        }
+        *next_order += 1;
+    }
+    match (&node.kind, &measured.kind) {
+        (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
+            collect_unchanged_scene_items(
+                child,
+                measured_child,
+                fragments_by_node,
+                current_layer_id,
+                current_layer_origin,
+                current_layer_world_transform,
+                next_order,
+                previous_layers_by_id,
+                previous_blocks_by_id,
+                seen_layers,
+                seen_blocks,
+                layer_reorders,
+                reorders,
+            );
+        }
+        (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
+            for (child, measured_child) in children.iter().zip(measured_children.iter()) {
+                collect_unchanged_scene_items(
+                    child,
+                    measured_child,
+                    fragments_by_node,
+                    current_layer_id,
+                    current_layer_origin,
+                    current_layer_world_transform,
+                    next_order,
+                    previous_layers_by_id,
+                    previous_blocks_by_id,
+                    seen_layers,
+                    seen_blocks,
+                    layer_reorders,
+                    reorders,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn scene_update_ids_for_relayout(
+    node: &Node,
+    measured: &MeasuredNode,
+    retained: &RetainedComposeTree,
+    fragment_update_ids: &HashSet<NodeId>,
+) -> HashSet<NodeId> {
+    let mut update_ids = HashSet::new();
+    collect_scene_update_ids_for_relayout(
+        node,
+        measured,
+        retained,
+        fragment_update_ids,
+        &mut update_ids,
+    );
+    update_ids
+}
+
+fn collect_scene_update_ids_for_relayout(
+    node: &Node,
+    measured: &MeasuredNode,
+    retained: &RetainedComposeTree,
+    fragment_update_ids: &HashSet<NodeId>,
+    update_ids: &mut HashSet<NodeId>,
+) -> bool {
+    let mut changed = fragment_update_ids.contains(&node.id())
+        || retained
+            .measured_for(node.id())
+            .map_or(true, |previous| previous.frame != measured.frame);
+    match (&node.kind, &measured.kind) {
+        (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
+            changed |= collect_scene_update_ids_for_relayout(
+                child,
+                measured_child,
+                retained,
+                fragment_update_ids,
+                update_ids,
+            );
+        }
+        (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
+            for (child, measured_child) in children.iter().zip(measured_children.iter()) {
+                changed |= collect_scene_update_ids_for_relayout(
+                    child,
+                    measured_child,
+                    retained,
+                    fragment_update_ids,
+                    update_ids,
+                );
+            }
+        }
+        _ => {}
+    }
+    if changed {
+        update_ids.insert(node.id());
+    }
+    changed
 }
 
 fn collect_scene_items(
@@ -956,7 +1386,12 @@ fn collect_scene_items(
     blocks: &mut Vec<SceneBlock>,
 ) {
     let style = node.resolved_style();
-    let local_bounds = Rect::new(0.0, 0.0, measured.frame.size.width, measured.frame.size.height);
+    let local_bounds = Rect::new(
+        0.0,
+        0.0,
+        measured.frame.size.width,
+        measured.frame.size.height,
+    );
     if node_creates_layer(&style) {
         let layer_transform = layer_local_transform(
             measured.frame.origin,
@@ -1015,8 +1450,10 @@ fn collect_scene_items(
     }
 
     if let Some(fragment) = fragments_by_node.get(&node.id()) {
-        let block_transform =
-            Transform2D::translation(measured.frame.origin.x - current_layer_origin.x, measured.frame.origin.y - current_layer_origin.y);
+        let block_transform = Transform2D::translation(
+            measured.frame.origin.x - current_layer_origin.x,
+            measured.frame.origin.y - current_layer_origin.y,
+        );
         let world_transform = current_layer_world_transform.then(block_transform);
         blocks.push(SceneBlock::new(
             node.id().0,
@@ -1103,7 +1540,10 @@ fn layer_local_transform(
     local_transform: Transform2D,
     transform_origin: TransformOrigin,
 ) -> SceneTransform {
-    let pivot = Point::new(size.width * transform_origin.x, size.height * transform_origin.y);
+    let pivot = Point::new(
+        size.width * transform_origin.x,
+        size.height * transform_origin.y,
+    );
     Transform2D::translation(-pivot.x, -pivot.y)
         .then(local_transform)
         .then(Transform2D::translation(pivot.x, pivot.y))
@@ -1115,7 +1555,12 @@ fn layer_local_transform(
 
 fn scene_clip(size: Size, clip: Option<ClipMode>) -> Option<SceneClip> {
     match clip {
-        Some(ClipMode::Bounds) => Some(SceneClip::Rect(Rect::new(0.0, 0.0, size.width, size.height))),
+        Some(ClipMode::Bounds) => Some(SceneClip::Rect(Rect::new(
+            0.0,
+            0.0,
+            size.width,
+            size.height,
+        ))),
         Some(ClipMode::RoundedBounds { radius }) => Some(SceneClip::RoundedRect {
             rect: Rect::new(0.0, 0.0, size.width, size.height),
             radius,
@@ -1188,12 +1633,17 @@ fn relayout_node(
 ) -> (MeasuredNode, bool) {
     let dirty = layout_dirty_roots.contains(&node.id());
     let descendant_dirty = retained.has_descendant_in(node.id(), layout_dirty_roots);
+    let dirty_flags = retained.dirty_flags_for(node.id());
     if !force_relayout && !dirty && !descendant_dirty {
-        if let (Some(measured), Some(cached_available)) =
-            (retained.measured_for(node.id()), retained.available_for(node.id()))
-        {
-            if cached_available == available && measured.frame.origin == origin {
-                return (measured.clone(), true);
+        if let (Some(measured), Some(cached_available)) = (
+            retained.measured_for(node.id()),
+            retained.available_for(node.id()),
+        ) {
+            if cached_available == available {
+                if measured.frame.origin == origin {
+                    return (measured.clone(), true);
+                }
+                return (translate_measured_node(measured, origin), true);
             }
         }
     }
@@ -1219,10 +1669,7 @@ fn relayout_node(
             let child_available = container_child_available(node, available);
             let (measured_child, child_reused) = relayout_node(
                 child,
-                Point::new(
-                    origin.x + style.padding.left,
-                    origin.y + style.padding.top,
-                ),
+                Point::new(origin.x + style.padding.left, origin.y + style.padding.top),
                 child_available,
                 text_system,
                 retained,
@@ -1239,6 +1686,8 @@ fn relayout_node(
             (measured, false)
         }
         NodeKind::Stack { axis, children } => {
+            let child_force_relayout =
+                force_relayout || (dirty && !dirty_flags.requires_order_only());
             let measured = relayout_stack(
                 node,
                 *axis,
@@ -1248,7 +1697,7 @@ fn relayout_node(
                 text_system,
                 retained,
                 layout_dirty_roots,
-                force_relayout || dirty,
+                child_force_relayout,
             );
             (measured, false)
         }
@@ -1268,10 +1717,7 @@ fn relayout_stack(
 ) -> MeasuredNode {
     let style = node.resolved_style();
     let mut measured_children = Vec::with_capacity(children.len());
-    let content_origin = Point::new(
-        origin.x + style.padding.left,
-        origin.y + style.padding.top,
-    );
+    let content_origin = Point::new(origin.x + style.padding.left, origin.y + style.padding.top);
     let content_available = Size::new(
         (available.width - style.padding.left - style.padding.right).max(0.0),
         (available.height - style.padding.top - style.padding.bottom).max(0.0),
@@ -1284,12 +1730,14 @@ fn relayout_stack(
 
     for child in children {
         let remaining = match axis {
-            crate::Axis::Horizontal => {
-                Size::new((content_available.width - used_main).max(0.0), content_available.height)
-            }
-            crate::Axis::Vertical => {
-                Size::new(content_available.width, (content_available.height - used_main).max(0.0))
-            }
+            crate::Axis::Horizontal => Size::new(
+                (content_available.width - used_main).max(0.0),
+                content_available.height,
+            ),
+            crate::Axis::Vertical => Size::new(
+                content_available.width,
+                (content_available.height - used_main).max(0.0),
+            ),
         };
         let (measured_child, reused) = relayout_node(
             child,
@@ -1302,7 +1750,8 @@ fn relayout_stack(
         );
         if !downstream_relayout && !reused {
             let previous_measured = retained.measured_for(child.id());
-            let child_class = classify_stack_child_relayout(previous_measured, &measured_child, axis);
+            let child_class =
+                classify_stack_child_relayout(previous_measured, &measured_child, axis);
             downstream_relayout = matches!(child_class, RelayoutClass::ParentAndFollowingSiblings);
         }
 
@@ -1339,6 +1788,35 @@ fn relayout_stack(
     }
 }
 
+fn translate_measured_node(measured: &MeasuredNode, origin: Point) -> MeasuredNode {
+    let dx = origin.x - measured.frame.origin.x;
+    let dy = origin.y - measured.frame.origin.y;
+    translate_measured_node_by_delta(measured, dx, dy)
+}
+
+fn translate_measured_node_by_delta(measured: &MeasuredNode, dx: f32, dy: f32) -> MeasuredNode {
+    let frame = zeno_core::Rect::new(
+        measured.frame.origin.x + dx,
+        measured.frame.origin.y + dy,
+        measured.frame.size.width,
+        measured.frame.size.height,
+    );
+    let kind = match &measured.kind {
+        MeasuredKind::Text(layout) => MeasuredKind::Text(layout.clone()),
+        MeasuredKind::Single(child) => {
+            MeasuredKind::Single(Box::new(translate_measured_node_by_delta(child, dx, dy)))
+        }
+        MeasuredKind::Multiple(children) => MeasuredKind::Multiple(
+            children
+                .iter()
+                .map(|child| translate_measured_node_by_delta(child, dx, dy))
+                .collect(),
+        ),
+        MeasuredKind::Spacer => MeasuredKind::Spacer,
+    };
+    MeasuredNode { frame, kind }
+}
+
 fn collect_stack_fragments(
     node: &Node,
     children: &[Node],
@@ -1349,14 +1827,18 @@ fn collect_stack_fragments(
 ) {
     let content_available = container_child_available(node, available);
     let mut used_main = 0.0f32;
-    for (index, (child, measured_child)) in children.iter().zip(measured_children.iter()).enumerate() {
+    for (index, (child, measured_child)) in
+        children.iter().zip(measured_children.iter()).enumerate()
+    {
         let child_available = match child_axis(node) {
-            crate::Axis::Horizontal => {
-                Size::new((content_available.width - used_main).max(0.0), content_available.height)
-            }
-            crate::Axis::Vertical => {
-                Size::new(content_available.width, (content_available.height - used_main).max(0.0))
-            }
+            crate::Axis::Horizontal => Size::new(
+                (content_available.width - used_main).max(0.0),
+                content_available.height,
+            ),
+            crate::Axis::Vertical => Size::new(
+                content_available.width,
+                (content_available.height - used_main).max(0.0),
+            ),
         };
         collect_fragments(
             child,
@@ -1402,7 +1884,10 @@ fn main_axis_extent(size: Size, axis: crate::Axis) -> f32 {
     }
 }
 
-fn classify_leaf_relayout(previous: Option<&MeasuredNode>, current: &MeasuredNode) -> RelayoutClass {
+fn classify_leaf_relayout(
+    previous: Option<&MeasuredNode>,
+    current: &MeasuredNode,
+) -> RelayoutClass {
     match previous {
         Some(previous) if previous.frame == current.frame => RelayoutClass::LocalOnly,
         Some(_) => RelayoutClass::ParentOnly,

@@ -39,7 +39,12 @@ pub struct DropShadow {
 impl DropShadow {
     #[must_use]
     pub const fn new(dx: f32, dy: f32, blur: f32, color: Color) -> Self {
-        Self { dx, dy, blur, color }
+        Self {
+            dx,
+            dy,
+            blur,
+            color,
+        }
     }
 }
 

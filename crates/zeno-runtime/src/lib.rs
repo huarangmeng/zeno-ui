@@ -9,7 +9,9 @@ pub use session::ResolvedSession;
 #[cfg(test)]
 mod tests {
     use super::{BackendResolver, FrameScheduler, ResolvedSession};
-    use zeno_core::{Backend, BackendPreference, Platform, RendererConfig, WindowConfig, ZenoError};
+    use zeno_core::{
+        Backend, BackendPreference, Platform, RendererConfig, WindowConfig, ZenoError,
+    };
 
     #[test]
     fn falls_back_to_skia_when_impeller_is_not_implemented_yet() {

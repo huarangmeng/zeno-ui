@@ -35,9 +35,9 @@ impl AndroidMobilePresenter {
     pub(crate) fn create_skia_native_window(
         native_window: NonZeroUsize,
     ) -> Result<Self, ZenoError> {
-        Ok(Self::SkiaNativeWindow(AndroidSkiaNativeWindowPresenter::new(
-            native_window,
-        )?))
+        Ok(Self::SkiaNativeWindow(
+            AndroidSkiaNativeWindowPresenter::new(native_window)?,
+        ))
     }
 
     pub(crate) fn create_impeller_native_window(

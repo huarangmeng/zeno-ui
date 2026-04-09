@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use zeno_text::FontDescriptor;
 
-use crate::{node::NodeId, style::Axis, Node, NodeKind, SpacerNode, TextNode};
+use crate::{Node, NodeKind, SpacerNode, TextNode, node::NodeId, style::Axis};
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -51,5 +51,8 @@ pub fn row(children: Vec<Node>) -> Node {
 
 #[must_use]
 pub fn spacer(width: f32, height: f32) -> Node {
-    Node::new(next_node_id(), NodeKind::Spacer(SpacerNode { width, height }))
+    Node::new(
+        next_node_id(),
+        NodeKind::Spacer(SpacerNode { width, height }),
+    )
 }

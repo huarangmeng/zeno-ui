@@ -1,5 +1,5 @@
 use zeno_core::{Point, Rect, Size};
-use zeno_text::{line_box, TextLayout, TextParagraph, TextSystem};
+use zeno_text::{TextLayout, TextParagraph, TextSystem, line_box};
 
 use crate::{Axis, Node, NodeKind, SpacerNode, TextNode};
 
@@ -25,7 +25,9 @@ pub(crate) fn measure_node(
 ) -> MeasuredNode {
     match &node.kind {
         NodeKind::Text(text) => measure_text(node, text, origin, available, text_system),
-        NodeKind::Container(child) => measure_container(node, child, origin, available, text_system),
+        NodeKind::Container(child) => {
+            measure_container(node, child, origin, available, text_system)
+        }
         NodeKind::Stack { axis, children } => {
             measure_stack(node, *axis, children, origin, available, text_system)
         }
@@ -144,8 +146,14 @@ pub(crate) fn measure_spacer(
     available: Size,
 ) -> MeasuredNode {
     let style = node.resolved_style();
-    let width = style.width.unwrap_or(spacer.width).min(available.width.max(0.0));
-    let height = style.height.unwrap_or(spacer.height).min(available.height.max(0.0));
+    let width = style
+        .width
+        .unwrap_or(spacer.width)
+        .min(available.width.max(0.0));
+    let height = style
+        .height
+        .unwrap_or(spacer.height)
+        .min(available.height.max(0.0));
     MeasuredNode {
         frame: Rect::new(origin.x, origin.y, width, height),
         kind: MeasuredKind::Spacer,
@@ -167,7 +175,13 @@ pub(crate) fn finalize_size(node: &Node, available: Size, content: Size) -> Size
         content.height + style.padding.vertical(),
     );
     Size::new(
-        style.width.unwrap_or(natural.width).min(available.width.max(0.0)),
-        style.height.unwrap_or(natural.height).min(available.height.max(0.0)),
+        style
+            .width
+            .unwrap_or(natural.width)
+            .min(available.width.max(0.0)),
+        style
+            .height
+            .unwrap_or(natural.height)
+            .min(available.height.max(0.0)),
     )
 }

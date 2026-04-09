@@ -1,25 +1,27 @@
+mod invalidation;
 mod layout;
 mod modifier;
 mod node;
 mod render;
 mod style;
-mod widgets;
-mod invalidation;
 mod tree;
+mod widgets;
 
 pub use invalidation::{DirtyFlags, DirtyReason};
 pub use modifier::{BlendMode, ClipMode, DropShadow, Modifier, Modifiers, TransformOrigin};
-pub use node::{Node, NodeKind, SpacerNode, TextNode};
 pub use node::NodeId;
-pub use render::{compose_scene, dump_layout, dump_scene, ComposeEngine, ComposeRenderer, ComposeStats};
+pub use node::{Node, NodeKind, SpacerNode, TextNode};
+pub use render::{
+    ComposeEngine, ComposeRenderer, ComposeStats, compose_scene, dump_layout, dump_scene,
+};
 pub use style::{Axis, EdgeInsets, Style};
 pub use widgets::{column, container, row, spacer, text};
 
 #[cfg(test)]
 mod tests {
     use super::{
-        column, compose_scene, container, dump_layout, dump_scene, row, spacer, text, BlendMode,
-        ComposeEngine, DirtyReason, EdgeInsets, Modifier,
+        BlendMode, ComposeEngine, DirtyReason, EdgeInsets, Modifier, column, compose_scene,
+        container, dump_layout, dump_scene, row, spacer, text,
     };
     use zeno_core::{Color, Size, Transform2D};
     use zeno_graphics::{DrawCommand, Scene, SceneBlendMode, SceneClip, SceneEffect, SceneSubmit};
@@ -159,10 +161,11 @@ mod tests {
     }
 
     #[test]
-    fn compose_submit_falls_back_to_full_scene_for_keyed_structure_change() {
+    fn compose_submit_keeps_keyed_structure_removal_on_patch_path() {
         let first = column(vec![text("Title").key("title"), text("Body").key("body")])
             .spacing(4.0)
             .key("root");
+        let removed_id = text("Body").key("body").id().0;
         let second = column(vec![text("Title").key("title")])
             .spacing(4.0)
             .key("root");
@@ -171,8 +174,78 @@ mod tests {
         let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
         let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
 
-        assert!(matches!(submit, SceneSubmit::Full(_)));
+        match submit {
+            SceneSubmit::Patch { patch, current } => {
+                assert!(patch.layer_removes.is_empty());
+                assert!(patch.removes.contains(&removed_id));
+                assert!(
+                    current
+                        .blocks
+                        .iter()
+                        .all(|block| block.node_id != removed_id)
+                );
+                assert!(
+                    current
+                        .blocks
+                        .iter()
+                        .any(|block| block.node_id == text("Title").key("title").id().0)
+                );
+            }
+            SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
         assert_eq!(engine.stats().layout_passes, 2);
+    }
+
+    #[test]
+    fn keyed_structure_insert_with_layer_stays_on_patch_path() {
+        let first = column(vec![text("Base").key("base")])
+            .spacing(4.0)
+            .key("root");
+        let inserted = container(text("Overlay").key("overlay-text"))
+            .key("overlay")
+            .padding_all(8.0)
+            .background(Color::WHITE)
+            .opacity(0.5)
+            .layer();
+        let inserted_layer_id = inserted.id().0;
+        let inserted_text_id = text("Overlay").key("overlay-text").id().0;
+        let second = column(vec![text("Base").key("base"), inserted])
+            .spacing(4.0)
+            .key("root");
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+        let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+        match submit {
+            SceneSubmit::Patch { patch, current } => {
+                assert!(
+                    patch
+                        .layer_upserts
+                        .iter()
+                        .any(|layer| layer.layer_id == inserted_layer_id)
+                );
+                assert!(
+                    patch
+                        .upserts
+                        .iter()
+                        .any(|block| block.node_id == inserted_text_id)
+                );
+                assert!(
+                    current
+                        .layers
+                        .iter()
+                        .any(|layer| layer.layer_id == inserted_layer_id)
+                );
+                let text_block = current
+                    .blocks
+                    .iter()
+                    .find(|block| block.node_id == inserted_text_id)
+                    .expect("inserted text block");
+                assert_eq!(text_block.layer_id, inserted_layer_id);
+            }
+            SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
     }
 
     #[test]
@@ -181,7 +254,9 @@ mod tests {
         let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
 
         match &scene.commands[0] {
-            DrawCommand::Text { position, layout, .. } => {
+            DrawCommand::Text {
+                position, layout, ..
+            } => {
                 assert_eq!(position.y, 10.0 + layout.metrics.ascent);
                 assert!(layout.metrics.ascent > 0.0);
                 assert!(layout.metrics.descent >= 0.0);
@@ -232,7 +307,8 @@ mod tests {
 
         match submit {
             SceneSubmit::Patch { patch, .. } => {
-                let upsert_ids: Vec<u64> = patch.upserts.iter().map(|block| block.node_id).collect();
+                let upsert_ids: Vec<u64> =
+                    patch.upserts.iter().map(|block| block.node_id).collect();
                 assert!(!upsert_ids.contains(&first_title_id));
                 assert!(upsert_ids.contains(&second_title_id));
                 assert!(upsert_ids.contains(&third_title_id));
@@ -273,10 +349,144 @@ mod tests {
 
         match submit {
             SceneSubmit::Patch { patch, .. } => {
-                let upsert_ids: Vec<u64> = patch.upserts.iter().map(|block| block.node_id).collect();
+                let upsert_ids: Vec<u64> =
+                    patch.upserts.iter().map(|block| block.node_id).collect();
                 assert!(!upsert_ids.contains(&sibling_id), "upserts={upsert_ids:?}");
             }
             SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
+    }
+
+    #[test]
+    fn keyed_reorder_stays_on_layout_patch_path() {
+        let first = column(vec![
+            text("One").key("one"),
+            text("Two").key("two"),
+            text("Three").key("three"),
+        ])
+        .spacing(4.0)
+        .key("root");
+        let second = column(vec![
+            text("Three").key("three"),
+            text("One").key("one"),
+            text("Two").key("two"),
+        ])
+        .spacing(4.0)
+        .key("root");
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+        let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+        match submit {
+            SceneSubmit::Patch { patch, current } => {
+                let reordered_ids: Vec<u64> = patch
+                    .reorders
+                    .iter()
+                    .map(|reorder| reorder.node_id)
+                    .collect();
+                assert_eq!(reordered_ids.len(), 3);
+                assert!(reordered_ids.contains(&text("One").key("one").id().0));
+                assert!(reordered_ids.contains(&text("Two").key("two").id().0));
+                assert!(reordered_ids.contains(&text("Three").key("three").id().0));
+                assert!(patch.upserts.len() <= 3);
+                for reorder in &patch.reorders {
+                    let current_block = current
+                        .blocks
+                        .iter()
+                        .find(|block| block.node_id == reorder.node_id)
+                        .expect("current reordered block");
+                    assert_eq!(reorder.order, current_block.order);
+                }
+                assert!(patch.removes.is_empty());
+            }
+            SceneSubmit::Full(_) => panic!("expected reorder to stay on patch submit"),
+        }
+    }
+
+    #[test]
+    fn keyed_layer_reorder_uses_layer_order_patch() {
+        let first = column(vec![
+            container(text("One").key("one-text"))
+                .key("one")
+                .padding_all(8.0)
+                .background(Color::WHITE)
+                .opacity(0.5)
+                .layer(),
+            container(text("Two").key("two-text"))
+                .key("two")
+                .padding_all(8.0)
+                .background(Color::WHITE)
+                .opacity(0.5)
+                .layer(),
+        ])
+        .spacing(4.0)
+        .key("root");
+        let second = column(vec![
+            container(text("Two").key("two-text"))
+                .key("two")
+                .padding_all(8.0)
+                .background(Color::WHITE)
+                .opacity(0.5)
+                .layer(),
+            container(text("One").key("one-text"))
+                .key("one")
+                .padding_all(8.0)
+                .background(Color::WHITE)
+                .opacity(0.5)
+                .layer(),
+        ])
+        .spacing(4.0)
+        .key("root");
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+        let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+        match submit {
+            SceneSubmit::Patch { patch, current } => {
+                let reordered_ids: Vec<u64> = patch
+                    .layer_reorders
+                    .iter()
+                    .map(|reorder| reorder.layer_id)
+                    .collect();
+                assert_eq!(reordered_ids.len(), 2);
+                assert!(
+                    reordered_ids.contains(
+                        &container(text("One").key("one-text"))
+                            .key("one")
+                            .padding_all(8.0)
+                            .background(Color::WHITE)
+                            .opacity(0.5)
+                            .layer()
+                            .id()
+                            .0
+                    )
+                );
+                assert!(
+                    reordered_ids.contains(
+                        &container(text("Two").key("two-text"))
+                            .key("two")
+                            .padding_all(8.0)
+                            .background(Color::WHITE)
+                            .opacity(0.5)
+                            .layer()
+                            .id()
+                            .0
+                    )
+                );
+                for reorder in &patch.layer_reorders {
+                    let current_layer = current
+                        .layers
+                        .iter()
+                        .find(|layer| layer.layer_id == reorder.layer_id)
+                        .expect("current reordered layer");
+                    assert_eq!(reorder.order, current_layer.order);
+                }
+                assert!(patch.layer_upserts.len() <= 2);
+                assert!(patch.removes.is_empty());
+            }
+            SceneSubmit::Full(_) => panic!("expected reorder to stay on patch submit"),
         }
     }
 
@@ -286,9 +496,13 @@ mod tests {
         let title_id = title.id().0;
         let body = text("Body").key("body");
         let body_id = body.id().0;
-        let first = column(vec![title.foreground(Color::WHITE), body]).spacing(4.0).key("root");
+        let first = column(vec![title.foreground(Color::WHITE), body])
+            .spacing(4.0)
+            .key("root");
         let second = column(vec![
-            text("Title").key("title").foreground(Color::rgba(255, 220, 120, 255)),
+            text("Title")
+                .key("title")
+                .foreground(Color::rgba(255, 220, 120, 255)),
             text("Body").key("body"),
         ])
         .spacing(4.0)
@@ -300,7 +514,8 @@ mod tests {
 
         match submit {
             SceneSubmit::Patch { patch, .. } => {
-                let upsert_ids: Vec<u64> = patch.upserts.iter().map(|block| block.node_id).collect();
+                let upsert_ids: Vec<u64> =
+                    patch.upserts.iter().map(|block| block.node_id).collect();
                 assert_eq!(upsert_ids, vec![title_id]);
                 assert!(!upsert_ids.contains(&body_id));
                 assert!(patch.removes.is_empty());
@@ -328,12 +543,16 @@ mod tests {
         ]);
 
         assert_eq!(via_builder.resolved_style(), via_modifiers.resolved_style());
-        assert_eq!(via_builder.modifiers.resolve_style(), via_modifiers.resolved_style());
+        assert_eq!(
+            via_builder.modifiers.resolve_style(),
+            via_modifiers.resolved_style()
+        );
     }
 
     #[test]
     fn modifier_api_builds_same_scene_as_legacy_style_api() {
-        let via_builder = container(text("Hello").foreground(Color::WHITE).key("text")).key("root")
+        let via_builder = container(text("Hello").foreground(Color::WHITE).key("text"))
+            .key("root")
             .padding_all(12.0)
             .background(Color::rgba(39, 110, 241, 255))
             .corner_radius(18.0);
@@ -349,7 +568,8 @@ mod tests {
             Modifier::CornerRadius(18.0),
         ]);
 
-        let builder_scene = compose_scene(&via_builder, Size::new(320.0, 240.0), &FallbackTextSystem);
+        let builder_scene =
+            compose_scene(&via_builder, Size::new(320.0, 240.0), &FallbackTextSystem);
         let modifier_scene =
             compose_scene(&via_modifier, Size::new(320.0, 240.0), &FallbackTextSystem);
 
@@ -397,8 +617,8 @@ mod tests {
             .iter()
             .find(|layer| layer.layer_id == root.id().0)
             .expect("layer");
-        let expected_transform = Transform2D::scale(2.0, 1.5)
-            .then(Transform2D::rotation_degrees(90.0));
+        let expected_transform =
+            Transform2D::scale(2.0, 1.5).then(Transform2D::rotation_degrees(90.0));
 
         assert_eq!(layer.transform, expected_transform);
         assert_eq!(
@@ -421,9 +641,15 @@ mod tests {
             .iter()
             .find(|layer| layer.layer_id != Scene::ROOT_LAYER_ID)
             .expect("layer");
-        let pivot = Transform2D::translation(-layer.local_bounds.size.width * 0.5, -layer.local_bounds.size.height * 0.5)
-            .then(Transform2D::rotation_degrees(90.0))
-            .then(Transform2D::translation(layer.local_bounds.size.width * 0.5, layer.local_bounds.size.height * 0.5));
+        let pivot = Transform2D::translation(
+            -layer.local_bounds.size.width * 0.5,
+            -layer.local_bounds.size.height * 0.5,
+        )
+        .then(Transform2D::rotation_degrees(90.0))
+        .then(Transform2D::translation(
+            layer.local_bounds.size.width * 0.5,
+            layer.local_bounds.size.height * 0.5,
+        ));
 
         assert_eq!(layer.transform, pivot);
     }
@@ -445,7 +671,12 @@ mod tests {
 
         assert_eq!(layer.opacity, 0.5);
         assert!(layer.offscreen);
-        assert!(scene.blocks.iter().all(|block| block.layer_id == root.id().0));
+        assert!(
+            scene
+                .blocks
+                .iter()
+                .all(|block| block.layer_id == root.id().0)
+        );
     }
 
     #[test]
@@ -509,10 +740,90 @@ mod tests {
 
         match submit {
             SceneSubmit::Patch { patch, current } => {
-                assert!(patch.layer_upserts.iter().any(|layer| layer.layer_id == root_id));
+                assert!(
+                    patch
+                        .layer_upserts
+                        .iter()
+                        .any(|layer| layer.layer_id == root_id)
+                );
                 assert!(patch.layer_removes.is_empty());
                 assert!(patch.upserts.iter().any(|block| block.node_id == root_id));
                 assert!(current.layers.iter().any(|layer| layer.layer_id == root_id));
+            }
+            SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
+    }
+
+    #[test]
+    fn adding_layer_rehomes_descendant_blocks_in_patch() {
+        let first = container(text("Hello").key("text"))
+            .padding_all(8.0)
+            .background(Color::WHITE)
+            .key("root");
+        let root_id = first.id().0;
+        let text_id = text("Hello").key("text").id().0;
+        let second = container(text("Hello").key("text"))
+            .padding_all(8.0)
+            .background(Color::WHITE)
+            .opacity(0.5)
+            .layer()
+            .key("root");
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+        let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+        match submit {
+            SceneSubmit::Patch { patch, current } => {
+                let text_block = patch
+                    .upserts
+                    .iter()
+                    .find(|block| block.node_id == text_id)
+                    .expect("text block upsert");
+                assert_eq!(text_block.layer_id, root_id);
+                let current_text_block = current
+                    .blocks
+                    .iter()
+                    .find(|block| block.node_id == text_id)
+                    .expect("current text block");
+                assert_eq!(current_text_block.layer_id, root_id);
+            }
+            SceneSubmit::Full(_) => panic!("expected patch submit"),
+        }
+    }
+
+    #[test]
+    fn removing_layer_rehomes_descendant_blocks_in_patch() {
+        let first = container(text("Hello").key("text"))
+            .padding_all(8.0)
+            .background(Color::WHITE)
+            .opacity(0.5)
+            .layer()
+            .key("root");
+        let text_id = text("Hello").key("text").id().0;
+        let second = container(text("Hello").key("text"))
+            .padding_all(8.0)
+            .background(Color::WHITE)
+            .key("root");
+        let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+        let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+        let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+        match submit {
+            SceneSubmit::Patch { patch, current } => {
+                let text_block = patch
+                    .upserts
+                    .iter()
+                    .find(|block| block.node_id == text_id)
+                    .expect("text block upsert");
+                assert_eq!(text_block.layer_id, Scene::ROOT_LAYER_ID);
+                let current_text_block = current
+                    .blocks
+                    .iter()
+                    .find(|block| block.node_id == text_id)
+                    .expect("current text block");
+                assert_eq!(current_text_block.layer_id, Scene::ROOT_LAYER_ID);
             }
             SceneSubmit::Full(_) => panic!("expected patch submit"),
         }
@@ -555,6 +866,7 @@ mod tests {
                         color: Color::rgba(0, 0, 0, 120),
                     }]
                 );
+                assert!(layer.offscreen);
             }
             SceneSubmit::Full(_) => panic!("expected patch submit"),
         }
@@ -577,5 +889,4 @@ mod tests {
         assert!(layout_dump.contains("node id="));
         assert!(layout_dump.contains("text lines="));
     }
-
 }

@@ -68,17 +68,14 @@ impl<'a> UiRuntime<'a> {
             return Ok(None);
         }
 
-        let root = self
-            .root
-            .as_ref()
-            .ok_or_else(|| {
-                ZenoError::invalid_configuration(
-                    ZenoErrorCode::UiRuntimeRootNotSet,
-                    "ui.runtime",
-                    "prepare_frame",
-                    "ui runtime root is not set",
-                )
-            })?;
+        let root = self.root.as_ref().ok_or_else(|| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::UiRuntimeRootNotSet,
+                "ui.runtime",
+                "prepare_frame",
+                "ui runtime root is not set",
+            )
+        })?;
         let viewport = self.viewport.ok_or_else(|| {
             ZenoError::invalid_configuration(
                 ZenoErrorCode::UiRuntimeViewportNotConfigured,
@@ -140,7 +137,7 @@ impl<'a> UiRuntime<'a> {
 #[cfg(test)]
 mod tests {
     use super::UiRuntime;
-    use crate::{column, text, Backend, FallbackTextSystem, Size};
+    use crate::{Backend, FallbackTextSystem, Size, column, text};
     use zeno_core::Color;
     use zeno_graphics::SceneSubmit;
 
@@ -206,7 +203,10 @@ mod tests {
         runtime.request_node_layout(title_id);
         let second = runtime.prepare_frame().expect("frame").expect("scene");
 
-        assert_eq!(second.compose_stats.layout_passes, first.compose_stats.layout_passes + 1);
+        assert_eq!(
+            second.compose_stats.layout_passes,
+            first.compose_stats.layout_passes + 1
+        );
     }
 
     #[test]
@@ -230,7 +230,10 @@ mod tests {
         );
         let second = runtime.prepare_frame().expect("frame").expect("scene");
 
-        assert_eq!(second.compose_stats.layout_passes, first.compose_stats.layout_passes);
+        assert_eq!(
+            second.compose_stats.layout_passes,
+            first.compose_stats.layout_passes
+        );
         match second.scene_submit {
             SceneSubmit::Patch { patch, .. } => {
                 assert_eq!(patch.upserts.len(), 1);
@@ -258,7 +261,10 @@ mod tests {
         );
         let second = runtime.prepare_frame().expect("frame").expect("scene");
 
-        assert_eq!(second.compose_stats.layout_passes, first.compose_stats.layout_passes + 1);
+        assert_eq!(
+            second.compose_stats.layout_passes,
+            first.compose_stats.layout_passes + 1
+        );
         assert!(matches!(second.scene_submit, SceneSubmit::Patch { .. }));
     }
 }

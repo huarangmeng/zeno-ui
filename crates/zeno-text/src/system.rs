@@ -1,9 +1,9 @@
 use std::sync::OnceLock;
 
 use crate::{
+    TextCapabilities, TextLayout, TextParagraph,
     cache::{ParagraphTextCache, TextCache, TextCacheStats},
     shaper::{FallbackTextShaper, TextShaper},
-    TextCapabilities, TextLayout, TextParagraph,
 };
 
 pub trait TextSystem: Send + Sync {

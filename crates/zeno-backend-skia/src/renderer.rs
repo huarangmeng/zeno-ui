@@ -2,7 +2,7 @@ use skia_safe as sk;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
 use zeno_graphics::{FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene};
 
-use crate::canvas::{render_scene_to_canvas, SkiaTextCache};
+use crate::canvas::{SkiaTextCache, render_scene_to_canvas};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SkiaRenderer;
@@ -23,18 +23,16 @@ impl Renderer for SkiaRenderer {
 
     fn render(&self, _surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
         let mut text_cache = SkiaTextCache::default();
-        let mut surface = sk::surfaces::raster_n32_premul((
-            scene.size.width as i32,
-            scene.size.height as i32,
-        ))
-        .ok_or_else(|| {
-            ZenoError::invalid_configuration(
-                ZenoErrorCode::BackendSkiaSurfaceCreateFailed,
-                "backend.skia",
-                "create_surface",
-                "failed to create skia surface",
-            )
-        })?;
+        let mut surface =
+            sk::surfaces::raster_n32_premul((scene.size.width as i32, scene.size.height as i32))
+                .ok_or_else(|| {
+                    ZenoError::invalid_configuration(
+                        ZenoErrorCode::BackendSkiaSurfaceCreateFailed,
+                        "backend.skia",
+                        "create_surface",
+                        "failed to create skia surface",
+                    )
+                })?;
         let canvas = surface.canvas();
         render_scene_to_canvas(canvas, scene, &mut text_cache);
 

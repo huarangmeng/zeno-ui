@@ -1,8 +1,8 @@
 use std::env;
 
 use zeno_ui::{
-    column, container, text, zeno_session_log, AppConfig, Backend, BackendPreference, Color,
-    DebugConfig, EdgeInsets, Node, RendererConfig, SceneSubmit, UiRuntime, WindowConfig,
+    AppConfig, Backend, BackendPreference, Color, DebugConfig, EdgeInsets, Node, RendererConfig,
+    SceneSubmit, UiRuntime, WindowConfig, column, container, text, zeno_session_log,
 };
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -27,7 +27,10 @@ fn main() {
     let mut runtime = UiRuntime::new(&zeno_ui::FallbackTextSystem);
     runtime.set_root(build_root(false));
     runtime.resize(config.window.size);
-    let first_frame = runtime.prepare_frame().expect("first frame").expect("scene");
+    let first_frame = runtime
+        .prepare_frame()
+        .expect("first frame")
+        .expect("scene");
     runtime.set_root(build_root(true));
     let native_surface = DesktopShell.create_surface(&config.window);
     let (session, frame) = runtime
@@ -44,8 +47,11 @@ fn main() {
     let (patch_upserts, patch_removes, scene_submit) = match frame.scene_submit {
         SceneSubmit::Full(scene) => (scene.blocks.len(), 0usize, SceneSubmit::Full(scene)),
         SceneSubmit::Patch { patch, current } => (
-            patch.upserts.len(),
-            patch.removes.len(),
+            patch.upserts.len()
+                + patch.reorders.len()
+                + patch.layer_upserts.len()
+                + patch.layer_reorders.len(),
+            patch.removes.len() + patch.layer_removes.len(),
             SceneSubmit::Patch { patch, current },
         ),
     };
@@ -97,7 +103,10 @@ fn build_root(accented: bool) -> Node {
     };
     container(
         column(vec![
-            text("Zeno UI").key("title").font_size(28.0).foreground(title_color),
+            text("Zeno UI")
+                .key("title")
+                .font_size(28.0)
+                .foreground(title_color),
             text("Compose 风格声明式组件层")
                 .key("subtitle")
                 .foreground(Color::WHITE),

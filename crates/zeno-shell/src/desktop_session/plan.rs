@@ -1,6 +1,6 @@
-use zeno_core::{Backend, BackendUnavailableReason, Platform, WindowConfig, ZenoError};
 #[cfg(feature = "desktop_winit")]
 use winit::event_loop::ActiveEventLoop;
+use zeno_core::{Backend, BackendUnavailableReason, Platform, WindowConfig, ZenoError};
 
 use super::DesktopRenderSession;
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
@@ -84,8 +84,9 @@ mod tests {
 
     #[test]
     fn skia_plan_is_available_on_desktop_platforms() {
-        let plan = DesktopSessionPlan::from_resolved(&resolved_session(Platform::Linux, Backend::Skia))
-            .expect("skia desktop plan");
+        let plan =
+            DesktopSessionPlan::from_resolved(&resolved_session(Platform::Linux, Backend::Skia))
+                .expect("skia desktop plan");
 
         assert_eq!(plan.backend, Backend::Skia);
         assert_eq!(plan.presenter, DesktopPresenterKind::SkiaGl);
@@ -94,9 +95,11 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_impeller_plan_uses_metal_presenter() {
-        let plan =
-            DesktopSessionPlan::from_resolved(&resolved_session(Platform::MacOs, Backend::Impeller))
-                .expect("macos impeller plan");
+        let plan = DesktopSessionPlan::from_resolved(&resolved_session(
+            Platform::MacOs,
+            Backend::Impeller,
+        ))
+        .expect("macos impeller plan");
 
         assert_eq!(plan.backend, Backend::Impeller);
         assert_eq!(plan.presenter, DesktopPresenterKind::ImpellerMetal);
@@ -105,10 +108,15 @@ mod tests {
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn non_macos_impeller_plan_is_rejected() {
-        let error =
-            DesktopSessionPlan::from_resolved(&resolved_session(Platform::Linux, Backend::Impeller))
-                .expect_err("impeller desktop plan should fail outside macos");
+        let error = DesktopSessionPlan::from_resolved(&resolved_session(
+            Platform::Linux,
+            Backend::Impeller,
+        ))
+        .expect_err("impeller desktop plan should fail outside macos");
 
-        assert_eq!(error.error_code().as_str(), "backend.not_implemented_for_platform");
+        assert_eq!(
+            error.error_code().as_str(),
+            "backend.not_implemented_for_platform"
+        );
     }
 }

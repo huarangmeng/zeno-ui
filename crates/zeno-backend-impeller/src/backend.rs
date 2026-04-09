@@ -18,13 +18,12 @@ impl GraphicsBackend for ImpellerBackend {
     fn probe(&self, platform: Platform) -> BackendProbe {
         match platform {
             Platform::MacOs => BackendProbe::available(self.kind(), RenderCapabilities::minimal()),
-            Platform::Android
-            | Platform::Ios
-            | Platform::Windows
-            | Platform::Linux => BackendProbe::unavailable(
-                self.kind(),
-                BackendUnavailableReason::NotImplementedForPlatform,
-            ),
+            Platform::Android | Platform::Ios | Platform::Windows | Platform::Linux => {
+                BackendProbe::unavailable(
+                    self.kind(),
+                    BackendUnavailableReason::NotImplementedForPlatform,
+                )
+            }
             Platform::Unknown => BackendProbe::unavailable(
                 self.kind(),
                 BackendUnavailableReason::runtime_probe_failed(

@@ -9,7 +9,11 @@ pub trait Renderer: Send + Sync {
 
     fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError>;
 
-    fn submit(&self, surface: &RenderSurface, submit: &SceneSubmit) -> Result<FrameReport, ZenoError> {
+    fn submit(
+        &self,
+        surface: &RenderSurface,
+        submit: &SceneSubmit,
+    ) -> Result<FrameReport, ZenoError> {
         let scene = submit.snapshot(None).ok_or_else(|| {
             ZenoError::invalid_configuration(
                 ZenoErrorCode::GraphicsScenePatchWithoutBase,

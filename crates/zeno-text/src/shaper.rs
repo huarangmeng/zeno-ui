@@ -213,6 +213,11 @@ mod tests {
 
         assert!(layout.metrics.line_count >= 2);
         assert!(!layout.glyphs.is_empty());
-        assert!(layout.glyphs.windows(2).any(|pair| pair[1].baseline_y > pair[0].baseline_y));
+        assert!(
+            layout
+                .glyphs
+                .windows(2)
+                .any(|pair| pair[1].baseline_y > pair[0].baseline_y)
+        );
     }
 }

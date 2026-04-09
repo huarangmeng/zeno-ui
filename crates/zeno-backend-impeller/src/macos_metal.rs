@@ -5,19 +5,21 @@ use std::collections::HashMap;
 
 use fontdue::Font;
 use metal::{
-    Buffer, CommandBufferRef, CommandQueue, CompileOptions, Device, MTLClearColor,
-    MTLBlendFactor, MTLLoadAction, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion,
-    MTLResourceOptions, MTLScissorRect, MTLSize, MTLStoreAction, MTLTextureType,
-    MTLTextureUsage, MetalDrawableRef,
+    Buffer, CommandBufferRef, CommandQueue, CompileOptions, Device, MTLBlendFactor, MTLClearColor,
+    MTLLoadAction, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion, MTLResourceOptions,
+    MTLScissorRect, MTLSize, MTLStoreAction, MTLTextureType, MTLTextureUsage, MetalDrawableRef,
     RenderPassDescriptor, RenderPipelineDescriptor, RenderPipelineState, Texture,
     TextureDescriptor,
+};
+use shaders::SHADERS;
+use text::{
+    CachedGlyph, GlyphCacheKey, glyph_cache_key, load_system_font, rasterize_glyph,
+    rasterize_layout,
 };
 use zeno_core::{Color, Point, Rect, Transform2D, ZenoError, ZenoErrorCode};
 use zeno_graphics::{
     DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneEffect, SceneLayer, Shape,
 };
-use shaders::SHADERS;
-use text::{glyph_cache_key, load_system_font, rasterize_glyph, rasterize_layout, CachedGlyph, GlyphCacheKey};
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -87,7 +89,11 @@ impl MetalSceneRenderer {
         Ok(Self {
             color_pipeline: create_color_pipeline(&device, &library)?,
             text_pipeline: create_text_pipeline(&device, &library)?,
-            composite_pipeline: create_composite_pipeline(&device, &library, SceneBlendMode::Normal)?,
+            composite_pipeline: create_composite_pipeline(
+                &device,
+                &library,
+                SceneBlendMode::Normal,
+            )?,
             composite_multiply_pipeline: create_composite_pipeline(
                 &device,
                 &library,
@@ -110,7 +116,7 @@ impl MetalSceneRenderer {
         drawable: &MetalDrawableRef,
         scene: &Scene,
     ) -> Result<(), ZenoError> {
-        self.render_to_drawable_with_load(drawable, scene, false)
+        self.render_to_drawable_region_with_load(drawable, scene, false, None)
     }
 
     pub fn render_to_drawable_with_load(
@@ -118,6 +124,16 @@ impl MetalSceneRenderer {
         drawable: &MetalDrawableRef,
         scene: &Scene,
         preserve_contents: bool,
+    ) -> Result<(), ZenoError> {
+        self.render_to_drawable_region_with_load(drawable, scene, preserve_contents, None)
+    }
+
+    pub fn render_to_drawable_region_with_load(
+        &mut self,
+        drawable: &MetalDrawableRef,
+        scene: &Scene,
+        preserve_contents: bool,
+        dirty_bounds: Option<Rect>,
     ) -> Result<(), ZenoError> {
         let render_pass = RenderPassDescriptor::new();
         let attachment = render_pass
@@ -146,6 +162,8 @@ impl MetalSceneRenderer {
         let encoder = command_buffer.new_render_command_encoder(&render_pass);
         let viewport_width = scene.size.width.max(1.0);
         let viewport_height = scene.size.height.max(1.0);
+        let root_scissor = effective_root_scissor(dirty_bounds, viewport_width, viewport_height);
+        encoder.set_scissor_rect(root_scissor);
 
         if scene.blocks.is_empty() {
             draw_commands(
@@ -173,6 +191,7 @@ impl MetalSceneRenderer {
                 &command_buffer,
                 &encoder,
                 scene,
+                root_scissor,
                 viewport_width,
                 viewport_height,
                 &mut self.glyph_cache,
@@ -213,17 +232,14 @@ fn create_color_pipeline(
         })?;
     descriptor.set_vertex_function(Some(&vertex));
     descriptor.set_fragment_function(Some(&fragment));
-    let attachment = descriptor
-        .color_attachments()
-        .object_at(0)
-        .ok_or_else(|| {
-            ZenoError::invalid_configuration(
-                ZenoErrorCode::BackendImpellerColorPipelineAttachmentMissing,
-                "backend.impeller",
-                "create_color_pipeline",
-                "missing color attachment",
-            )
-        })?;
+    let attachment = descriptor.color_attachments().object_at(0).ok_or_else(|| {
+        ZenoError::invalid_configuration(
+            ZenoErrorCode::BackendImpellerColorPipelineAttachmentMissing,
+            "backend.impeller",
+            "create_color_pipeline",
+            "missing color attachment",
+        )
+    })?;
     attachment.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
     attachment.set_blending_enabled(true);
     attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
@@ -247,16 +263,14 @@ fn create_text_pipeline(
     library: &metal::Library,
 ) -> Result<RenderPipelineState, ZenoError> {
     let descriptor = RenderPipelineDescriptor::new();
-    let vertex = library
-        .get_function("text_vertex", None)
-        .map_err(|error| {
-            ZenoError::invalid_configuration(
-                ZenoErrorCode::BackendImpellerTextPipelineFunctionMissing,
-                "backend.impeller",
-                "create_text_pipeline",
-                error.to_string(),
-            )
-        })?;
+    let vertex = library.get_function("text_vertex", None).map_err(|error| {
+        ZenoError::invalid_configuration(
+            ZenoErrorCode::BackendImpellerTextPipelineFunctionMissing,
+            "backend.impeller",
+            "create_text_pipeline",
+            error.to_string(),
+        )
+    })?;
     let fragment = library
         .get_function("text_fragment", None)
         .map_err(|error| {
@@ -269,17 +283,14 @@ fn create_text_pipeline(
         })?;
     descriptor.set_vertex_function(Some(&vertex));
     descriptor.set_fragment_function(Some(&fragment));
-    let attachment = descriptor
-        .color_attachments()
-        .object_at(0)
-        .ok_or_else(|| {
-            ZenoError::invalid_configuration(
-                ZenoErrorCode::BackendImpellerTextPipelineAttachmentMissing,
-                "backend.impeller",
-                "create_text_pipeline",
-                "missing color attachment",
-            )
-        })?;
+    let attachment = descriptor.color_attachments().object_at(0).ok_or_else(|| {
+        ZenoError::invalid_configuration(
+            ZenoErrorCode::BackendImpellerTextPipelineAttachmentMissing,
+            "backend.impeller",
+            "create_text_pipeline",
+            "missing color attachment",
+        )
+    })?;
     attachment.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
     attachment.set_blending_enabled(true);
     attachment.set_source_rgb_blend_factor(MTLBlendFactor::SourceAlpha);
@@ -326,17 +337,14 @@ fn create_composite_pipeline(
         })?;
     descriptor.set_vertex_function(Some(&vertex));
     descriptor.set_fragment_function(Some(&fragment));
-    let attachment = descriptor
-        .color_attachments()
-        .object_at(0)
-        .ok_or_else(|| {
-            ZenoError::invalid_configuration(
-                ZenoErrorCode::BackendImpellerCompositePipelineAttachmentMissing,
-                "backend.impeller",
-                "create_composite_pipeline",
-                "missing color attachment",
-            )
-        })?;
+    let attachment = descriptor.color_attachments().object_at(0).ok_or_else(|| {
+        ZenoError::invalid_configuration(
+            ZenoErrorCode::BackendImpellerCompositePipelineAttachmentMissing,
+            "backend.impeller",
+            "create_composite_pipeline",
+            "missing color attachment",
+        )
+    })?;
     attachment.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
     attachment.set_blending_enabled(true);
     match blend_mode {
@@ -389,15 +397,13 @@ fn draw_commands(
             DrawCommand::Clear(_) => {}
             DrawCommand::Fill { shape, brush } => {
                 let zeno_graphics::Brush::Solid(color) = brush;
-                if let Some(vertices) =
-                    build_shape_vertices(
-                        shape,
-                        apply_alpha(*color, opacity_multiplier),
-                        viewport_width,
-                        viewport_height,
-                        transform,
-                    )
-                {
+                if let Some(vertices) = build_shape_vertices(
+                    shape,
+                    apply_alpha(*color, opacity_multiplier),
+                    viewport_width,
+                    viewport_height,
+                    transform,
+                ) {
                     let buffer = new_buffer(device, &vertices);
                     encoder.set_render_pipeline_state(color_pipeline);
                     encoder.set_vertex_buffer(0, Some(&buffer), 0);
@@ -413,19 +419,22 @@ fn draw_commands(
                 let Some(font) = font else {
                     continue;
                 };
-                let Some((mask, width, height)) = rasterize_layout(layout, |glyph_id, glyph, font_size| {
-                    let key = glyph_cache_key(glyph_id, font_size);
-                    if let Some(cached) = glyph_cache.get(&key) {
-                        return Some(cached.clone());
-                    }
-                    let cached = rasterize_glyph(font, glyph_id, glyph, font_size);
-                    glyph_cache.insert(key, cached.clone());
-                    Some(cached)
-                }) else {
+                let Some((mask, width, height)) =
+                    rasterize_layout(layout, |glyph_id, glyph, font_size| {
+                        let key = glyph_cache_key(glyph_id, font_size);
+                        if let Some(cached) = glyph_cache.get(&key) {
+                            return Some(cached.clone());
+                        }
+                        let cached = rasterize_glyph(font, glyph_id, glyph, font_size);
+                        glyph_cache.insert(key, cached.clone());
+                        Some(cached)
+                    })
+                else {
                     continue;
                 };
                 let texture = make_text_texture(device, &mask, width, height);
-                let mapped = transform.map_point(Point::new(position.x, position.y - layout.metrics.ascent));
+                let mapped =
+                    transform.map_point(Point::new(position.x, position.y - layout.metrics.ascent));
                 let vertices = build_text_vertices(
                     mapped.x,
                     mapped.y,
@@ -456,27 +465,32 @@ fn render_scene_layers(
     command_buffer: &CommandBufferRef,
     encoder: &metal::RenderCommandEncoderRef,
     scene: &Scene,
+    root_scissor: MTLScissorRect,
     viewport_width: f32,
     viewport_height: f32,
     glyph_cache: &mut HashMap<GlyphCacheKey, CachedGlyph>,
 ) {
-    let layers_by_id: HashMap<u64, &SceneLayer> =
-        scene.layers.iter().map(|layer| (layer.layer_id, layer)).collect();
+    let layers_by_id: HashMap<u64, &SceneLayer> = scene
+        .layers
+        .iter()
+        .map(|layer| (layer.layer_id, layer))
+        .collect();
     let mut child_layers_by_parent: HashMap<u64, Vec<&SceneLayer>> = HashMap::new();
     let mut blocks_by_layer: HashMap<u64, Vec<&SceneBlock>> = HashMap::new();
     for layer in &scene.layers {
         if let Some(parent_id) = layer.parent_layer_id {
-            child_layers_by_parent.entry(parent_id).or_default().push(layer);
+            child_layers_by_parent
+                .entry(parent_id)
+                .or_default()
+                .push(layer);
         }
     }
     for block in &scene.blocks {
-        blocks_by_layer.entry(block.layer_id).or_default().push(block);
+        blocks_by_layer
+            .entry(block.layer_id)
+            .or_default()
+            .push(block);
     }
-    let full_scissor = scissor_for_rect(
-        Rect::new(0.0, 0.0, viewport_width, viewport_height),
-        viewport_width,
-        viewport_height,
-    );
     let Some(root_layer) = layers_by_id.get(&Scene::ROOT_LAYER_ID).copied() else {
         return;
     };
@@ -493,7 +507,7 @@ fn render_scene_layers(
         root_layer,
         Transform2D::identity(),
         1.0,
-        full_scissor,
+        root_scissor,
         &layers_by_id,
         &child_layers_by_parent,
         &blocks_by_layer,
@@ -501,7 +515,7 @@ fn render_scene_layers(
         viewport_height,
         glyph_cache,
     );
-    encoder.set_scissor_rect(full_scissor);
+    encoder.set_scissor_rect(root_scissor);
 }
 
 fn render_layer(
@@ -528,7 +542,11 @@ fn render_layer(
     let layer_scissor = layer.clip.map_or(parent_scissor, |clip| {
         intersect_scissor(
             parent_scissor,
-            scissor_for_rect(clip_rect(clip, combined_transform), viewport_width, viewport_height),
+            scissor_for_rect(
+                clip_rect(clip, combined_transform),
+                viewport_width,
+                viewport_height,
+            ),
         )
     });
     encoder.set_scissor_rect(layer_scissor);
@@ -667,11 +685,21 @@ fn render_offscreen_layer(
     let offscreen_encoder = command_buffer.new_render_command_encoder(&render_pass);
     let offscreen_width = texture_width as f32;
     let offscreen_height = texture_height as f32;
-    let full_scissor = scissor_for_rect(
-        Rect::new(0.0, 0.0, offscreen_width, offscreen_height),
+    let parent_dirty_rect = rect_from_scissor(parent_scissor);
+    let local_dirty_rect = inverse_map_rect(combined_transform, parent_dirty_rect)
+        .and_then(|bounds| rect_intersection(bounds, effect_bounds))
+        .unwrap_or(effect_bounds);
+    let offscreen_scissor = scissor_for_rect(
+        Rect::new(
+            (local_dirty_rect.origin.x - effect_bounds.origin.x).max(0.0),
+            (local_dirty_rect.origin.y - effect_bounds.origin.y).max(0.0),
+            local_dirty_rect.size.width,
+            local_dirty_rect.size.height,
+        ),
         offscreen_width,
         offscreen_height,
     );
+    offscreen_encoder.set_scissor_rect(offscreen_scissor);
     render_layer(
         device,
         color_pipeline,
@@ -685,7 +713,7 @@ fn render_offscreen_layer(
         layer,
         Transform2D::translation(-effect_bounds.origin.x, -effect_bounds.origin.y),
         1.0,
-        full_scissor,
+        offscreen_scissor,
         layers_by_id,
         child_layers_by_parent,
         blocks_by_layer,
@@ -762,12 +790,27 @@ fn build_quad_vertices(
     let rgba = color_to_f32(color);
     [
         ([rect.origin.x, rect.origin.y], [0.0, 0.0]),
-        ([rect.origin.x + rect.size.width, rect.origin.y], [rect.size.width, 0.0]),
-        ([rect.origin.x, rect.origin.y + rect.size.height], [0.0, rect.size.height]),
-        ([rect.origin.x, rect.origin.y + rect.size.height], [0.0, rect.size.height]),
-        ([rect.origin.x + rect.size.width, rect.origin.y], [rect.size.width, 0.0]),
         (
-            [rect.origin.x + rect.size.width, rect.origin.y + rect.size.height],
+            [rect.origin.x + rect.size.width, rect.origin.y],
+            [rect.size.width, 0.0],
+        ),
+        (
+            [rect.origin.x, rect.origin.y + rect.size.height],
+            [0.0, rect.size.height],
+        ),
+        (
+            [rect.origin.x, rect.origin.y + rect.size.height],
+            [0.0, rect.size.height],
+        ),
+        (
+            [rect.origin.x + rect.size.width, rect.origin.y],
+            [rect.size.width, 0.0],
+        ),
+        (
+            [
+                rect.origin.x + rect.size.width,
+                rect.origin.y + rect.size.height,
+            ],
             [rect.size.width, rect.size.height],
         ),
     ]
@@ -821,10 +864,22 @@ fn build_composite_vertices(
     [
         ([rect.origin.x, rect.origin.y], [0.0, 0.0]),
         ([rect.origin.x + rect.size.width, rect.origin.y], [1.0, 0.0]),
-        ([rect.origin.x, rect.origin.y + rect.size.height], [0.0, 1.0]),
-        ([rect.origin.x, rect.origin.y + rect.size.height], [0.0, 1.0]),
+        (
+            [rect.origin.x, rect.origin.y + rect.size.height],
+            [0.0, 1.0],
+        ),
+        (
+            [rect.origin.x, rect.origin.y + rect.size.height],
+            [0.0, 1.0],
+        ),
         ([rect.origin.x + rect.size.width, rect.origin.y], [1.0, 0.0]),
-        ([rect.origin.x + rect.size.width, rect.origin.y + rect.size.height], [1.0, 1.0]),
+        (
+            [
+                rect.origin.x + rect.size.width,
+                rect.origin.y + rect.size.height,
+            ],
+            [1.0, 1.0],
+        ),
     ]
     .into_iter()
     .map(|(position, uv)| CompositeVertex {
@@ -906,7 +961,11 @@ fn composite_pipeline_for_blend<'a>(
     }
 }
 
-fn composite_params(layer: &SceneLayer, texture_width: f32, texture_height: f32) -> CompositeParams {
+fn composite_params(
+    layer: &SceneLayer,
+    texture_width: f32,
+    texture_height: f32,
+) -> CompositeParams {
     let mut blur_sigma = 0.0;
     let mut shadow_blur = 0.0;
     let mut shadow_offset = [0.0, 0.0];
@@ -918,7 +977,12 @@ fn composite_params(layer: &SceneLayer, texture_width: f32, texture_height: f32)
                 blur_sigma = *sigma;
                 flags |= 1;
             }
-            SceneEffect::DropShadow { dx, dy, blur, color } => {
+            SceneEffect::DropShadow {
+                dx,
+                dy,
+                blur,
+                color,
+            } => {
                 shadow_blur = *blur;
                 shadow_offset = [*dx, *dy];
                 shadow_color = color_to_f32(*color);
@@ -973,10 +1037,12 @@ fn expand_rect(rect: Rect, amount: f32) -> Rect {
 fn clear_color_for_scene(scene: &Scene) -> MTLClearColor {
     let clear = scene
         .clear_color
-        .or_else(|| scene.commands.iter().find_map(|command| match command {
-            DrawCommand::Clear(color) => Some(*color),
-            _ => None,
-        }))
+        .or_else(|| {
+            scene.commands.iter().find_map(|command| match command {
+                DrawCommand::Clear(color) => Some(*color),
+                _ => None,
+            })
+        })
         .unwrap_or(Color::WHITE);
     MTLClearColor::new(
         f64::from(clear.red) / 255.0,
@@ -1036,6 +1102,23 @@ fn scissor_for_rect(rect: Rect, viewport_width: f32, viewport_height: f32) -> MT
     }
 }
 
+fn effective_root_scissor(
+    dirty_bounds: Option<Rect>,
+    viewport_width: f32,
+    viewport_height: f32,
+) -> MTLScissorRect {
+    dirty_bounds.map_or_else(
+        || {
+            scissor_for_rect(
+                Rect::new(0.0, 0.0, viewport_width, viewport_height),
+                viewport_width,
+                viewport_height,
+            )
+        },
+        |bounds| scissor_for_rect(bounds, viewport_width, viewport_height),
+    )
+}
+
 fn intersect_scissor(a: MTLScissorRect, b: MTLScissorRect) -> MTLScissorRect {
     let x = a.x.max(b.x);
     let y = a.y.max(b.y);
@@ -1049,6 +1132,42 @@ fn intersect_scissor(a: MTLScissorRect, b: MTLScissorRect) -> MTLScissorRect {
     }
 }
 
+fn rect_from_scissor(scissor: MTLScissorRect) -> Rect {
+    Rect::new(
+        scissor.x as f32,
+        scissor.y as f32,
+        scissor.width as f32,
+        scissor.height as f32,
+    )
+}
+
+fn rect_intersection(a: Rect, b: Rect) -> Option<Rect> {
+    if !a.intersects(&b) {
+        return None;
+    }
+    let left = a.origin.x.max(b.origin.x);
+    let top = a.origin.y.max(b.origin.y);
+    let right = a.right().min(b.right());
+    let bottom = a.bottom().min(b.bottom());
+    Some(Rect::new(left, top, right - left, bottom - top))
+}
+
+fn inverse_map_rect(transform: Transform2D, rect: Rect) -> Option<Rect> {
+    let determinant = transform.m11 * transform.m22 - transform.m21 * transform.m12;
+    if determinant.abs() <= f32::EPSILON {
+        return None;
+    }
+    let inverse = Transform2D {
+        m11: transform.m22 / determinant,
+        m12: -transform.m12 / determinant,
+        m21: -transform.m21 / determinant,
+        m22: transform.m11 / determinant,
+        tx: (transform.m21 * transform.ty - transform.m22 * transform.tx) / determinant,
+        ty: (transform.m12 * transform.tx - transform.m11 * transform.ty) / determinant,
+    };
+    Some(inverse.map_rect(rect))
+}
+
 fn apply_alpha(color: Color, opacity_multiplier: f32) -> Color {
     let alpha = ((f32::from(color.alpha) * opacity_multiplier).clamp(0.0, 255.0)).round() as u8;
     Color::rgba(color.red, color.green, color.blue, alpha)
@@ -1056,7 +1175,10 @@ fn apply_alpha(color: Color, opacity_multiplier: f32) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_composite_vertices, composite_params, local_effect_bounds, should_render_offscreen};
+    use super::{
+        build_composite_vertices, composite_params, effective_root_scissor, inverse_map_rect,
+        local_effect_bounds, rect_from_scissor, should_render_offscreen,
+    };
     use zeno_core::{Color, Rect, Size, Transform2D};
     use zeno_graphics::{Scene, SceneBlendMode, SceneEffect, SceneLayer};
 
@@ -1084,7 +1206,8 @@ mod tests {
 
     #[test]
     fn composite_vertices_preserve_opacity_in_vertex_color() {
-        let vertices = build_composite_vertices(Rect::new(10.0, 20.0, 30.0, 40.0), 0.25, 100.0, 100.0);
+        let vertices =
+            build_composite_vertices(Rect::new(10.0, 20.0, 30.0, 40.0), 0.25, 100.0, 100.0);
 
         assert_eq!(vertices.len(), 6);
         assert_eq!(vertices[0].color, [1.0, 1.0, 1.0, 0.25]);
@@ -1124,6 +1247,46 @@ mod tests {
         assert_eq!(bounds, blur_bounds.union(&shadow_bounds));
         assert_eq!(params.flags, 3);
         assert_eq!(params.shadow_offset, [4.0, 6.0]);
-        assert_eq!(params.shadow_color, [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 128.0 / 255.0]);
+        assert_eq!(
+            params.shadow_color,
+            [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 128.0 / 255.0]
+        );
+    }
+
+    #[test]
+    fn root_scissor_uses_dirty_bounds_when_present() {
+        let full = effective_root_scissor(None, 200.0, 100.0);
+        let dirty = effective_root_scissor(Some(Rect::new(10.4, 20.2, 30.1, 40.6)), 200.0, 100.0);
+
+        assert_eq!(full.x, 0);
+        assert_eq!(full.y, 0);
+        assert_eq!(full.width, 200);
+        assert_eq!(full.height, 100);
+        assert_eq!(dirty.x, 10);
+        assert_eq!(dirty.y, 20);
+        assert_eq!(dirty.width, 31);
+        assert_eq!(dirty.height, 41);
+    }
+
+    #[test]
+    fn inverse_map_rect_restores_translated_and_scaled_bounds() {
+        let transform = Transform2D::translation(30.0, 10.0).then(Transform2D::scale(2.0, 4.0));
+        let local = Rect::new(5.0, 2.0, 10.0, 10.0);
+        let world = transform.map_rect(local);
+        let local = inverse_map_rect(transform, world).expect("invertible transform");
+
+        assert_eq!(local, Rect::new(5.0, 2.0, 10.0, 10.0));
+    }
+
+    #[test]
+    fn rect_from_scissor_matches_scissor_extent() {
+        let rect = rect_from_scissor(metal::MTLScissorRect {
+            x: 12,
+            y: 8,
+            width: 40,
+            height: 24,
+        });
+
+        assert_eq!(rect, Rect::new(12.0, 8.0, 40.0, 24.0));
     }
 }

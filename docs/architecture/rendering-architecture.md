@@ -31,10 +31,10 @@
 ## 已验证能力
 - Workspace 已按 `core / graphics / runtime / shell / compose / text / backend-*` 垂直拆分。
 - Runtime 已支持 Impeller 优先、Skia 兜底，并能记录每次解析尝试。
-- `zeno-compose` 已具备 retained tree、dirty propagation、layout dirty roots 与局部 relayout 路径。
+- `zeno-compose` 已具备 retained tree、dirty propagation、layout dirty roots 与局部 relayout 路径；keyed reorder 可下沉为 order patch，结构 dirty 也优先停留在最小容器根。
 - `zeno-graphics` 已具备 `SceneLayer`、`SceneBlock`、`ScenePatch`、`SceneSubmit` 数据结构，并支持 subtree clip / 2D affine transform / opacity / effect stack 状态。
 - Skia 已能消费结构化 scene，具备 dirty bounds 局部提交路径，并已执行 layer 级 blend / blur / drop-shadow MVP。
-- macOS 已具备 Impeller Metal presenter，可走桌面窗口渲染路径，并已支持 layer 级 offscreen compositing、blend、blur 与 drop-shadow 执行链。
+- macOS 已具备 Impeller Metal presenter，可走桌面窗口渲染路径，并已支持 layer 级 offscreen compositing、blend、blur 与 drop-shadow 执行链；patch 脏区已从根 pass 继续透传到 offscreen pass 的局部 scissor。
 - 移动端 shell 已具备 `session binding -> attachment -> presenter interface -> render session` 主链路。
 - Android/iOS 已分别具备 native-window / view / metal-layer presenter builder，session 不再直接持有通用 renderer。
 

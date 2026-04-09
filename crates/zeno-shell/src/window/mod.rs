@@ -1,6 +1,4 @@
-use zeno_core::{
-    AppConfig, Backend, Platform, WindowConfig, ZenoError, ZenoErrorCode,
-};
+use zeno_core::{AppConfig, Backend, Platform, WindowConfig, ZenoError, ZenoErrorCode};
 use zeno_graphics::{DrawCommand, Scene, SceneSubmit};
 use zeno_runtime::{BackendAttempt, ResolvedBackend, ResolvedSession};
 

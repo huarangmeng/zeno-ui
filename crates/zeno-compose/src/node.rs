@@ -40,7 +40,11 @@ pub struct Node {
 impl Node {
     #[must_use]
     pub(crate) fn new(id: NodeId, kind: NodeKind) -> Self {
-        Self { id, kind, modifiers: Modifiers::new() }
+        Self {
+            id,
+            kind,
+            modifiers: Modifiers::new(),
+        }
     }
 
     #[must_use]

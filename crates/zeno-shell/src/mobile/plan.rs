@@ -125,11 +125,10 @@ impl MobileSessionPlan {
                 MobileHostKind::AndroidNativeWindow,
                 MobilePresenterInterface::AndroidImpellerNativeWindow,
             ),
-            (
-                MobilePlatform::Ios,
-                MobilePresenterKind::SkiaSurface,
+            (MobilePlatform::Ios, MobilePresenterKind::SkiaSurface, MobileHostKind::IosView) => (
                 MobileHostKind::IosView,
-            ) => (MobileHostKind::IosView, MobilePresenterInterface::IosSkiaView),
+                MobilePresenterInterface::IosSkiaView,
+            ),
             (
                 MobilePlatform::Ios,
                 MobilePresenterKind::SkiaSurface,
@@ -171,16 +170,20 @@ impl MobileSessionPlan {
     ) -> Result<MobileRenderSession, ZenoError> {
         match attached.attachment.interface {
             MobilePresenterInterface::AndroidSkiaNativeWindow
-            | MobilePresenterInterface::AndroidImpellerNativeWindow => Ok(
-                MobileRenderSession::Android(super::sessions::AndroidNativeWindowSession::new(attached)?),
-            ),
-            MobilePresenterInterface::IosSkiaView => {
-                Ok(MobileRenderSession::IosView(super::sessions::IosViewSession::new(attached)?))
+            | MobilePresenterInterface::AndroidImpellerNativeWindow => {
+                Ok(MobileRenderSession::Android(
+                    super::sessions::AndroidNativeWindowSession::new(attached)?,
+                ))
             }
+            MobilePresenterInterface::IosSkiaView => Ok(MobileRenderSession::IosView(
+                super::sessions::IosViewSession::new(attached)?,
+            )),
             MobilePresenterInterface::IosSkiaMetalLayer
-            | MobilePresenterInterface::IosImpellerMetalLayer => Ok(
-                MobileRenderSession::IosMetalLayer(super::sessions::IosMetalLayerSession::new(attached)?),
-            ),
+            | MobilePresenterInterface::IosImpellerMetalLayer => {
+                Ok(MobileRenderSession::IosMetalLayer(
+                    super::sessions::IosMetalLayerSession::new(attached)?,
+                ))
+            }
         }
     }
 }

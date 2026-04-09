@@ -13,8 +13,8 @@ use skia_safe as sk;
 use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
-use zeno_backend_skia::{render_scene_region_to_canvas, render_scene_to_canvas, SkiaTextCache};
-use zeno_core::{zeno_session_log, Backend, Color, Platform, Size, ZenoError, ZenoErrorCode};
+use zeno_backend_skia::{SkiaTextCache, render_scene_region_to_canvas, render_scene_to_canvas};
+use zeno_core::{Backend, Color, Platform, Size, ZenoError, ZenoErrorCode, zeno_session_log};
 use zeno_graphics::{FrameReport, RenderSurface, Scene, SceneSubmit};
 
 use super::desktop_session_error;
@@ -33,7 +33,10 @@ pub(super) struct SkiaGlSession {
 }
 
 impl SkiaGlSession {
-    pub(super) fn new(event_loop: &ActiveEventLoop, config: &zeno_core::WindowConfig) -> Result<Self, String> {
+    pub(super) fn new(
+        event_loop: &ActiveEventLoop,
+        config: &zeno_core::WindowConfig,
+    ) -> Result<Self, String> {
         let window_attributes = Window::default_attributes()
             .with_title(config.title.clone())
             .with_inner_size(LogicalSize::new(
@@ -214,6 +217,18 @@ impl SkiaGlSession {
             surface_id: self.surface.id.clone(),
         })
         .map(|report| {
+            zeno_session_log!(
+                debug,
+                op = "submit_scene_report",
+                backend = ?Backend::Skia,
+                mode = if dirty_bounds.is_some() { "patch" } else { "full" },
+                block_count = report.block_count,
+                patch_upserts = report.patch_upserts,
+                patch_removes = report.patch_removes,
+                resource_count = report.resource_count,
+                surface = %report.surface_id,
+                "skia macos frame report"
+            );
             self.last_scene = Some(scene);
             report
         })
@@ -233,8 +248,14 @@ impl SkiaGlSession {
     }
 }
 
-fn create_not_current_context(window: &Window, gl_config: &Config) -> Result<NotCurrentContext, String> {
-    let raw_window_handle = window.window_handle().map_err(|error| error.to_string())?.as_raw();
+fn create_not_current_context(
+    window: &Window,
+    gl_config: &Config,
+) -> Result<NotCurrentContext, String> {
+    let raw_window_handle = window
+        .window_handle()
+        .map_err(|error| error.to_string())?
+        .as_raw();
     let gl_display = gl_config.display();
     let context_attributes = ContextAttributesBuilder::new()
         .with_context_api(ContextApi::OpenGl(Some(Version::new(3, 3))))
@@ -251,15 +272,24 @@ fn create_not_current_context(window: &Window, gl_config: &Config) -> Result<Not
     .map_err(|error| error.to_string())
 }
 
-fn create_gl_surface(window: &Window, gl_config: &Config) -> Result<Surface<WindowSurface>, String> {
-    let raw_window_handle = window.window_handle().map_err(|error| error.to_string())?.as_raw();
+fn create_gl_surface(
+    window: &Window,
+    gl_config: &Config,
+) -> Result<Surface<WindowSurface>, String> {
+    let raw_window_handle = window
+        .window_handle()
+        .map_err(|error| error.to_string())?
+        .as_raw();
     let gl_display = gl_config.display();
     let size = window.inner_size();
-    let width = NonZeroU32::new(size.width.max(1)).ok_or_else(|| "invalid window width".to_string())?;
-    let height = NonZeroU32::new(size.height.max(1)).ok_or_else(|| "invalid window height".to_string())?;
-    let attrs = SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_window_handle, width, height);
-    let surface =
-        unsafe { gl_display.create_window_surface(gl_config, &attrs) }.map_err(|error| error.to_string())?;
+    let width =
+        NonZeroU32::new(size.width.max(1)).ok_or_else(|| "invalid window width".to_string())?;
+    let height =
+        NonZeroU32::new(size.height.max(1)).ok_or_else(|| "invalid window height".to_string())?;
+    let attrs =
+        SurfaceAttributesBuilder::<WindowSurface>::new().build(raw_window_handle, width, height);
+    let surface = unsafe { gl_display.create_window_surface(gl_config, &attrs) }
+        .map_err(|error| error.to_string())?;
     Ok(surface)
 }
 

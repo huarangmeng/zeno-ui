@@ -1,4 +1,7 @@
-use std::{borrow::Cow, fmt::{Display, Formatter}};
+use std::{
+    borrow::Cow,
+    fmt::{Display, Formatter},
+};
 
 use crate::{Backend, BackendUnavailableReason, ZenoErrorCode};
 

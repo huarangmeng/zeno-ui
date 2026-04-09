@@ -1,14 +1,15 @@
 use std::num::NonZeroUsize;
 
-use zeno_core::{AppConfig, Backend, Color, Platform, RendererConfig, Size, WindowConfig, ZenoErrorCode};
+use zeno_core::{
+    AppConfig, Backend, Color, Platform, RendererConfig, Size, WindowConfig, ZenoErrorCode,
+};
 use zeno_graphics::{DrawCommand, Scene, SceneSubmit};
 use zeno_runtime::{BackendAttempt, ResolvedBackend, ResolvedSession};
 
 use super::{
-    create_mobile_render_session, AndroidAttachContext, IosMetalLayerAttachContext,
-    IosViewAttachContext, MobileAttachContext, MobileHostKind, MobilePlatform,
-    MobilePresenterAttachment, MobilePresenterInterface, MobilePresenterKind, MobileShell,
-    MobileViewport,
+    AndroidAttachContext, IosMetalLayerAttachContext, IosViewAttachContext, MobileAttachContext,
+    MobileHostKind, MobilePlatform, MobilePresenterAttachment, MobilePresenterInterface,
+    MobilePresenterKind, MobileShell, MobileViewport, create_mobile_render_session,
 };
 
 fn fake_handle(seed: usize) -> NonZeroUsize {
@@ -97,7 +98,10 @@ fn bind_session_rejects_platform_mismatch() {
         )
         .expect_err("platform mismatch should fail");
 
-    assert_eq!(error.error_code(), ZenoErrorCode::MobileSessionPlatformMismatch);
+    assert_eq!(
+        error.error_code(),
+        ZenoErrorCode::MobileSessionPlatformMismatch
+    );
 }
 
 #[test]
@@ -176,7 +180,10 @@ fn attach_session_rejects_attach_platform_mismatch() {
         )
         .expect_err("platform mismatch should fail");
 
-    assert_eq!(error.error_code(), ZenoErrorCode::MobileAttachPlatformMismatch);
+    assert_eq!(
+        error.error_code(),
+        ZenoErrorCode::MobileAttachPlatformMismatch
+    );
 }
 
 #[test]
@@ -212,7 +219,10 @@ fn attach_session_rejects_impeller_without_required_host() {
         )
         .expect_err("impeller should require a metal layer host");
 
-    assert_eq!(error.error_code(), ZenoErrorCode::BackendMissingPlatformSurface);
+    assert_eq!(
+        error.error_code(),
+        ZenoErrorCode::BackendMissingPlatformSurface
+    );
 }
 
 #[test]
@@ -250,7 +260,10 @@ fn attach_session_accepts_ios_metal_layer_for_impeller() {
         .expect("impeller metal attachment");
 
     assert_eq!(attached.attachment.host_kind, MobileHostKind::IosMetalLayer);
-    assert_eq!(attached.attachment.presenter, MobilePresenterKind::ImpellerSurface);
+    assert_eq!(
+        attached.attachment.presenter,
+        MobilePresenterKind::ImpellerSurface
+    );
     assert_eq!(
         attached.attachment.interface,
         MobilePresenterInterface::IosImpellerMetalLayer
@@ -277,7 +290,10 @@ fn create_render_session_builds_android_session() {
     let report = session.submit_scene(&test_submit()).expect("submit scene");
 
     assert_eq!(session.kind(), Backend::Skia);
-    assert_eq!(session.attachment().host_kind, MobileHostKind::AndroidNativeWindow);
+    assert_eq!(
+        session.attachment().host_kind,
+        MobileHostKind::AndroidNativeWindow
+    );
     assert_eq!(
         session.attachment().interface,
         MobilePresenterInterface::AndroidSkiaNativeWindow
@@ -309,7 +325,10 @@ fn prepare_render_session_builds_android_skia_session() {
     assert_eq!(session.kind(), Backend::Skia);
     assert_eq!(session.surface().size.width, 800.0);
     assert_eq!(session.surface().size.height, 600.0);
-    assert_eq!(session.attachment().host_kind, MobileHostKind::AndroidNativeWindow);
+    assert_eq!(
+        session.attachment().host_kind,
+        MobileHostKind::AndroidNativeWindow
+    );
     assert_eq!(
         session.attachment().interface,
         MobilePresenterInterface::AndroidSkiaNativeWindow
@@ -322,26 +341,27 @@ fn create_render_session_builds_ios_impeller_session() {
     let shell = MobileShell::ios();
     let attached = shell
         .attach_session(
-            shell.bind_session(
-                ResolvedSession::new(
-                    Platform::Ios,
-                    WindowConfig::default(),
-                    ResolvedBackend {
-                        backend_kind: Backend::Impeller,
-                        attempts: vec![BackendAttempt {
-                            backend: Backend::Impeller,
-                            reason: None,
-                        }],
+            shell
+                .bind_session(
+                    ResolvedSession::new(
+                        Platform::Ios,
+                        WindowConfig::default(),
+                        ResolvedBackend {
+                            backend_kind: Backend::Impeller,
+                            attempts: vec![BackendAttempt {
+                                backend: Backend::Impeller,
+                                reason: None,
+                            }],
+                        },
+                        false,
+                    ),
+                    MobileViewport {
+                        width: 390.0,
+                        height: 844.0,
+                        scale_factor: 3.0,
                     },
-                    false,
-                ),
-                MobileViewport {
-                    width: 390.0,
-                    height: 844.0,
-                    scale_factor: 3.0,
-                },
-            )
-            .expect("ios impeller binding"),
+                )
+                .expect("ios impeller binding"),
             MobileAttachContext::IosMetalLayer(IosMetalLayerAttachContext {
                 metal_layer: fake_handle(8),
                 ui_view: Some(fake_handle(9)),
@@ -357,7 +377,10 @@ fn create_render_session_builds_ios_impeller_session() {
     assert_eq!(session.kind(), Backend::Impeller);
     assert_eq!(session.surface().size.width, 800.0);
     assert_eq!(session.surface().size.height, 600.0);
-    assert_eq!(session.attachment().host_kind, MobileHostKind::IosMetalLayer);
+    assert_eq!(
+        session.attachment().host_kind,
+        MobileHostKind::IosMetalLayer
+    );
     assert_eq!(
         session.attachment().interface,
         MobilePresenterInterface::IosImpellerMetalLayer

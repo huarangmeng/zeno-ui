@@ -52,7 +52,9 @@ impl ZenoErrorCode {
             Self::BackendMissingGpuContext => "backend.missing_gpu_context",
             Self::BackendExplicitlyDisabled => "backend.explicitly_disabled",
             Self::BackendProbeUnknownPlatform => "backend.probe_unknown_platform",
-            Self::BackendProbeUnavailableWithoutReason => "backend.probe_unavailable_without_reason",
+            Self::BackendProbeUnavailableWithoutReason => {
+                "backend.probe_unavailable_without_reason"
+            }
             Self::BackendRendererCreateFailed => "backend.renderer_create_failed",
             Self::BackendSkiaSurfaceCreateFailed => "backend.skia_surface_create_failed",
             Self::BackendImpellerShaderCompileFailed => "backend.impeller_shader_compile_failed",

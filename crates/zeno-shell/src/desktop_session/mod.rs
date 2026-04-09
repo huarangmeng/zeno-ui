@@ -1,15 +1,15 @@
-use zeno_core::{Backend, ZenoError, ZenoErrorCode};
-use zeno_graphics::{FrameReport, RenderCapabilities, RenderSession, RenderSurface, SceneSubmit};
-use zeno_runtime::ResolvedSession;
 #[cfg(feature = "desktop_winit")]
 use winit::event_loop::ActiveEventLoop;
 #[cfg(feature = "desktop_winit")]
 use winit::window::Window;
+use zeno_core::{Backend, ZenoError, ZenoErrorCode};
+use zeno_graphics::{FrameReport, RenderCapabilities, RenderSession, RenderSurface, SceneSubmit};
+use zeno_runtime::ResolvedSession;
 
-mod plan;
-mod scene;
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
 mod impeller_metal;
+mod plan;
+mod scene;
 #[cfg(feature = "desktop_winit")]
 mod skia_gl;
 
@@ -95,7 +95,7 @@ impl RenderSession for DesktopRenderSession {
             gpu_compositing: true,
             text_shaping: true,
             filters: true,
-            offscreen_rendering: false,
+            offscreen_rendering: true,
         }
     }
 

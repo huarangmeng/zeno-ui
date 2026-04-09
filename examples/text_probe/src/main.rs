@@ -1,8 +1,8 @@
 use std::env;
 
 use zeno_ui::{
-    column, container, dump_layout, dump_scene, text, Color, EdgeInsets, FallbackTextSystem,
-    SceneSubmit, Size, TextSystem, UiRuntime,
+    Color, EdgeInsets, FallbackTextSystem, SceneSubmit, Size, TextSystem, UiRuntime, column,
+    container, dump_layout, dump_scene, text,
 };
 
 fn main() {

@@ -16,12 +16,12 @@
 ### Skia
 - `zeno-backend-skia` 已提供真实 `Scene -> Skia Canvas` 翻译路径，支持 `Clear / Fill / Stroke / Text`。
 - 桌面 Skia 路径通过 GL-backed Skia surface 呈现，`minimal_app` 可以直接验证。
-- Skia session 已支持按 `SceneBlock` / `ScenePatch` 计算 dirty bounds，并在 patch 路径上执行局部提交。
+- Skia session 已支持按 `SceneBlock` / `ScenePatch` 计算 dirty bounds，并在 patch 路径上执行局部提交（局部清屏 + 区域绘制）。
 
 ### Impeller
 - macOS 已具备 `ImpellerMetalSession`，可创建 `MetalLayer` 并提交 drawable。
-- `zeno-backend-impeller` 已具备 `MetalSceneRenderer`，可以处理基础形状和文本纹理绘制。
-- 首帧 / 无基线场景已回退到全量提交，避免未初始化 drawable 内容污染。
+- `zeno-backend-impeller` 已具备 `MetalSceneRenderer`，可以处理基础形状和文本纹理绘制；在 patch 路径下支持 `MTLLoadAction::Load` + 根级 scissor，将脏区下沉到 GPU。
+- 首帧 / 无基线场景一律全量清屏提交，避免未初始化 drawable 内容污染；patch 路径在脏区执行“先清再画”的部分场景提交；offscreen layer 现已按父级脏区进一步换算局部 scissor，减少整层离屏重放的无效填充。
 
 ## 当前问题
 - Skia 的桌面 GPU 呈现主要在 shell 中完成，backend 自身更偏 Scene 翻译层，而不是完整 session。

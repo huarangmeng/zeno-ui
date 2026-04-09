@@ -1,6 +1,6 @@
 use std::fmt::{Display, Formatter};
 
-use crate::{platform::Platform, ZenoErrorCode};
+use crate::{ZenoErrorCode, platform::Platform};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Backend {

@@ -9,11 +9,13 @@ use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_impeller::MetalSceneRenderer;
-use zeno_core::{zeno_session_log, Backend, Color, Platform, Size, ZenoError, ZenoErrorCode};
+use zeno_core::{Backend, Color, Platform, Size, ZenoError, ZenoErrorCode, zeno_session_log};
 use zeno_graphics::{FrameReport, RenderSurface, Scene, SceneSubmit};
 
 use super::desktop_session_error;
-use super::scene::{default_clear_color, ensure_clear_command, partial_scene_for_dirty_bounds, patch_stats};
+use super::scene::{
+    default_clear_color, ensure_clear_command, partial_scene_for_dirty_bounds, patch_stats,
+};
 
 pub(super) struct ImpellerMetalSession {
     window: Rc<Window>,
@@ -25,7 +27,10 @@ pub(super) struct ImpellerMetalSession {
 }
 
 impl ImpellerMetalSession {
-    pub(super) fn new(event_loop: &ActiveEventLoop, config: &zeno_core::WindowConfig) -> Result<Self, String> {
+    pub(super) fn new(
+        event_loop: &ActiveEventLoop,
+        config: &zeno_core::WindowConfig,
+    ) -> Result<Self, String> {
         let window_attributes = Window::default_attributes()
             .with_title(config.title.clone())
             .with_inner_size(LogicalSize::new(
@@ -38,8 +43,8 @@ impl ImpellerMetalSession {
                 .create_window(window_attributes)
                 .map_err(|error| error.to_string())?,
         );
-        let device =
-            Device::system_default().ok_or_else(|| "metal device is unavailable on this mac".to_string())?;
+        let device = Device::system_default()
+            .ok_or_else(|| "metal device is unavailable on this mac".to_string())?;
         let queue = device.new_command_queue();
         let layer = MetalLayer::new();
         layer.set_device(&device);
@@ -53,7 +58,8 @@ impl ImpellerMetalSession {
         attach_metal_layer(&window, &layer)?;
         let size = window.inner_size();
         layer.set_drawable_size(CGSize::new(size.width as f64, size.height as f64));
-        let renderer = MetalSceneRenderer::new(device.clone(), queue.clone()).map_err(|error| error.to_string())?;
+        let renderer = MetalSceneRenderer::new(device.clone(), queue.clone())
+            .map_err(|error| error.to_string())?;
         let surface = RenderSurface {
             id: "impeller-metal-surface".to_string(),
             platform: Platform::current(),
@@ -122,8 +128,12 @@ impl ImpellerMetalSession {
         );
         if let Some(bounds) = dirty_bounds {
             let partial_scene = partial_scene_for_dirty_bounds(&scene, bounds);
-            self.renderer
-                .render_to_drawable_with_load(drawable, &partial_scene, true)?;
+            self.renderer.render_to_drawable_region_with_load(
+                drawable,
+                &partial_scene,
+                true,
+                Some(bounds),
+            )?;
         } else {
             self.renderer.render_to_drawable(drawable, &scene)?;
         }
@@ -138,6 +148,18 @@ impl ImpellerMetalSession {
             surface_id: self.surface.id.clone(),
         })
         .map(|report| {
+            zeno_session_log!(
+                debug,
+                op = "submit_scene_report",
+                backend = ?Backend::Impeller,
+                mode = if dirty_bounds.is_some() { "patch" } else { "full" },
+                block_count = report.block_count,
+                patch_upserts = report.patch_upserts,
+                patch_removes = report.patch_removes,
+                resource_count = report.resource_count,
+                surface = %report.surface_id,
+                "impeller macos frame report"
+            );
             self.last_scene = Some(scene);
             report
         })

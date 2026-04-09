@@ -1,6 +1,9 @@
 use zeno_backend_impeller::ImpellerBackend;
 use zeno_backend_skia::SkiaBackend;
-use zeno_core::{Backend, BackendPreference, BackendUnavailableReason, Platform, RendererConfig, ZenoError, ZenoErrorCode, zeno_runtime_log};
+use zeno_core::{
+    Backend, BackendPreference, BackendUnavailableReason, Platform, RendererConfig, ZenoError,
+    ZenoErrorCode, zeno_runtime_log,
+};
 use zeno_graphics::GraphicsBackend;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,11 +66,13 @@ impl BackendResolver {
                 });
             }
 
-            let reason = probe.reason.unwrap_or(BackendUnavailableReason::runtime_probe_failed(
-                ZenoErrorCode::BackendProbeUnavailableWithoutReason,
-                "probe_backend",
-                "backend probe returned unavailable without reason",
-            ));
+            let reason = probe
+                .reason
+                .unwrap_or(BackendUnavailableReason::runtime_probe_failed(
+                    ZenoErrorCode::BackendProbeUnavailableWithoutReason,
+                    "probe_backend",
+                    "backend probe returned unavailable without reason",
+                ));
             let error = ZenoError::BackendUnavailable {
                 backend,
                 reason: reason.clone(),

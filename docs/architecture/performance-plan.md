@@ -15,7 +15,7 @@
 ### 1. 局部更新能力已具备 MVP，仍待继续细化
 - `zeno-compose` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径。
 - `Scene` 已从单纯扁平命令流升级到 block/patch 提交模型，session 可消费 `SceneSubmit`。
-- 当前剩余差距主要在更细粒度的 dirty root 归并、layer/clip/transform 结构和后端真局部 GPU 提交能力。
+- 当前剩余差距主要在更细粒度的 dirty root 归并、更复杂结构编辑下的 patch 收敛，以及后端更深层级的局部 GPU 提交能力。
 
 ### 2. 按需重绘主链路已完成，仍待继续细化动画与 invalidation 策略
 - 桌面事件循环已经从空闲态持续 redraw 切换为按需驱动。
@@ -154,8 +154,8 @@
 - 已补 `examples/text_probe`，可输出 scene dump / layout dump 与文本缓存统计。
 
 ## 当前未完成项
-- layout dirty 仍可继续细化到更小祖先集合与更精确的兄弟影响范围，当前为 MVP 级 dirty roots 策略。
-- `Scene` 虽已具备 layer/clip/transform/blend/effect/offscreen 抽象，但更细粒度 compositor 与后端 effect 合成仍待继续推进。
+- layout dirty 已开始收紧到更小祖先集合与更精确的兄弟影响范围，但更复杂 structure edit 仍需继续细化。
+- `Scene` 虽已具备 layer/clip/transform/blend/effect/offscreen 抽象，且 macOS Impeller 已支持根 pass 与 offscreen pass 的双层 scissor，但更细粒度 compositor 与后端 effect 合成仍待继续推进。
 - Skia 已具备 dirty bounds 局部提交路径，Impeller 仍以全量为主，真局部 GPU 提交尚未完全落地。
 - 文本主路径虽已具备 `TextSystem / TextShaper / TextCache` 主干、glyph 级布局数据与 Impeller glyph cache，但更完整的真实 shaping 覆盖 / Skia glyph-run 优化 / 后端共享缓存仍未接入。
 - scene dump、layout dump、text probe 已就位，但更系统的 bench gallery 与自动化工程化工具仍未完成。

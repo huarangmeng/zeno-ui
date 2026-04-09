@@ -24,9 +24,19 @@ pub enum Shape {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
-    Fill { shape: Shape, brush: Brush },
-    Stroke { shape: Shape, stroke: Stroke },
-    Text { position: Point, layout: TextLayout, color: Color },
+    Fill {
+        shape: Shape,
+        brush: Brush,
+    },
+    Stroke {
+        shape: Shape,
+        stroke: Stroke,
+    },
+    Text {
+        position: Point,
+        layout: TextLayout,
+        color: Color,
+    },
     Clear(Color),
 }
 
@@ -83,9 +93,23 @@ pub struct ScenePatch {
     pub base_layer_count: usize,
     pub base_block_count: usize,
     pub layer_upserts: Vec<SceneLayer>,
+    pub layer_reorders: Vec<SceneLayerOrder>,
     pub layer_removes: Vec<u64>,
     pub upserts: Vec<SceneBlock>,
+    pub reorders: Vec<SceneBlockOrder>,
     pub removes: Vec<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneLayerOrder {
+    pub layer_id: u64,
+    pub order: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SceneBlockOrder {
+    pub node_id: u64,
+    pub order: u32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,8 +135,15 @@ pub enum SceneClip {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneEffect {
-    Blur { sigma: f32 },
-    DropShadow { dx: f32, dy: f32, blur: f32, color: Color },
+    Blur {
+        sigma: f32,
+    },
+    DropShadow {
+        dx: f32,
+        dy: f32,
+        blur: f32,
+        color: Color,
+    },
 }
 
 impl Scene {
@@ -141,7 +172,10 @@ impl Scene {
         mut layers: Vec<SceneLayer>,
         blocks: Vec<SceneBlock>,
     ) -> Self {
-        if !layers.iter().any(|layer| layer.layer_id == Self::ROOT_LAYER_ID) {
+        if !layers
+            .iter()
+            .any(|layer| layer.layer_id == Self::ROOT_LAYER_ID)
+        {
             layers.push(SceneLayer::root(size));
         }
         layers.sort_by_key(|layer| layer.order);
@@ -181,10 +215,21 @@ impl Scene {
             .cloned()
             .collect();
         for upsert in &patch.layer_upserts {
-            if let Some(existing) = layers.iter_mut().find(|layer| layer.layer_id == upsert.layer_id) {
+            if let Some(existing) = layers
+                .iter_mut()
+                .find(|layer| layer.layer_id == upsert.layer_id)
+            {
                 *existing = upsert.clone();
             } else {
                 layers.push(upsert.clone());
+            }
+        }
+        for reorder in &patch.layer_reorders {
+            if let Some(existing) = layers
+                .iter_mut()
+                .find(|layer| layer.layer_id == reorder.layer_id)
+            {
+                existing.order = reorder.order;
             }
         }
         layers.sort_by_key(|layer| layer.order);
@@ -197,10 +242,21 @@ impl Scene {
             .collect();
 
         for upsert in &patch.upserts {
-            if let Some(existing) = blocks.iter_mut().find(|block| block.node_id == upsert.node_id) {
+            if let Some(existing) = blocks
+                .iter_mut()
+                .find(|block| block.node_id == upsert.node_id)
+            {
                 *existing = upsert.clone();
             } else {
                 blocks.push(upsert.clone());
+            }
+        }
+        for reorder in &patch.reorders {
+            if let Some(existing) = blocks
+                .iter_mut()
+                .find(|block| block.node_id == reorder.node_id)
+            {
+                existing.order = reorder.order;
             }
         }
 
@@ -289,7 +345,10 @@ impl SceneBlock {
         clip: Option<SceneClip>,
         commands: Vec<DrawCommand>,
     ) -> Self {
-        let resource_keys = commands.iter().filter_map(DrawCommand::resource_key).collect();
+        let resource_keys = commands
+            .iter()
+            .filter_map(DrawCommand::resource_key)
+            .collect();
         Self {
             node_id,
             layer_id,
@@ -307,8 +366,10 @@ impl ScenePatch {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.layer_upserts.is_empty()
+            && self.layer_reorders.is_empty()
             && self.layer_removes.is_empty()
             && self.upserts.is_empty()
+            && self.reorders.is_empty()
             && self.removes.is_empty()
     }
 
@@ -343,22 +404,45 @@ impl ScenePatch {
             scene.dirty_bounds_for_nodes(&node_ids)
         });
         let remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_nodes(&self.removes));
+        let reorder_bounds = previous.and_then(|scene| {
+            let node_ids: Vec<u64> = self
+                .reorders
+                .iter()
+                .map(|reorder| reorder.node_id)
+                .collect();
+            scene.dirty_bounds_for_nodes(&node_ids)
+        });
         let layer_upsert_bounds = self
             .layer_upserts
             .iter()
             .map(|layer| layer.bounds)
             .reduce(|acc, bounds| acc.union(&bounds));
-        let previous_layer_bounds = previous.and_then(|scene| {
-            let layer_ids: Vec<u64> = self.layer_upserts.iter().map(|layer| layer.layer_id).collect();
+        let layer_reorder_bounds = previous.and_then(|scene| {
+            let layer_ids: Vec<u64> = self
+                .layer_reorders
+                .iter()
+                .map(|reorder| reorder.layer_id)
+                .collect();
             scene.dirty_bounds_for_layers(&layer_ids)
         });
-        let layer_remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_layers(&self.layer_removes));
+        let previous_layer_bounds = previous.and_then(|scene| {
+            let layer_ids: Vec<u64> = self
+                .layer_upserts
+                .iter()
+                .map(|layer| layer.layer_id)
+                .collect();
+            scene.dirty_bounds_for_layers(&layer_ids)
+        });
+        let layer_remove_bounds =
+            previous.and_then(|scene| scene.dirty_bounds_for_layers(&self.layer_removes));
         [
             upsert_bounds,
             affected_layer_bounds,
             previous_upsert_bounds,
             remove_bounds,
+            reorder_bounds,
             layer_upsert_bounds,
+            layer_reorder_bounds,
             previous_layer_bounds,
             layer_remove_bounds,
         ]
@@ -373,9 +457,10 @@ impl SceneSubmit {
     pub fn snapshot(&self, previous: Option<&Scene>) -> Option<Scene> {
         match self {
             Self::Full(scene) => Some(scene.clone()),
-            Self::Patch { patch, current } => {
-                previous.map_or_else(|| Some(current.clone()), |scene| Some(scene.apply_patch(patch)))
-            }
+            Self::Patch { patch, current } => previous.map_or_else(
+                || Some(current.clone()),
+                |scene| Some(scene.apply_patch(patch)),
+            ),
         }
     }
 }
@@ -392,8 +477,8 @@ pub enum CanvasOp {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneEffect, SceneLayer,
-        ScenePatch, SceneSubmit, Shape,
+        Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneBlockOrder, SceneEffect,
+        SceneLayer, SceneLayerOrder, ScenePatch, SceneSubmit, Shape,
     };
     use zeno_core::{Color, Rect, Size, Transform2D};
 
@@ -434,6 +519,7 @@ mod tests {
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
+            layer_reorders: Vec::new(),
             layer_removes: Vec::new(),
             upserts: vec![SceneBlock::new(
                 3,
@@ -447,6 +533,7 @@ mod tests {
                     brush: Brush::Solid(Color::WHITE),
                 }],
             )],
+            reorders: Vec::new(),
             removes: vec![2],
         };
 
@@ -480,14 +567,121 @@ mod tests {
                 base_layer_count: 0,
                 base_block_count: 0,
                 layer_upserts: current.layers.clone(),
+                layer_reorders: Vec::new(),
                 layer_removes: Vec::new(),
                 upserts: current.blocks.clone(),
+                reorders: Vec::new(),
                 removes: Vec::new(),
             },
             current: current.clone(),
         };
 
         assert_eq!(submit.snapshot(None), Some(current));
+    }
+
+    #[test]
+    fn apply_patch_supports_order_only_updates() {
+        let previous = Scene::from_layers_and_blocks(
+            Size::new(200.0, 200.0),
+            None,
+            vec![
+                SceneLayer::root(Size::new(200.0, 200.0)),
+                SceneLayer::new(
+                    10,
+                    10,
+                    Some(Scene::ROOT_LAYER_ID),
+                    1,
+                    Rect::new(0.0, 0.0, 40.0, 40.0),
+                    Rect::new(0.0, 0.0, 40.0, 40.0),
+                    Transform2D::identity(),
+                    None,
+                    1.0,
+                    SceneBlendMode::Normal,
+                    Vec::new(),
+                    false,
+                ),
+                SceneLayer::new(
+                    20,
+                    20,
+                    Some(Scene::ROOT_LAYER_ID),
+                    3,
+                    Rect::new(50.0, 0.0, 40.0, 40.0),
+                    Rect::new(50.0, 0.0, 40.0, 40.0),
+                    Transform2D::identity(),
+                    None,
+                    1.0,
+                    SceneBlendMode::Normal,
+                    Vec::new(),
+                    false,
+                ),
+            ],
+            vec![
+                SceneBlock::new(
+                    1,
+                    Scene::ROOT_LAYER_ID,
+                    2,
+                    Rect::new(0.0, 0.0, 20.0, 20.0),
+                    Transform2D::identity(),
+                    None,
+                    vec![DrawCommand::Fill {
+                        shape: Shape::Rect(Rect::new(0.0, 0.0, 20.0, 20.0)),
+                        brush: Brush::Solid(Color::WHITE),
+                    }],
+                ),
+                SceneBlock::new(
+                    2,
+                    Scene::ROOT_LAYER_ID,
+                    4,
+                    Rect::new(30.0, 0.0, 20.0, 20.0),
+                    Transform2D::identity(),
+                    None,
+                    vec![DrawCommand::Fill {
+                        shape: Shape::Rect(Rect::new(30.0, 0.0, 20.0, 20.0)),
+                        brush: Brush::Solid(Color::BLACK),
+                    }],
+                ),
+            ],
+        );
+        let patch = ScenePatch {
+            size: previous.size,
+            base_layer_count: previous.layers.len(),
+            base_block_count: previous.blocks.len(),
+            layer_upserts: Vec::new(),
+            layer_reorders: vec![
+                SceneLayerOrder {
+                    layer_id: 20,
+                    order: 1,
+                },
+                SceneLayerOrder {
+                    layer_id: 10,
+                    order: 3,
+                },
+            ],
+            layer_removes: Vec::new(),
+            upserts: Vec::new(),
+            reorders: vec![
+                SceneBlockOrder {
+                    node_id: 2,
+                    order: 2,
+                },
+                SceneBlockOrder {
+                    node_id: 1,
+                    order: 4,
+                },
+            ],
+            removes: Vec::new(),
+        };
+
+        let current = previous.apply_patch(&patch);
+
+        assert_eq!(current.layers[1].layer_id, 20);
+        assert_eq!(current.layers[2].layer_id, 10);
+        assert_eq!(current.blocks[0].node_id, 2);
+        assert_eq!(current.blocks[1].node_id, 1);
+        assert_eq!(
+            patch.dirty_bounds(Some(&previous)),
+            Some(Rect::new(0.0, 0.0, 90.0, 40.0))
+        );
     }
 
     #[test]
@@ -513,6 +707,7 @@ mod tests {
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
+            layer_reorders: Vec::new(),
             layer_removes: Vec::new(),
             upserts: vec![SceneBlock::new(
                 1,
@@ -526,6 +721,7 @@ mod tests {
                     brush: Brush::Solid(Color::WHITE),
                 }],
             )],
+            reorders: Vec::new(),
             removes: Vec::new(),
         };
 
@@ -577,8 +773,10 @@ mod tests {
                 Vec::new(),
                 true,
             )],
+            layer_reorders: Vec::new(),
             layer_removes: Vec::new(),
             upserts: Vec::new(),
+            reorders: Vec::new(),
             removes: Vec::new(),
         };
 
@@ -617,8 +815,10 @@ mod tests {
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
+            layer_reorders: Vec::new(),
             layer_removes: vec![10],
             upserts: Vec::new(),
+            reorders: Vec::new(),
             removes: Vec::new(),
         };
 
@@ -668,6 +868,7 @@ mod tests {
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
+            layer_reorders: Vec::new(),
             layer_removes: Vec::new(),
             upserts: vec![SceneBlock::new(
                 10,
@@ -681,6 +882,7 @@ mod tests {
                     brush: Brush::Solid(Color::BLACK),
                 }],
             )],
+            reorders: Vec::new(),
             removes: Vec::new(),
         };
 

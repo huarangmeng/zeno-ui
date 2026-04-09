@@ -1,12 +1,14 @@
 use zeno_core::{Backend, Size, ZenoError, ZenoErrorCode};
-use zeno_graphics::{FrameReport, RenderCapabilities, RenderSession, RenderSurface, Scene, SceneSubmit};
+use zeno_graphics::{
+    FrameReport, RenderCapabilities, RenderSession, RenderSurface, Scene, SceneSubmit,
+};
 
 use crate::platform;
 
-use super::plan::{mobile_session_error, MobileSessionPlan};
+use super::plan::{MobileSessionPlan, mobile_session_error};
 use super::types::{
-    MobileAttachContext, MobileAttachedSession, MobilePresenterAttachment, MobilePresenterInterface,
-    MobileRenderSessionHandle,
+    MobileAttachContext, MobileAttachedSession, MobilePresenterAttachment,
+    MobilePresenterInterface, MobileRenderSessionHandle,
 };
 
 pub type BoxedMobileRenderSession = Box<dyn MobileRenderSessionHandle>;
@@ -335,6 +337,12 @@ fn submit_mobile_scene(
 fn patch_stats(submit: &SceneSubmit) -> (usize, usize) {
     match submit {
         SceneSubmit::Full(scene) => (scene.blocks.len(), 0),
-        SceneSubmit::Patch { patch, .. } => (patch.upserts.len(), patch.removes.len()),
+        SceneSubmit::Patch { patch, .. } => (
+            patch.upserts.len()
+                + patch.reorders.len()
+                + patch.layer_upserts.len()
+                + patch.layer_reorders.len(),
+            patch.removes.len() + patch.layer_removes.len(),
+        ),
     }
 }
