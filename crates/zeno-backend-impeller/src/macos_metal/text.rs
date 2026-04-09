@@ -2,6 +2,7 @@ use font_kit::source::SystemSource;
 use fontdue::Font;
 use zeno_text::TextLayout;
 
+// 文本模块只处理字体发现、glyph 栅格化与简易缓存键。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GlyphCacheKey {
     pub glyph_id: u16,
