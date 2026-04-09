@@ -339,6 +339,58 @@ fn keyed_layer_reorder_uses_layer_order_patch() {
 }
 
 #[test]
+fn keyed_box_reorder_stays_on_order_patch_path() {
+    let first = r#box(vec![
+        container(text("Back").key("back-text"))
+            .key("back")
+            .padding_all(8.0)
+            .background(Color::rgba(20, 20, 20, 255)),
+        container(text("Front").key("front-text"))
+            .key("front")
+            .padding_all(8.0)
+            .background(Color::WHITE),
+    ])
+    .fixed_size(120.0, 80.0)
+    .key("root");
+    let second = r#box(vec![
+        container(text("Front").key("front-text"))
+            .key("front")
+            .padding_all(8.0)
+            .background(Color::WHITE),
+        container(text("Back").key("back-text"))
+            .key("back")
+            .padding_all(8.0)
+            .background(Color::rgba(20, 20, 20, 255)),
+    ])
+    .fixed_size(120.0, 80.0)
+    .key("root");
+    let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+    match submit {
+        SceneSubmit::Patch { patch, .. } => {
+            let reordered_ids: Vec<u64> = patch
+                .reorders
+                .iter()
+                .map(|reorder| reorder.node_id)
+                .collect();
+            assert!(reordered_ids.len() >= 2);
+            assert!(
+                reordered_ids.contains(&container(text("Back").key("back-text")).key("back").id().0)
+            );
+            assert!(
+                reordered_ids
+                    .contains(&container(text("Front").key("front-text")).key("front").id().0)
+            );
+            assert!(patch.removes.is_empty());
+        }
+        SceneSubmit::Full(_) => panic!("expected reorder patch"),
+    }
+}
+
+#[test]
 fn paint_only_patch_updates_only_dirty_blocks() {
     let title = text("Title").key("title");
     let title_id = title.id().0;

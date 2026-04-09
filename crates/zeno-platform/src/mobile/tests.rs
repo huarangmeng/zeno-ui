@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use zeno_core::{
     AppConfig, Backend, Color, Platform, RendererConfig, Size, WindowConfig, ZenoErrorCode,
 };
-use zeno_scene::{DrawCommand, Scene, SceneSubmit};
+use zeno_scene::{Scene, SceneSubmit};
 use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
 
 use super::{
@@ -18,12 +18,10 @@ fn fake_handle(seed: usize) -> NonZeroUsize {
 }
 
 fn test_submit() -> SceneSubmit {
-    SceneSubmit::Full(Scene {
-        size: Size::new(120.0, 80.0),
-        clear_color: Some(Color::WHITE),
-        commands: vec![DrawCommand::Clear(Color::WHITE)],
-        layers: vec![zeno_scene::SceneLayer::root(Size::new(120.0, 80.0))],
-        blocks: Vec::new(),
+    SceneSubmit::Full({
+        let mut scene = Scene::new(Size::new(120.0, 80.0));
+        scene.clear_color = Some(Color::WHITE);
+        scene
     })
 }
 

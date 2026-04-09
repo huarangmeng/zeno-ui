@@ -9,7 +9,10 @@ mod style;
 mod tree;
 
 pub use invalidation::{DirtyFlags, DirtyReason};
-pub use modifier::{BlendMode, ClipMode, DropShadow, Modifier, Modifiers, TransformOrigin};
+pub use modifier::{
+    Alignment, Arrangement, BlendMode, ClipMode, CrossAxisAlignment, DropShadow,
+    HorizontalAlignment, Modifier, Modifiers, TransformOrigin, VerticalAlignment,
+};
 pub use node::NodeId;
 pub use node::{Node, NodeKind, SpacerNode, TextNode};
 pub use render::{

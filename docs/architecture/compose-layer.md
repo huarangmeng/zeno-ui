@@ -11,8 +11,8 @@
 
 ## Current Scope
 - `Node` 作为统一声明式节点。
-- `zeno-ui` 保留节点模型、modifier、layout、retained tree 与 scene 翻译；`text / container / column / row / spacer` 等首批基础构件已迁入 `zeno-foundation`，作为更接近 Compose Foundation 的稳定入口。
-- `Modifier` 链是节点装饰的唯一真相源；padding、background、foreground、font size、corner radius、spacing、fixed size、clip、2D transform、transform origin、opacity、layer、effect 都在布局/绘制阶段按需解析。
+- `zeno-ui` 保留节点模型、modifier、layout、retained tree 与 scene 翻译；`text / container / box / column / row / spacer` 等首批基础构件已迁入 `zeno-foundation`，作为更接近 Compose Foundation 的稳定入口。
+- `Modifier` 链是节点装饰的唯一真相源；padding、background、foreground、font size、corner radius、spacing、fixed size、content alignment、stack arrangement、stack cross-axis alignment、clip、2D transform、transform origin、opacity、layer、effect 都在布局/绘制阶段按需解析。
 - `ComposeRenderer` / `ComposeEngine` 负责把节点树测量并转换为 `SceneSubmit`。
 - 当前文本测量依赖 `TextSystem`；默认门面路径可选择 fallback/system shaping 实现。
 

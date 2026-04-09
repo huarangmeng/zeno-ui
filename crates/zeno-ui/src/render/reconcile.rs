@@ -34,7 +34,7 @@ fn reconcile_node<'a>(
 
     match &current.kind {
         NodeKind::Container(child) => reconcile_node(retained, previous_by_id, child),
-        NodeKind::Stack { children, .. } => {
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
             for child in children {
                 reconcile_node(retained, previous_by_id, child);
             }
@@ -54,7 +54,7 @@ fn mark_removed_nodes_dirty(
     }
     match &previous.kind {
         NodeKind::Container(child) => mark_removed_nodes_dirty(retained, child, current_by_id),
-        NodeKind::Stack { children, .. } => {
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
             for child in children {
                 mark_removed_nodes_dirty(retained, child, current_by_id);
             }
@@ -67,7 +67,7 @@ fn index_nodes<'a>(node: &'a Node, indexed: &mut HashMap<NodeId, &'a Node>) {
     indexed.insert(node.id(), node);
     match &node.kind {
         NodeKind::Container(child) => index_nodes(child, indexed),
-        NodeKind::Stack { children, .. } => {
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
             for child in children {
                 index_nodes(child, indexed);
             }
@@ -97,6 +97,15 @@ fn local_change_reason(previous: &Node, current: &Node) -> Option<DirtyReason> {
             }
         }
         (NodeKind::Container(_), NodeKind::Container(_)) => {
+            style_change_reason(previous, current, false, true)
+        }
+        (NodeKind::Box { children: previous_children }, NodeKind::Box { children: current_children }) => {
+            if child_ids(previous_children) != child_ids(current_children) {
+                if same_child_members(previous_children, current_children) {
+                    return Some(DirtyReason::Order);
+                }
+                return Some(DirtyReason::Structure);
+            }
             style_change_reason(previous, current, false, true)
         }
         (
@@ -135,7 +144,10 @@ fn style_change_reason(
     if previous_style.padding != current_style.padding
         || previous_style.width != current_style.width
         || previous_style.height != current_style.height
-        || (stack_node && previous_style.spacing != current_style.spacing)
+        || (stack_node
+            && (previous_style.spacing != current_style.spacing
+                || previous_style.arrangement != current_style.arrangement
+                || previous_style.cross_axis_alignment != current_style.cross_axis_alignment))
     {
         return Some(DirtyReason::Layout);
     }

@@ -1,14 +1,52 @@
 //! retained tree 测试单独拆分，避免核心实现文件继续膨胀。
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use zeno_core::{Point, Size};
 use zeno_scene::Scene;
 use zeno_text::FallbackTextSystem;
 
 use super::RetainedComposeTree;
-use crate::{DirtyReason, Node, NodeId, layout::measure_node};
-use zeno_foundation::{column, row, text};
+use crate::render::FragmentStore;
+use crate::{DirtyReason, Node, NodeId, NodeKind, TextNode, layout::measure_node};
+
+static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
+
+fn next_node_id() -> NodeId {
+    NodeId(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed))
+}
+
+fn text(content: impl Into<String>) -> Node {
+    Node::new(
+        next_node_id(),
+        NodeKind::Text(TextNode {
+            content: content.into(),
+            font: zeno_text::FontDescriptor::default(),
+            font_size: 16.0,
+        }),
+    )
+}
+
+fn column(children: Vec<Node>) -> Node {
+    Node::new(
+        next_node_id(),
+        NodeKind::Stack {
+            axis: crate::Axis::Vertical,
+            children,
+        },
+    )
+}
+
+fn row(children: Vec<Node>) -> Node {
+    Node::new(
+        next_node_id(),
+        NodeKind::Stack {
+            axis: crate::Axis::Horizontal,
+            children,
+        },
+    )
+}
 
 #[test]
 fn text_dirty_keeps_leaf_as_layout_root() {
@@ -85,12 +123,13 @@ fn dirty_nodes_in_different_containers_stay_scoped_to_their_branches() {
 
 fn retained_tree_for(root: Node, viewport: Size) -> RetainedComposeTree {
     let measured = measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
+    let layout = crate::layout::LayoutArena::from_measured(&root, &measured);
     RetainedComposeTree::new(
         root,
         viewport,
-        measured,
+        layout,
         HashMap::new(),
-        HashMap::new(),
+        FragmentStore::new(),
         Scene::new(viewport),
     )
 }

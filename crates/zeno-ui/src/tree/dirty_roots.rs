@@ -1,13 +1,11 @@
 //! dirty root 相关逻辑单独拆分，方便持续演进最小脏根策略。
 
-use std::collections::HashSet;
-
 use crate::NodeId;
 
 use super::RetainedComposeTree;
 
 impl RetainedComposeTree {
-    pub fn has_descendant_in(&self, ancestor: NodeId, set: &HashSet<NodeId>) -> bool {
+    pub fn has_descendant_in(&self, ancestor: NodeId, set: &[NodeId]) -> bool {
         for candidate in set {
             if *candidate != ancestor && self.is_ancestor_or_same(ancestor, *candidate) {
                 return true;
@@ -17,14 +15,11 @@ impl RetainedComposeTree {
     }
 
     pub(super) fn layout_root_for(&self, node_id: NodeId) -> NodeId {
-        self.parent_by_node
-            .get(&node_id)
-            .copied()
-            .unwrap_or(node_id)
+        self.dense_nodes.parent_of(node_id).unwrap_or(node_id)
     }
 
     pub(super) fn structure_root_for(&self, node_id: NodeId) -> NodeId {
-        if self.container_like_nodes.contains(&node_id) {
+        if self.dense_nodes.is_container_like(node_id) {
             node_id
         } else {
             self.layout_root_for(node_id)
@@ -36,7 +31,7 @@ impl RetainedComposeTree {
         if merge_siblings {
             loop {
                 let mut updated = false;
-                for existing in self.layout_dirty_roots.iter().copied().collect::<Vec<_>>() {
+                for existing in self.layout_dirty_roots.clone() {
                     if existing != merged_candidate
                         && self.is_ancestor_or_same(existing, merged_candidate)
                     {
@@ -62,9 +57,11 @@ impl RetainedComposeTree {
             .filter(|existing| self.is_ancestor_or_same(merged_candidate, *existing))
             .collect();
         for existing in to_remove {
-            self.layout_dirty_roots.remove(&existing);
+            self.layout_dirty_roots.retain(|root| *root != existing);
         }
-        self.layout_dirty_roots.insert(merged_candidate);
+        if !self.layout_dirty_roots.contains(&merged_candidate) {
+            self.layout_dirty_roots.push(merged_candidate);
+        }
     }
 
     fn should_merge_layout_roots(&self, a: NodeId, b: NodeId) -> bool {
@@ -81,14 +78,14 @@ impl RetainedComposeTree {
     }
 
     fn parent_of(&self, node_id: NodeId) -> Option<NodeId> {
-        self.parent_by_node.get(&node_id).copied()
+        self.dense_nodes.parent_of(node_id)
     }
 
     fn is_ancestor_or_same(&self, ancestor: NodeId, mut node_id: NodeId) -> bool {
         if ancestor == node_id {
             return true;
         }
-        while let Some(parent) = self.parent_by_node.get(&node_id).copied() {
+        while let Some(parent) = self.dense_nodes.parent_of(node_id) {
             if parent == ancestor {
                 return true;
             }

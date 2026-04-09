@@ -144,7 +144,7 @@ impl MetalSceneRenderer {
                 &self.text_pipeline,
                 self.font.as_ref(),
                 &encoder,
-                &scene.commands,
+                &scene.iter_commands().cloned().collect::<Vec<_>>(),
                 viewport_width,
                 viewport_height,
                 Transform2D::identity(),

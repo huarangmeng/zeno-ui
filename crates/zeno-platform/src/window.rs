@@ -3,7 +3,7 @@ use std::time::Duration;
 use zeno_core::{
     AppConfig, Backend, Platform, Point, Size, WindowConfig, ZenoError, ZenoErrorCode,
 };
-use zeno_scene::{DrawCommand, FrameReport, Scene, SceneSubmit};
+use zeno_scene::{FrameReport, Scene, SceneSubmit};
 
 use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
 #[cfg(feature = "desktop_winit")]
@@ -104,12 +104,10 @@ impl DesktopShell {
                 },
                 false,
             ),
-            SceneSubmit::Full(Scene {
-                size: config.size,
-                clear_color: Some(zeno_core::Color::WHITE),
-                commands: vec![DrawCommand::Clear(zeno_core::Color::WHITE)],
-                layers: vec![zeno_scene::SceneLayer::root(config.size)],
-                blocks: Vec::new(),
+            SceneSubmit::Full({
+                let mut scene = Scene::new(config.size);
+                scene.clear_color = Some(zeno_core::Color::WHITE);
+                scene
             }),
         )
     }

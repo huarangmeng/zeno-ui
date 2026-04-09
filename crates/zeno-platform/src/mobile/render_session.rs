@@ -323,7 +323,7 @@ fn submit_mobile_scene(
     let (patch_upserts, patch_removes) = patch_stats(submit);
     let mut report = render_scene(surface, &scene)?;
     report.backend = backend;
-    report.command_count = scene.commands.len();
+    report.command_count = scene.command_count();
     report.resource_count = scene.resource_keys().len();
     report.block_count = scene.blocks.len();
     report.patch_upserts = patch_upserts;

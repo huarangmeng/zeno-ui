@@ -6,17 +6,18 @@ mod update;
 
 use super::*;
 use crate::render::fragments::find_node;
+use crate::layout::LayoutArena;
 
 pub(super) fn repaint_dirty_nodes(root: &Node, retained: &mut RetainedComposeTree) {
     let dirty_node_ids = retained.dirty_node_ids();
     for node_id in dirty_node_ids {
-        if let (Some(node), Some(measured)) = (
+        if let (Some(node), Some(slot)) = (
             find_node(root, node_id),
-            retained.measured_for(node_id).cloned(),
+            retained.layout_for(node_id).cloned(),
         ) {
             retained.update_fragment(
                 node_id,
-                crate::render::fragments::node_fragment(node, &measured),
+                crate::render::fragments::node_fragment(node, &slot, retained.layout()),
             );
         }
     }
@@ -24,21 +25,21 @@ pub(super) fn repaint_dirty_nodes(root: &Node, retained: &mut RetainedComposeTre
 
 pub(super) fn update_fragments_for_nodes(
     node: &Node,
-    measured: &MeasuredNode,
+    layout: &LayoutArena,
     available: Size,
     update_ids: &HashSet<NodeId>,
     retained: &mut RetainedComposeTree,
 ) -> bool {
-    update::update_fragments_for_nodes(node, measured, available, update_ids, retained)
+    update::update_fragments_for_nodes(node, layout, available, update_ids, retained)
 }
 
 pub(super) fn scene_update_ids_for_relayout(
     node: &Node,
-    measured: &MeasuredNode,
+    layout: &LayoutArena,
     retained: &RetainedComposeTree,
     fragment_update_ids: &HashSet<NodeId>,
 ) -> HashSet<NodeId> {
-    update::scene_update_ids_for_relayout(node, measured, retained, fragment_update_ids)
+    update::scene_update_ids_for_relayout(node, layout, retained, fragment_update_ids)
 }
 
 pub(super) fn patch_scene_for_nodes(
@@ -66,7 +67,7 @@ pub(super) fn patch_scene_for_nodes(
     let mut next_order = 1u32;
     collect::collect_scene_patch_items(
         root,
-        retained.measured(),
+        retained.layout(),
         retained.fragments(),
         Scene::ROOT_LAYER_ID,
         Point::new(0.0, 0.0),
@@ -96,8 +97,10 @@ pub(super) fn patch_scene_for_nodes(
         .filter(|block| !seen_blocks.contains(&block.node_id))
         .map(|block| block.node_id)
         .collect();
+    let (commands, upserts) = Scene::compact_blocks(upserts);
     let patch = ScenePatch {
         size: previous_scene.size,
+        commands,
         base_layer_count: previous_scene.layers.len(),
         base_block_count: previous_scene.blocks.len(),
         layer_upserts,

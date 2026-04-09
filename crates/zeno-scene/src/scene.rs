@@ -1,3 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 use zeno_core::{Color, Point, Rect, Size, Transform2D};
 use zeno_text::TextLayout;
 
@@ -59,6 +62,12 @@ pub struct Scene {
     pub blocks: Vec<SceneBlock>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CommandRange {
+    pub start: usize,
+    pub len: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneLayer {
     pub layer_id: u64,
@@ -83,13 +92,17 @@ pub struct SceneBlock {
     pub bounds: Rect,
     pub transform: SceneTransform,
     pub clip: Option<SceneClip>,
-    pub commands: Vec<DrawCommand>,
+    pub commands: CommandRange,
+    pub command_count: usize,
+    pub command_signature: u64,
     pub resource_keys: Vec<SceneResourceKey>,
+    staged_commands: Option<Vec<DrawCommand>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScenePatch {
     pub size: Size,
+    pub commands: Vec<DrawCommand>,
     pub base_layer_count: usize,
     pub base_block_count: usize,
     pub layer_upserts: Vec<SceneLayer>,
@@ -169,7 +182,19 @@ impl Scene {
     pub fn from_layers_and_blocks(
         size: Size,
         clear_color: Option<Color>,
+        layers: Vec<SceneLayer>,
+        blocks: Vec<SceneBlock>,
+    ) -> Self {
+        let (commands, blocks) = Self::compact_blocks(blocks);
+        Self::from_layers_and_blocks_with_commands(size, clear_color, layers, commands, blocks)
+    }
+
+    #[must_use]
+    pub fn from_layers_and_blocks_with_commands(
+        size: Size,
+        clear_color: Option<Color>,
         mut layers: Vec<SceneLayer>,
+        commands: Vec<DrawCommand>,
         blocks: Vec<SceneBlock>,
     ) -> Self {
         if !layers
@@ -179,10 +204,6 @@ impl Scene {
             layers.push(SceneLayer::root(size));
         }
         layers.sort_by_key(|layer| layer.order);
-        let commands = blocks
-            .iter()
-            .flat_map(|block| block.commands.iter().cloned())
-            .collect();
         Self {
             size,
             clear_color,
@@ -194,16 +215,54 @@ impl Scene {
 
     pub fn push(&mut self, command: DrawCommand) {
         self.layers = vec![SceneLayer::root(self.size)];
-        self.blocks.clear();
+        let start = self.commands.len();
+        let resource_keys = command.resource_key().into_iter().collect();
+        let signature = command_signature(std::slice::from_ref(&command));
         self.commands.push(command);
+        self.blocks.push(SceneBlock::with_range(
+            u64::MAX - self.blocks.len() as u64,
+            Self::ROOT_LAYER_ID,
+            self.blocks.len() as u32,
+            Rect::new(0.0, 0.0, self.size.width, self.size.height),
+            Transform2D::identity(),
+            None,
+            CommandRange { start, len: 1 },
+            1,
+            signature,
+            resource_keys,
+        ));
+    }
+
+    #[must_use]
+    pub fn iter_commands(&self) -> impl Iterator<Item = &DrawCommand> {
+        self.commands.iter()
+    }
+
+    #[must_use]
+    pub fn command_count(&self) -> usize {
+        self.commands.len()
+            + usize::from(self.clear_color.is_some() && self.clear_command().is_none())
+    }
+
+    #[must_use]
+    pub fn clear_command(&self) -> Option<Color> {
+        self.iter_commands().find_map(|command| match command {
+            DrawCommand::Clear(color) => Some(*color),
+            _ => None,
+        })
     }
 
     #[must_use]
     pub fn resource_keys(&self) -> Vec<SceneResourceKey> {
-        self.commands
+        self.blocks
             .iter()
-            .filter_map(DrawCommand::resource_key)
+            .flat_map(|block| block.resource_keys.iter().copied())
             .collect()
+    }
+
+    #[must_use]
+    pub fn commands_for_block<'a>(&'a self, block: &'a SceneBlock) -> &'a [DrawCommand] {
+        &self.commands[block.commands.start..block.commands.start + block.commands.len]
     }
 
     #[must_use]
@@ -234,34 +293,54 @@ impl Scene {
         }
         layers.sort_by_key(|layer| layer.order);
 
-        let mut blocks: Vec<SceneBlock> = self
+        let mut blocks: Vec<(SceneBlock, bool)> = self
             .blocks
             .iter()
             .filter(|block| !patch.removes.contains(&block.node_id))
             .cloned()
+            .map(|block| (block, false))
             .collect();
 
         for upsert in &patch.upserts {
             if let Some(existing) = blocks
                 .iter_mut()
-                .find(|block| block.node_id == upsert.node_id)
+                .find(|(block, _)| block.node_id == upsert.node_id)
             {
-                *existing = upsert.clone();
+                *existing = (upsert.clone(), true);
             } else {
-                blocks.push(upsert.clone());
+                blocks.push((upsert.clone(), true));
             }
         }
         for reorder in &patch.reorders {
             if let Some(existing) = blocks
                 .iter_mut()
-                .find(|block| block.node_id == reorder.node_id)
+                .find(|(block, _)| block.node_id == reorder.node_id)
             {
-                existing.order = reorder.order;
+                existing.0.order = reorder.order;
             }
         }
 
-        blocks.sort_by_key(|block| block.order);
-        Self::from_layers_and_blocks(patch.size, self.clear_color, layers, blocks)
+        blocks.sort_by_key(|(block, _)| block.order);
+        let mut commands = Vec::new();
+        let rebuilt_blocks = blocks
+            .into_iter()
+            .map(|(block, from_patch)| {
+                let block_commands = if from_patch {
+                    patch.commands_for_block(&block).to_vec()
+                } else {
+                    self.commands_for_block(&block).to_vec()
+                };
+                let start = commands.len();
+                commands.extend_from_slice(&block_commands);
+                let mut block = block;
+                block = block.with_normalized_commands(CommandRange {
+                    start,
+                    len: block_commands.len(),
+                });
+                block
+            })
+            .collect();
+        Self::from_layers_and_blocks_with_commands(patch.size, self.clear_color, layers, commands, rebuilt_blocks)
     }
 
     #[must_use]
@@ -340,6 +419,27 @@ impl Scene {
             },
         )
     }
+
+    #[must_use]
+    pub fn compact_blocks(blocks: Vec<SceneBlock>) -> (Vec<DrawCommand>, Vec<SceneBlock>) {
+        let mut commands = Vec::new();
+        let normalized = blocks
+            .into_iter()
+            .map(|block| {
+                let block_commands = block
+                    .staged_commands
+                    .clone()
+                    .unwrap_or_default();
+                let start = commands.len();
+                commands.extend_from_slice(&block_commands);
+                block.with_normalized_commands(CommandRange {
+                    start,
+                    len: block_commands.len(),
+                })
+            })
+            .collect();
+        (commands, normalized)
+    }
 }
 
 fn scene_clip_bounds(clip: SceneClip) -> Rect {
@@ -358,6 +458,94 @@ fn rect_intersection(a: Rect, b: Rect) -> Option<Rect> {
     let right = a.right().min(b.right());
     let bottom = a.bottom().min(b.bottom());
     Some(Rect::new(left, top, right - left, bottom - top))
+}
+
+fn command_signature(commands: &[DrawCommand]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    commands.len().hash(&mut hasher);
+    for command in commands {
+        match command {
+            DrawCommand::Fill { shape, brush } => {
+                1u8.hash(&mut hasher);
+                hash_shape(shape, &mut hasher);
+                hash_brush(brush, &mut hasher);
+            }
+            DrawCommand::Stroke {
+                shape,
+                stroke,
+            } => {
+                2u8.hash(&mut hasher);
+                hash_shape(shape, &mut hasher);
+                hash_f32(stroke.width, &mut hasher);
+                hash_color(stroke.color, &mut hasher);
+            }
+            DrawCommand::Text {
+                position,
+                layout,
+                color,
+            } => {
+                3u8.hash(&mut hasher);
+                hash_point(*position, &mut hasher);
+                layout.cache_key().stable_hash().hash(&mut hasher);
+                hash_color(*color, &mut hasher);
+            }
+            DrawCommand::Clear(color) => {
+                4u8.hash(&mut hasher);
+                hash_color(*color, &mut hasher);
+            }
+        }
+    }
+    hasher.finish()
+}
+
+fn hash_shape(shape: &Shape, hasher: &mut DefaultHasher) {
+    match shape {
+        Shape::Rect(rect) => {
+            1u8.hash(hasher);
+            hash_rect(*rect, hasher);
+        }
+        Shape::RoundedRect { rect, radius } => {
+            2u8.hash(hasher);
+            hash_rect(*rect, hasher);
+            hash_f32(*radius, hasher);
+        }
+        Shape::Circle { center, radius } => {
+            3u8.hash(hasher);
+            hash_point(*center, hasher);
+            hash_f32(*radius, hasher);
+        }
+    }
+}
+
+fn hash_brush(brush: &Brush, hasher: &mut DefaultHasher) {
+    match brush {
+        Brush::Solid(color) => {
+            1u8.hash(hasher);
+            hash_color(*color, hasher);
+        }
+    }
+}
+
+fn hash_rect(rect: Rect, hasher: &mut DefaultHasher) {
+    hash_point(rect.origin, hasher);
+    hash_f32(rect.size.width, hasher);
+    hash_f32(rect.size.height, hasher);
+}
+
+fn hash_point(point: Point, hasher: &mut DefaultHasher) {
+    hash_f32(point.x, hasher);
+    hash_f32(point.y, hasher);
+}
+
+fn hash_color(color: Color, hasher: &mut DefaultHasher) {
+    color.red.hash(hasher);
+    color.green.hash(hasher);
+    color.blue.hash(hasher);
+    color.alpha.hash(hasher);
+}
+
+fn hash_f32(value: f32, hasher: &mut DefaultHasher) {
+    value.to_bits().hash(hasher);
 }
 
 impl SceneLayer {
@@ -422,10 +610,22 @@ impl SceneBlock {
         clip: Option<SceneClip>,
         commands: Vec<DrawCommand>,
     ) -> Self {
-        let resource_keys = commands
-            .iter()
-            .filter_map(DrawCommand::resource_key)
-            .collect();
+        Self::from_commands(node_id, layer_id, order, bounds, transform, clip, commands)
+    }
+
+    #[must_use]
+    pub fn with_range(
+        node_id: u64,
+        layer_id: u64,
+        order: u32,
+        bounds: Rect,
+        transform: SceneTransform,
+        clip: Option<SceneClip>,
+        commands: CommandRange,
+        command_count: usize,
+        command_signature: u64,
+        resource_keys: Vec<SceneResourceKey>,
+    ) -> Self {
         Self {
             node_id,
             layer_id,
@@ -434,8 +634,50 @@ impl SceneBlock {
             transform,
             clip,
             commands,
+            command_count,
+            command_signature,
             resource_keys,
+            staged_commands: None,
         }
+    }
+
+    #[must_use]
+    pub fn from_commands(
+        node_id: u64,
+        layer_id: u64,
+        order: u32,
+        bounds: Rect,
+        transform: SceneTransform,
+        clip: Option<SceneClip>,
+        commands: Vec<DrawCommand>,
+    ) -> Self {
+        let command_count = commands.len();
+        let command_signature = command_signature(&commands);
+        let resource_keys = commands.iter().filter_map(DrawCommand::resource_key).collect();
+        Self {
+            node_id,
+            layer_id,
+            order,
+            bounds,
+            transform,
+            clip,
+            commands: CommandRange {
+                start: 0,
+                len: command_count,
+            },
+            command_count,
+            command_signature,
+            resource_keys,
+            staged_commands: Some(commands),
+        }
+    }
+
+    #[must_use]
+    pub fn with_normalized_commands(mut self, range: CommandRange) -> Self {
+        self.commands = range;
+        self.command_count = range.len;
+        self.staged_commands = None;
+        self
     }
 }
 
@@ -527,6 +769,14 @@ impl ScenePatch {
         .flatten()
         .reduce(|acc, bounds| acc.union(&bounds))
     }
+
+    #[must_use]
+    pub fn commands_for_block<'a>(&'a self, block: &'a SceneBlock) -> &'a [DrawCommand] {
+        if let Some(commands) = block.staged_commands.as_ref() {
+            return commands.as_slice();
+        }
+        &self.commands[block.commands.start..block.commands.start + block.commands.len]
+    }
 }
 
 impl SceneSubmit {
@@ -593,6 +843,7 @@ mod tests {
         );
         let patch = ScenePatch {
             size: previous.size,
+            commands: Vec::new(),
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
@@ -641,6 +892,7 @@ mod tests {
         let submit = SceneSubmit::Patch {
             patch: ScenePatch {
                 size: current.size,
+                commands: Vec::new(),
                 base_layer_count: 0,
                 base_block_count: 0,
                 layer_upserts: current.layers.clone(),
@@ -721,6 +973,7 @@ mod tests {
         );
         let patch = ScenePatch {
             size: previous.size,
+            commands: Vec::new(),
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
@@ -781,6 +1034,7 @@ mod tests {
         );
         let patch = ScenePatch {
             size: previous.size,
+            commands: Vec::new(),
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
@@ -834,6 +1088,7 @@ mod tests {
         );
         let patch = ScenePatch {
             size: previous.size,
+            commands: Vec::new(),
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: vec![SceneLayer::new(
@@ -889,6 +1144,7 @@ mod tests {
         );
         let patch = ScenePatch {
             size: previous.size,
+            commands: Vec::new(),
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),
@@ -942,6 +1198,7 @@ mod tests {
         );
         let patch = ScenePatch {
             size: previous.size,
+            commands: Vec::new(),
             base_layer_count: previous.layers.len(),
             base_block_count: previous.blocks.len(),
             layer_upserts: Vec::new(),

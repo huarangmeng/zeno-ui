@@ -43,7 +43,7 @@ fn main() {
                 SceneSubmit::Full(_) => full_frames += 1,
                 SceneSubmit::Patch { .. } => patch_frames += 1,
             }
-            total_commands += frame.scene.commands.len();
+            total_commands += frame.scene.command_count();
             total_blocks += frame.scene.blocks.len();
             if matches!(dump_mode.as_str(), "scene" | "all") && index + 1 == iterations {
                 println!("--- scene dump ---\n{}", dump_scene(&frame.scene));

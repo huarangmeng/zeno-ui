@@ -13,7 +13,7 @@ use zeno_text::TextSystem;
 use crate::{
     Node, NodeId, NodeKind,
     invalidation::DirtyReason,
-    layout::{MeasuredKind, MeasuredNode, measure_node},
+    layout::measure_layout,
     modifier::{BlendMode, ClipMode, TransformOrigin},
     tree::RetainedComposeTree,
 };
@@ -25,19 +25,13 @@ mod reconcile;
 mod relayout;
 mod scene;
 
+pub(crate) use fragments::FragmentStore;
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ComposeStats {
     pub compose_passes: usize,
     pub layout_passes: usize,
     pub cache_hits: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RelayoutClass {
-    Reused,
-    LocalOnly,
-    ParentOnly,
-    ParentAndFollowingSiblings,
 }
 
 pub struct ComposeRenderer<'a> {
@@ -125,21 +119,18 @@ impl<'a> ComposeEngine<'a> {
                 let dirty_node_ids: HashSet<NodeId> =
                     retained.dirty_node_ids().into_iter().collect();
                 let previous_node_ids: HashSet<NodeId> =
-                    retained.available_map().keys().copied().collect();
-                let layout_dirty_roots: HashSet<NodeId> =
-                    retained.layout_dirty_roots().into_iter().collect();
-                let measured = relayout::relayout_node(
+                    retained.node_ids().iter().copied().collect();
+                let layout_dirty_roots = retained.layout_dirty_roots();
+                let layout = relayout::relayout_layout(
                     root,
                     Point::new(0.0, 0.0),
                     viewport,
                     self.text_system,
                     retained,
                     &layout_dirty_roots,
-                    false,
-                )
-                .0;
+                );
                 let available_by_node =
-                    fragments::available_map_from_measured(root, viewport, &measured);
+                    fragments::available_map_from_layout(root, viewport, &layout);
                 let current_node_ids: HashSet<NodeId> = available_by_node.keys().copied().collect();
                 let new_node_ids: HashSet<NodeId> = current_node_ids
                     .difference(&previous_node_ids)
@@ -149,19 +140,19 @@ impl<'a> ComposeEngine<'a> {
                     dirty_node_ids.union(&new_node_ids).copied().collect();
                 let patch_update_ids = patch::scene_update_ids_for_relayout(
                     root,
-                    &measured,
+                    &layout,
                     retained,
                     &fragment_update_ids,
                 );
                 retained.apply_layout_state(
                     root.clone(),
                     viewport,
-                    measured.clone(),
+                    layout.clone(),
                     available_by_node,
                 );
                 patch::update_fragments_for_nodes(
                     root,
-                    &measured,
+                    &layout,
                     viewport,
                     &fragment_update_ids,
                     retained,
@@ -181,14 +172,14 @@ impl<'a> ComposeEngine<'a> {
 
         self.stats.compose_passes += 1;
         self.stats.layout_passes += 1;
-        let measured = measure_node(root, Point::new(0.0, 0.0), viewport, self.text_system);
+        let layout = measure_layout(root, Point::new(0.0, 0.0), viewport, self.text_system);
         let (available_by_node, fragments_by_node, scene) =
-            fragments::structured_scene_from_measured(root, viewport, &measured);
+            fragments::structured_scene_from_layout(root, viewport, &layout);
         match self.retained.as_mut() {
             Some(retained) => retained.replace(
                 root.clone(),
                 viewport,
-                measured,
+                layout,
                 available_by_node,
                 fragments_by_node,
                 scene.clone(),
@@ -197,7 +188,7 @@ impl<'a> ComposeEngine<'a> {
                 self.retained = Some(RetainedComposeTree::new(
                     root.clone(),
                     viewport,
-                    measured,
+                    layout,
                     available_by_node,
                     fragments_by_node,
                     scene.clone(),

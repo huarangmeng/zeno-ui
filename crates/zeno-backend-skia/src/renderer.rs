@@ -38,7 +38,7 @@ impl Renderer for SkiaRenderer {
 
         Ok(FrameReport {
             backend: self.kind(),
-            command_count: scene.commands.len(),
+            command_count: scene.command_count(),
             resource_count: scene.resource_keys().len(),
             block_count: scene.blocks.len(),
             patch_upserts: 0,

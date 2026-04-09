@@ -28,12 +28,7 @@ pub(super) fn default_clear_color(transparent: bool) -> Color {
 }
 
 pub(super) fn ensure_clear_command(scene: &Scene, fallback: Color) -> Scene {
-    if scene.clear_color.is_some()
-        || scene
-            .commands
-            .iter()
-            .any(|command| matches!(command, DrawCommand::Clear(_)))
-    {
+    if scene.clear_color.is_some() || scene.clear_command().is_some() {
         return scene.clone();
     }
     Scene {
@@ -49,18 +44,26 @@ pub(super) fn ensure_clear_command(scene: &Scene, fallback: Color) -> Scene {
 pub(super) fn partial_scene_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) -> Scene {
     let layers = partial_layers_for_dirty_bounds(scene, dirty_bounds);
     let included_layer_ids: HashSet<u64> = layers.iter().map(|layer| layer.layer_id).collect();
-    let mut blocks = vec![SceneBlock::new(
+    let mut commands = scene.commands.clone();
+    let clear_commands = vec![DrawCommand::Fill {
+        shape: Shape::Rect(dirty_bounds),
+        brush: Brush::Solid(clear_color_for_scene(scene)),
+    }];
+    let clear_start = commands.len();
+    commands.extend_from_slice(&clear_commands);
+    let mut blocks = vec![SceneBlock::from_commands(
         u64::MAX,
         Scene::ROOT_LAYER_ID,
         0,
         dirty_bounds,
         SceneTransform::identity(),
         None,
-        vec![DrawCommand::Fill {
-            shape: Shape::Rect(dirty_bounds),
-            brush: Brush::Solid(clear_color_for_scene(scene)),
-        }],
-    )];
+        clear_commands.clone(),
+    )
+    .with_normalized_commands(zeno_scene::CommandRange {
+        start: clear_start,
+        len: clear_commands.len(),
+    })];
     blocks.extend(
         scene
             .blocks
@@ -75,7 +78,7 @@ pub(super) fn partial_scene_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) 
                 block
             }),
     );
-    Scene::from_layers_and_blocks(scene.size, None, layers, blocks)
+    Scene::from_layers_and_blocks_with_commands(scene.size, None, layers, commands, blocks)
 }
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
@@ -180,12 +183,7 @@ fn include_layer_ancestors(
 fn clear_color_for_scene(scene: &Scene) -> Color {
     scene
         .clear_color
-        .or_else(|| {
-            scene.commands.iter().find_map(|cmd| match cmd {
-                DrawCommand::Clear(color) => Some(*color),
-                _ => None,
-            })
-        })
+        .or_else(|| scene.clear_command())
         .unwrap_or(Color::TRANSPARENT)
 }
 
@@ -224,7 +222,7 @@ mod tests {
         );
         let prepared = ensure_clear_command(&scene, Color::rgba(10, 20, 30, 255));
         assert_eq!(prepared.clear_color, Some(Color::rgba(10, 20, 30, 255)));
-        assert_eq!(prepared.commands.len(), scene.commands.len());
+        assert_eq!(prepared.command_count(), scene.command_count());
         assert_eq!(prepared.blocks, scene.blocks);
         let prepared_again = ensure_clear_command(&prepared, Color::WHITE);
         assert_eq!(prepared_again, prepared);
@@ -237,6 +235,7 @@ mod tests {
         let patch = super::patch_stats(&SceneSubmit::Patch {
             patch: zeno_scene::ScenePatch {
                 size: scene.size,
+                commands: Vec::new(),
                 base_layer_count: scene.layers.len(),
                 base_block_count: scene.blocks.len(),
                 layer_upserts: Vec::new(),

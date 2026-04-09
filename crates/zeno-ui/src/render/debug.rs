@@ -1,7 +1,8 @@
 //! 调试输出与一次性 compose helper 放在这里，避免和增量路径纠缠。
 
-use super::fragments::structured_scene_from_measured;
+use super::fragments::structured_scene_from_layout;
 use super::*;
+use crate::layout::{MeasuredKind, MeasuredNode, measure_node};
 
 pub(super) fn compose_scene_internal(
     root: &Node,
@@ -9,7 +10,8 @@ pub(super) fn compose_scene_internal(
     text_system: &dyn TextSystem,
 ) -> Scene {
     let measured = measure_node(root, Point::new(0.0, 0.0), viewport, text_system);
-    structured_scene_from_measured(root, viewport, &measured).2
+    let layout = crate::layout::LayoutArena::from_measured(root, &measured);
+    structured_scene_from_layout(root, viewport, &layout).2
 }
 
 pub(super) fn dump_scene(scene: &Scene) -> String {
@@ -47,7 +49,7 @@ pub(super) fn dump_scene(scene: &Scene) -> String {
             block.order,
             block.bounds,
             block.clip,
-            block.commands.len(),
+            block.command_count,
             block.resource_keys.len()
         );
     }
@@ -69,6 +71,9 @@ fn dump_layout_node(node: &Node, measured: &MeasuredNode, depth: usize, output: 
             layout.metrics.line_count, layout.metrics.ascent, layout.metrics.descent
         ),
         (NodeKind::Container(_), MeasuredKind::Single(_)) => "container".to_string(),
+        (NodeKind::Box { .. }, MeasuredKind::Multiple(children)) => {
+            format!("box children={}", children.len())
+        }
         (NodeKind::Stack { axis, .. }, MeasuredKind::Multiple(children)) => {
             format!("stack axis={:?} children={}", axis, children.len())
         }
@@ -85,9 +90,10 @@ fn dump_layout_node(node: &Node, measured: &MeasuredNode, depth: usize, output: 
     );
     match (&node.kind, &measured.kind) {
         (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
-            dump_layout_node(child, measured_child, depth + 1, output);
+            dump_layout_node(child.as_ref(), measured_child, depth + 1, output);
         }
-        (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
+        (NodeKind::Box { children }, MeasuredKind::Multiple(measured_children))
+        | (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
             for (child, measured_child) in children.iter().zip(measured_children.iter()) {
                 dump_layout_node(child, measured_child, depth + 1, output);
             }

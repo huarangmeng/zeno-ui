@@ -16,7 +16,7 @@ fn compose_engine_reuses_retained_scene_until_invalidated() {
     engine.invalidate(DirtyReason::Paint);
     let third = engine.compose(&root, Size::new(320.0, 240.0));
 
-    assert_eq!(third.commands.len(), second.commands.len());
+    assert_eq!(third.command_count(), second.command_count());
     assert_eq!(engine.stats().compose_passes, 2);
     assert_eq!(engine.stats().layout_passes, 1);
     assert_eq!(engine.stats().cache_hits, 1);
@@ -35,7 +35,7 @@ fn compose_engine_can_repaint_single_dirty_node_without_layout() {
     engine.invalidate_node(title_id, DirtyReason::Paint);
     let repainted = engine.compose(&root, Size::new(320.0, 240.0));
 
-    assert_eq!(baseline.commands.len(), repainted.commands.len());
+    assert_eq!(baseline.command_count(), repainted.command_count());
     assert_eq!(engine.stats().layout_passes, 1);
     assert_eq!(engine.stats().compose_passes, 2);
 }
@@ -88,6 +88,25 @@ fn compose_submit_reconciles_keyed_layout_change_as_layout_work() {
         .key("root");
     let second = column(vec![text("Title").key("title"), text("Body").key("body")])
         .spacing(12.0)
+        .key("root");
+    let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
+    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+
+    assert!(matches!(submit, SceneSubmit::Patch { .. }));
+    assert_eq!(engine.stats().layout_passes, 2);
+}
+
+#[test]
+fn compose_submit_treats_arrangement_change_as_layout_work() {
+    let first = row(vec![spacer(20.0, 10.0).key("a"), spacer(20.0, 10.0).key("b")])
+        .fixed_size(100.0, 20.0)
+        .arrangement(Arrangement::Start)
+        .key("root");
+    let second = row(vec![spacer(20.0, 10.0).key("a"), spacer(20.0, 10.0).key("b")])
+        .fixed_size(100.0, 20.0)
+        .arrangement(Arrangement::End)
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 

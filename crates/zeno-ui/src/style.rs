@@ -1,6 +1,9 @@
 use zeno_core::{Color, Transform2D};
 
-use crate::modifier::{BlendMode, ClipMode, DropShadow, Modifier, Modifiers, TransformOrigin};
+use crate::modifier::{
+    Alignment, Arrangement, BlendMode, ClipMode, CrossAxisAlignment, DropShadow, Modifier,
+    Modifiers, TransformOrigin,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
@@ -67,6 +70,9 @@ pub struct Style {
     pub clip: Option<ClipMode>,
     pub transform: Transform2D,
     pub transform_origin: TransformOrigin,
+    pub content_alignment: Alignment,
+    pub arrangement: Arrangement,
+    pub cross_axis_alignment: CrossAxisAlignment,
     pub opacity: f32,
     pub layer: bool,
     pub blend_mode: BlendMode,
@@ -88,6 +94,9 @@ impl Default for Style {
             clip: None,
             transform: Transform2D::identity(),
             transform_origin: TransformOrigin::new(0.0, 0.0),
+            content_alignment: Alignment::TOP_START,
+            arrangement: Arrangement::Start,
+            cross_axis_alignment: CrossAxisAlignment::Start,
             opacity: 1.0,
             layer: false,
             blend_mode: BlendMode::Normal,
@@ -127,6 +136,15 @@ impl Style {
             }
             Modifier::TransformOrigin(origin) => {
                 self.transform_origin = *origin;
+            }
+            Modifier::ContentAlignment(alignment) => {
+                self.content_alignment = *alignment;
+            }
+            Modifier::Arrangement(arrangement) => {
+                self.arrangement = *arrangement;
+            }
+            Modifier::CrossAxisAlignment(alignment) => {
+                self.cross_axis_alignment = *alignment;
             }
             Modifier::Opacity(opacity) => {
                 self.opacity = opacity.clamp(0.0, 1.0);

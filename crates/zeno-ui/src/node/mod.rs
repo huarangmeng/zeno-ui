@@ -2,7 +2,10 @@ use zeno_core::Color;
 use zeno_text::FontDescriptor;
 
 use crate::{
-    modifier::{BlendMode, DropShadow, Modifier, Modifiers, TransformOrigin},
+    modifier::{
+        Alignment, Arrangement, BlendMode, CrossAxisAlignment, DropShadow, Modifier, Modifiers,
+        TransformOrigin,
+    },
     style::{Axis, EdgeInsets, Style},
 };
 
@@ -26,6 +29,7 @@ pub struct SpacerNode {
 pub enum NodeKind {
     Text(TextNode),
     Container(Box<Node>),
+    Box { children: Vec<Node> },
     Stack { axis: Axis, children: Vec<Node> },
     Spacer(SpacerNode),
 }
@@ -158,6 +162,21 @@ impl Node {
     #[must_use]
     pub fn transform_origin(self, x: f32, y: f32) -> Self {
         self.modifier(Modifier::TransformOrigin(TransformOrigin::new(x, y)))
+    }
+
+    #[must_use]
+    pub fn content_alignment(self, alignment: Alignment) -> Self {
+        self.modifier(Modifier::ContentAlignment(alignment))
+    }
+
+    #[must_use]
+    pub fn arrangement(self, arrangement: Arrangement) -> Self {
+        self.modifier(Modifier::Arrangement(arrangement))
+    }
+
+    #[must_use]
+    pub fn cross_axis_alignment(self, alignment: CrossAxisAlignment) -> Self {
+        self.modifier(Modifier::CrossAxisAlignment(alignment))
     }
 
     #[must_use]

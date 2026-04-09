@@ -206,7 +206,7 @@ impl SkiaGlSession {
         let (patch_upserts, patch_removes) = patch_stats(submit);
         Ok(FrameReport {
             backend: Backend::Skia,
-            command_count: scene.commands.len(),
+            command_count: scene.command_count(),
             resource_count: scene.resource_keys().len(),
             block_count: scene.blocks.len(),
             patch_upserts,

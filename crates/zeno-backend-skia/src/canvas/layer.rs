@@ -40,6 +40,7 @@ pub(crate) fn render_scene_layers(
 
     render_layer(
         canvas,
+        scene,
         Scene::ROOT_LAYER_ID,
         &layers_by_id,
         &child_layers_by_parent,
@@ -50,6 +51,7 @@ pub(crate) fn render_scene_layers(
 
 fn render_layer(
     canvas: &sk::Canvas,
+    scene: &Scene,
     layer_id: u64,
     layers_by_id: &HashMap<u64, &SceneLayer>,
     child_layers_by_parent: &HashMap<u64, Vec<&SceneLayer>>,
@@ -97,9 +99,10 @@ fn render_layer(
     items.sort_by_key(|(order, _)| *order);
     for (_, item) in items {
         match item {
-            LayerItem::Block(block) => draw_block(canvas, block, text_cache),
+            LayerItem::Block(block) => draw_block(canvas, scene, block, text_cache),
             LayerItem::Layer(child_layer_id) => render_layer(
                 canvas,
+                scene,
                 child_layer_id,
                 layers_by_id,
                 child_layers_by_parent,
@@ -114,7 +117,7 @@ fn render_layer(
     }
 }
 
-fn draw_block(canvas: &sk::Canvas, block: &SceneBlock, text_cache: &mut SkiaTextCache) {
+fn draw_block(canvas: &sk::Canvas, scene: &Scene, block: &SceneBlock, text_cache: &mut SkiaTextCache) {
     let needs_save = !block.transform.is_identity() || block.clip.is_some();
     if needs_save {
         canvas.save();
@@ -125,7 +128,7 @@ fn draw_block(canvas: &sk::Canvas, block: &SceneBlock, text_cache: &mut SkiaText
     if let Some(clip) = block.clip {
         apply_clip(canvas, clip);
     }
-    for cmd in &block.commands {
+    for cmd in scene.commands_for_block(block) {
         draw_command(canvas, cmd, text_cache);
     }
     if needs_save {

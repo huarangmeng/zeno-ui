@@ -48,9 +48,11 @@ pub(super) fn subtree_contains_updates(node: &Node, update_ids: &HashSet<NodeId>
     }
     match &node.kind {
         NodeKind::Container(child) => subtree_contains_updates(child, update_ids),
-        NodeKind::Stack { children, .. } => children
-            .iter()
-            .any(|child| subtree_contains_updates(child, update_ids)),
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
+            children
+                .iter()
+                .any(|child| subtree_contains_updates(child, update_ids))
+        }
         _ => false,
     }
 }
@@ -88,6 +90,7 @@ fn block_equal_except_order(previous: &SceneBlock, current: &SceneBlock) -> bool
         && previous.bounds == current.bounds
         && previous.transform == current.transform
         && previous.clip == current.clip
-        && previous.commands == current.commands
+        && previous.command_count == current.command_count
+        && previous.command_signature == current.command_signature
         && previous.resource_keys == current.resource_keys
 }

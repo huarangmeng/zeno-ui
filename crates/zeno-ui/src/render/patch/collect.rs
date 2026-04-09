@@ -1,6 +1,7 @@
 //! patch scene 遍历独立拆分，方便继续优化局部提交粒度。
 
 use super::*;
+use crate::layout::LayoutArena;
 use crate::render::patch::diff::{
     layer_context_changed, push_block_patch, push_layer_patch, subtree_contains_updates,
 };
@@ -11,8 +12,8 @@ use crate::render::scene::{
 
 pub(super) fn collect_scene_patch_items(
     node: &Node,
-    measured: &MeasuredNode,
-    fragments_by_node: &HashMap<NodeId, Vec<DrawCommand>>,
+    layout: &LayoutArena,
+    fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
@@ -34,8 +35,8 @@ pub(super) fn collect_scene_patch_items(
     {
         collect_unchanged_scene_items(
             node,
-            measured,
-            fragments_by_node,
+            layout,
+            fragments,
             current_layer_id,
             current_layer_origin,
             current_layer_world_transform,
@@ -49,18 +50,18 @@ pub(super) fn collect_scene_patch_items(
         );
         return;
     }
+
+    let slot = layout
+        .slot(node.id())
+        .expect("layout slot should exist for patch item");
     let style = node.resolved_style();
-    let local_bounds = Rect::new(
-        0.0,
-        0.0,
-        measured.frame.size.width,
-        measured.frame.size.height,
-    );
+    let local_bounds = Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height);
+
     if node_creates_layer(&style) {
         let layer_transform = layer_local_transform(
-            measured.frame.origin,
+            slot.frame.origin,
             current_layer_origin,
-            measured.frame.size,
+            slot.frame.size,
             style.transform,
             style.transform_origin,
         );
@@ -77,7 +78,7 @@ pub(super) fn collect_scene_patch_items(
             local_bounds,
             world_transform.map_rect(effect_bounds),
             layer_transform,
-            scene_clip(measured.frame.size, style.clip),
+            scene_clip(slot.frame.size, style.clip),
             style.opacity,
             scene_blend_mode(style.blend_mode),
             scene_effects(&style),
@@ -98,7 +99,7 @@ pub(super) fn collect_scene_patch_items(
         } else {
             layer_upserts.push(current_layer.clone());
         }
-        if let Some(fragment) = fragments_by_node.get(&node.id()) {
+        if let Some(fragment) = fragments.clone_fragment(node.id()) {
             let current_block = SceneBlock::new(
                 node.id().0,
                 layer_id,
@@ -106,7 +107,7 @@ pub(super) fn collect_scene_patch_items(
                 world_transform.map_rect(local_bounds),
                 Transform2D::identity(),
                 None,
-                fragment.clone(),
+                fragment,
             );
             seen_blocks.insert(current_block.node_id);
             if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
@@ -118,10 +119,10 @@ pub(super) fn collect_scene_patch_items(
         }
         collect_scene_patch_children(
             node,
-            measured,
-            fragments_by_node,
+            layout,
+            fragments,
             layer_id,
-            measured.frame.origin,
+            slot.frame.origin,
             world_transform,
             force_descendant_update,
             update_ids,
@@ -139,10 +140,10 @@ pub(super) fn collect_scene_patch_items(
     }
 
     let force_descendant_update = force_update || previous_layers_by_id.contains_key(&node.id().0);
-    if let Some(fragment) = fragments_by_node.get(&node.id()) {
+    if let Some(fragment) = fragments.clone_fragment(node.id()) {
         let block_transform = Transform2D::translation(
-            measured.frame.origin.x - current_layer_origin.x,
-            measured.frame.origin.y - current_layer_origin.y,
+            slot.frame.origin.x - current_layer_origin.x,
+            slot.frame.origin.y - current_layer_origin.y,
         );
         let world_transform = current_layer_world_transform.then(block_transform);
         let current_block = SceneBlock::new(
@@ -152,7 +153,7 @@ pub(super) fn collect_scene_patch_items(
             world_transform.map_rect(local_bounds),
             block_transform,
             None,
-            fragment.clone(),
+            fragment,
         );
         seen_blocks.insert(current_block.node_id);
         if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
@@ -164,8 +165,8 @@ pub(super) fn collect_scene_patch_items(
     }
     collect_scene_patch_children(
         node,
-        measured,
-        fragments_by_node,
+        layout,
+        fragments,
         current_layer_id,
         current_layer_origin,
         current_layer_world_transform,
@@ -185,8 +186,8 @@ pub(super) fn collect_scene_patch_items(
 
 fn collect_scene_patch_children(
     node: &Node,
-    measured: &MeasuredNode,
-    fragments_by_node: &HashMap<NodeId, Vec<DrawCommand>>,
+    layout: &LayoutArena,
+    fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
@@ -202,12 +203,12 @@ fn collect_scene_patch_children(
     upserts: &mut Vec<SceneBlock>,
     reorders: &mut Vec<SceneBlockOrder>,
 ) {
-    match (&node.kind, &measured.kind) {
-        (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
+    match &node.kind {
+        NodeKind::Container(child) => {
             collect_scene_patch_items(
                 child,
-                measured_child,
-                fragments_by_node,
+                layout,
+                fragments,
                 current_layer_id,
                 current_layer_origin,
                 current_layer_world_transform,
@@ -224,12 +225,12 @@ fn collect_scene_patch_children(
                 reorders,
             );
         }
-        (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
-            for (child, measured_child) in children.iter().zip(measured_children.iter()) {
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
+            for child in children {
                 collect_scene_patch_items(
                     child,
-                    measured_child,
-                    fragments_by_node,
+                    layout,
+                    fragments,
                     current_layer_id,
                     current_layer_origin,
                     current_layer_world_transform,
@@ -253,8 +254,8 @@ fn collect_scene_patch_children(
 
 fn collect_unchanged_scene_items(
     node: &Node,
-    measured: &MeasuredNode,
-    fragments_by_node: &HashMap<NodeId, Vec<DrawCommand>>,
+    layout: &LayoutArena,
+    fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
@@ -266,18 +267,17 @@ fn collect_unchanged_scene_items(
     layer_reorders: &mut Vec<SceneLayerOrder>,
     reorders: &mut Vec<SceneBlockOrder>,
 ) {
+    let slot = layout
+        .slot(node.id())
+        .expect("layout slot should exist for unchanged patch item");
     let style = node.resolved_style();
-    let local_bounds = Rect::new(
-        0.0,
-        0.0,
-        measured.frame.size.width,
-        measured.frame.size.height,
-    );
+    let local_bounds = Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height);
+
     if node_creates_layer(&style) {
         let layer_transform = layer_local_transform(
-            measured.frame.origin,
+            slot.frame.origin,
             current_layer_origin,
-            measured.frame.size,
+            slot.frame.size,
             style.transform,
             style.transform_origin,
         );
@@ -291,7 +291,7 @@ fn collect_unchanged_scene_items(
             local_bounds,
             world_transform.map_rect(effect_bounds),
             layer_transform,
-            scene_clip(measured.frame.size, style.clip),
+            scene_clip(slot.frame.size, style.clip),
             style.opacity,
             scene_blend_mode(style.blend_mode),
             scene_effects(&style),
@@ -306,7 +306,7 @@ fn collect_unchanged_scene_items(
             push_layer_patch(previous, &current_layer, &mut Vec::new(), layer_reorders);
         }
         *next_order += 1;
-        if let Some(fragment) = fragments_by_node.get(&node.id()) {
+        if let Some(fragment) = fragments.clone_fragment(node.id()) {
             let current_block = SceneBlock::new(
                 node.id().0,
                 current_layer.layer_id,
@@ -314,7 +314,7 @@ fn collect_unchanged_scene_items(
                 world_transform.map_rect(local_bounds),
                 Transform2D::identity(),
                 None,
-                fragment.clone(),
+                fragment,
             );
             seen_blocks.insert(current_block.node_id);
             if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
@@ -322,14 +322,14 @@ fn collect_unchanged_scene_items(
             }
             *next_order += 1;
         }
-        match (&node.kind, &measured.kind) {
-            (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
+        match &node.kind {
+            NodeKind::Container(child) => {
                 collect_unchanged_scene_items(
                     child,
-                    measured_child,
-                    fragments_by_node,
+                    layout,
+                    fragments,
                     current_layer.layer_id,
-                    measured.frame.origin,
+                    slot.frame.origin,
                     world_transform,
                     next_order,
                     previous_layers_by_id,
@@ -340,14 +340,14 @@ fn collect_unchanged_scene_items(
                     reorders,
                 );
             }
-            (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
-                for (child, measured_child) in children.iter().zip(measured_children.iter()) {
+            NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
+                for child in children {
                     collect_unchanged_scene_items(
                         child,
-                        measured_child,
-                        fragments_by_node,
+                        layout,
+                        fragments,
                         current_layer.layer_id,
-                        measured.frame.origin,
+                        slot.frame.origin,
                         world_transform,
                         next_order,
                         previous_layers_by_id,
@@ -364,10 +364,10 @@ fn collect_unchanged_scene_items(
         return;
     }
 
-    if let Some(fragment) = fragments_by_node.get(&node.id()) {
+    if let Some(fragment) = fragments.clone_fragment(node.id()) {
         let block_transform = Transform2D::translation(
-            measured.frame.origin.x - current_layer_origin.x,
-            measured.frame.origin.y - current_layer_origin.y,
+            slot.frame.origin.x - current_layer_origin.x,
+            slot.frame.origin.y - current_layer_origin.y,
         );
         let world_transform = current_layer_world_transform.then(block_transform);
         let current_block = SceneBlock::new(
@@ -377,7 +377,7 @@ fn collect_unchanged_scene_items(
             world_transform.map_rect(local_bounds),
             block_transform,
             None,
-            fragment.clone(),
+            fragment,
         );
         seen_blocks.insert(current_block.node_id);
         if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
@@ -385,12 +385,12 @@ fn collect_unchanged_scene_items(
         }
         *next_order += 1;
     }
-    match (&node.kind, &measured.kind) {
-        (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
+    match &node.kind {
+        NodeKind::Container(child) => {
             collect_unchanged_scene_items(
                 child,
-                measured_child,
-                fragments_by_node,
+                layout,
+                fragments,
                 current_layer_id,
                 current_layer_origin,
                 current_layer_world_transform,
@@ -403,12 +403,12 @@ fn collect_unchanged_scene_items(
                 reorders,
             );
         }
-        (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
-            for (child, measured_child) in children.iter().zip(measured_children.iter()) {
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
+            for child in children {
                 collect_unchanged_scene_items(
                     child,
-                    measured_child,
-                    fragments_by_node,
+                    layout,
+                    fragments,
                     current_layer_id,
                     current_layer_origin,
                     current_layer_world_transform,

@@ -40,14 +40,37 @@ fn fixed_size_modifier_overrides_individual_size_resolution() {
 }
 
 #[test]
+fn content_alignment_modifier_resolves_into_style() {
+    let node = r#box(vec![spacer(10.0, 10.0)])
+        .fixed_size(120.0, 80.0)
+        .content_alignment(Alignment::BOTTOM_END);
+
+    assert_eq!(node.resolved_style().content_alignment, Alignment::BOTTOM_END);
+}
+
+#[test]
+fn stack_layout_modifiers_resolve_into_style() {
+    let node = row(vec![spacer(10.0, 10.0), spacer(10.0, 10.0)])
+        .arrangement(Arrangement::SpaceBetween)
+        .cross_axis_alignment(CrossAxisAlignment::Center);
+
+    assert_eq!(node.resolved_style().arrangement, Arrangement::SpaceBetween);
+    assert_eq!(
+        node.resolved_style().cross_axis_alignment,
+        CrossAxisAlignment::Center
+    );
+}
+
+#[test]
 fn font_size_modifier_drives_text_layout_metrics() {
     let scene = compose_scene(
         &text("Hello").modifier(Modifier::FontSize(24.0)),
         Size::new(320.0, 240.0),
         &FallbackTextSystem,
     );
+    let commands: Vec<_> = scene.iter_commands().collect();
 
-    match &scene.commands[0] {
+    match commands[0] {
         DrawCommand::Text { layout, .. } => {
             assert_eq!(layout.paragraph.font_size, 24.0);
         }

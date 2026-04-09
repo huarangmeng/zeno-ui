@@ -22,6 +22,69 @@ impl TransformOrigin {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HorizontalAlignment {
+    Start,
+    Center,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalAlignment {
+    Top,
+    Center,
+    Bottom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrossAxisAlignment {
+    Start,
+    Center,
+    End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Arrangement {
+    Start,
+    Center,
+    End,
+    SpaceBetween,
+    SpaceAround,
+    SpaceEvenly,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Alignment {
+    pub horizontal: HorizontalAlignment,
+    pub vertical: VerticalAlignment,
+}
+
+impl Alignment {
+    pub const TOP_START: Self = Self::new(HorizontalAlignment::Start, VerticalAlignment::Top);
+    pub const TOP_CENTER: Self = Self::new(HorizontalAlignment::Center, VerticalAlignment::Top);
+    pub const TOP_END: Self = Self::new(HorizontalAlignment::End, VerticalAlignment::Top);
+    pub const CENTER_START: Self = Self::new(HorizontalAlignment::Start, VerticalAlignment::Center);
+    pub const CENTER: Self = Self::new(HorizontalAlignment::Center, VerticalAlignment::Center);
+    pub const CENTER_END: Self = Self::new(HorizontalAlignment::End, VerticalAlignment::Center);
+    pub const BOTTOM_START: Self = Self::new(HorizontalAlignment::Start, VerticalAlignment::Bottom);
+    pub const BOTTOM_CENTER: Self = Self::new(HorizontalAlignment::Center, VerticalAlignment::Bottom);
+    pub const BOTTOM_END: Self = Self::new(HorizontalAlignment::End, VerticalAlignment::Bottom);
+
+    #[must_use]
+    pub const fn new(horizontal: HorizontalAlignment, vertical: VerticalAlignment) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+}
+
+impl Default for Alignment {
+    fn default() -> Self {
+        Self::TOP_START
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlendMode {
     Normal,
     Multiply,
@@ -65,6 +128,9 @@ pub enum Modifier {
     Scale { x: f32, y: f32 },
     RotateDegrees(f32),
     TransformOrigin(TransformOrigin),
+    ContentAlignment(Alignment),
+    Arrangement(Arrangement),
+    CrossAxisAlignment(CrossAxisAlignment),
     Opacity(f32),
     Layer,
     BlendMode(BlendMode),
