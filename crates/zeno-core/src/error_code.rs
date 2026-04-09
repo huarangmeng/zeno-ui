@@ -20,6 +20,9 @@ pub enum ZenoErrorCode {
     BackendImpellerTextPipelineFunctionMissing,
     BackendImpellerTextPipelineAttachmentMissing,
     BackendImpellerTextPipelineStateCreateFailed,
+    BackendImpellerCompositePipelineFunctionMissing,
+    BackendImpellerCompositePipelineAttachmentMissing,
+    BackendImpellerCompositePipelineStateCreateFailed,
     SessionCreateRenderSessionFailed,
     SessionInvalidWindowWidth,
     SessionInvalidWindowHeight,
@@ -73,6 +76,15 @@ impl ZenoErrorCode {
             }
             Self::BackendImpellerTextPipelineStateCreateFailed => {
                 "backend.impeller_text_pipeline_state_create_failed"
+            }
+            Self::BackendImpellerCompositePipelineFunctionMissing => {
+                "backend.impeller_composite_pipeline_function_missing"
+            }
+            Self::BackendImpellerCompositePipelineAttachmentMissing => {
+                "backend.impeller_composite_pipeline_attachment_missing"
+            }
+            Self::BackendImpellerCompositePipelineStateCreateFailed => {
+                "backend.impeller_composite_pipeline_state_create_failed"
             }
             Self::SessionCreateRenderSessionFailed => "session.create_render_session_failed",
             Self::SessionInvalidWindowWidth => "session.invalid_window_width",

@@ -64,14 +64,25 @@ pub struct TextMetrics {
     pub width: f32,
     pub height: f32,
     pub line_count: usize,
+    pub line_height: f32,
     pub ascent: f32,
     pub descent: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ShapedGlyph {
+    pub glyph: char,
+    pub glyph_id: u16,
+    pub x: f32,
+    pub baseline_y: f32,
+    pub advance: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextLayout {
     pub paragraph: TextParagraph,
     pub metrics: TextMetrics,
+    pub glyphs: Vec<ShapedGlyph>,
 }
 
 impl TextLayout {
@@ -97,6 +108,7 @@ impl TextParagraphKey {
 pub struct TextCapabilities {
     pub shaping: bool,
     pub line_breaking: bool,
+    pub paragraph_cache: bool,
     pub glyph_cache: bool,
 }
 
@@ -106,6 +118,7 @@ impl TextCapabilities {
         Self {
             shaping: true,
             line_breaking: true,
+            paragraph_cache: false,
             glyph_cache: false,
         }
     }

@@ -68,4 +68,79 @@ pub const SHADERS: &str = r#"
         float alpha = mask.sample(text_sampler, in.uv).r;
         return float4(in.color.rgb, in.color.a * alpha);
     }
+
+    struct CompositeVertex {
+        float2 clip_position;
+        float2 uv;
+        float4 color;
+    };
+
+    struct CompositeOut {
+        float4 position [[position]];
+        float2 uv;
+        float4 color;
+    };
+
+    struct CompositeParams {
+        float2 inv_texture_size;
+        float blur_sigma;
+        float shadow_blur;
+        float2 shadow_offset;
+        float4 shadow_color;
+        uint flags;
+    };
+
+    vertex CompositeOut composite_vertex(uint vid [[vertex_id]], const device CompositeVertex* vertices [[buffer(0)]]) {
+        CompositeVertex v = vertices[vid];
+        CompositeOut out;
+        out.position = float4(v.clip_position, 0.0, 1.0);
+        out.uv = v.uv;
+        out.color = v.color;
+        return out;
+    }
+
+    constexpr sampler composite_sampler(address::clamp_to_edge, filter::linear);
+
+    float gaussian_weight(float distance, float sigma) {
+        if (sigma <= 0.0) {
+            return distance == 0.0 ? 1.0 : 0.0;
+        }
+        return exp(-0.5 * (distance * distance) / (sigma * sigma));
+    }
+
+    float4 sample_blur(texture2d<float> content, float2 uv, float sigma, float2 inv_texture_size) {
+        if (sigma <= 0.0) {
+            return content.sample(composite_sampler, uv);
+        }
+        constexpr int radius = 4;
+        float4 accum = float4(0.0);
+        float total = 0.0;
+        for (int y = -radius; y <= radius; ++y) {
+            for (int x = -radius; x <= radius; ++x) {
+                float2 offset = float2(float(x), float(y)) * inv_texture_size * max(sigma, 1.0);
+                float weight = gaussian_weight(length(float2(x, y)), sigma * 0.5 + 1.0);
+                accum += content.sample(composite_sampler, uv + offset) * weight;
+                total += weight;
+            }
+        }
+        return accum / max(total, 0.0001);
+    }
+
+    fragment float4 composite_fragment(
+        CompositeOut in [[stage_in]],
+        texture2d<float> content [[texture(0)]],
+        constant CompositeParams& params [[buffer(0)]]
+    ) {
+        float4 base = (params.flags & 1) != 0
+            ? sample_blur(content, in.uv, params.blur_sigma, params.inv_texture_size)
+            : content.sample(composite_sampler, in.uv);
+        if ((params.flags & 2) != 0) {
+            float shadow_sigma = max(params.shadow_blur, params.blur_sigma);
+            float2 shadow_uv = in.uv - params.shadow_offset * params.inv_texture_size;
+            float shadow_alpha = sample_blur(content, shadow_uv, shadow_sigma, params.inv_texture_size).a;
+            float4 shadow = float4(params.shadow_color.rgb, params.shadow_color.a * shadow_alpha);
+            base = shadow * (1.0 - base.a) + base;
+        }
+        return base * in.color;
+    }
 "#;

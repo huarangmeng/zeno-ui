@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 zeno-core = { path = "../zeno-core" }
 zeno-graphics = { path = "../zeno-graphics" }
+zeno-text = { path = "../zeno-text" }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 font-kit = "0.14"

@@ -1,5 +1,18 @@
 use font_kit::source::SystemSource;
 use fontdue::Font;
+use zeno_text::TextLayout;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GlyphCacheKey {
+    pub glyph_id: u16,
+    pub font_size_bits: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedGlyph {
+    pub metrics: fontdue::Metrics,
+    pub bitmap: Vec<u8>,
+}
 
 pub fn load_system_font() -> Option<Font> {
     let families = [
@@ -22,32 +35,41 @@ pub fn load_system_font() -> Option<Font> {
     None
 }
 
-pub fn rasterize_text(font: &Font, text: &str, font_size: f32) -> Option<(Vec<u8>, u32, u32, f32)> {
-    let size = font_size.max(12.0);
-    let line_metrics = font.horizontal_line_metrics(size)?;
-    let mut glyphs = Vec::new();
-    let mut total_width = 0.0f32;
-    let mut max_height = 0usize;
-
-    for ch in text.chars() {
-        let (metrics, bitmap) = font.rasterize(ch, size);
-        total_width += metrics.advance_width.max(1.0);
-        max_height = max_height.max(metrics.height.max(line_metrics.new_line_size.ceil() as usize));
-        glyphs.push((metrics, bitmap));
+pub fn glyph_cache_key(glyph_id: u16, font_size: f32) -> GlyphCacheKey {
+    GlyphCacheKey {
+        glyph_id,
+        font_size_bits: font_size.max(12.0).to_bits(),
     }
+}
 
-    let width = total_width.ceil().max(1.0) as usize;
-    let height = max_height.max(1);
+pub fn rasterize_glyph(font: &Font, glyph_id: u16, glyph: char, font_size: f32) -> CachedGlyph {
+    let (metrics, bitmap) = if glyph_id == 0 {
+        font.rasterize(glyph, font_size.max(12.0))
+    } else {
+        font.rasterize_indexed(glyph_id, font_size.max(12.0))
+    };
+    CachedGlyph { metrics, bitmap }
+}
+
+pub fn rasterize_layout(
+    layout: &TextLayout,
+    cached_glyph: impl FnMut(u16, char, f32) -> Option<CachedGlyph>,
+) -> Option<(Vec<u8>, u32, u32)> {
+    let width = layout.metrics.width.ceil().max(1.0) as usize;
+    let height = layout.metrics.height.ceil().max(1.0) as usize;
     let mut alpha = vec![0u8; width * height];
-    let baseline = line_metrics.ascent.ceil() as isize;
-    let mut pen_x = 0.0f32;
-
-    for (metrics, bitmap) in glyphs {
-        let glyph_x = (pen_x + metrics.xmin as f32).max(0.0) as usize;
-        let glyph_y = (baseline - metrics.height as isize - metrics.ymin as isize).max(0) as usize;
-        for row in 0..metrics.height {
-            for col in 0..metrics.width {
-                let src = bitmap[row * metrics.width + col];
+    let mut cached_glyph = cached_glyph;
+    for glyph in &layout.glyphs {
+        let rasterized = cached_glyph(glyph.glyph_id, glyph.glyph, layout.paragraph.font_size)?;
+        let glyph_x = (glyph.x + rasterized.metrics.xmin as f32).max(0.0) as usize;
+        let baseline = layout.metrics.ascent + glyph.baseline_y;
+        let glyph_y = (baseline
+            - rasterized.metrics.height as f32
+            - rasterized.metrics.ymin as f32)
+            .max(0.0) as usize;
+        for row in 0..rasterized.metrics.height {
+            for col in 0..rasterized.metrics.width {
+                let src = rasterized.bitmap[row * rasterized.metrics.width + col];
                 if src == 0 {
                     continue;
                 }
@@ -58,8 +80,6 @@ pub fn rasterize_text(font: &Font, text: &str, font_size: f32) -> Option<(Vec<u8
                 }
             }
         }
-        pen_x += metrics.advance_width;
     }
-
-    Some((alpha, width as u32, height as u32, baseline as f32))
+    Some((alpha, width as u32, height as u32))
 }

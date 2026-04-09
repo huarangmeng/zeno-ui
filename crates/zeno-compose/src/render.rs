@@ -1,16 +1,17 @@
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 
 use zeno_core::{Point, Rect, Size, Transform2D};
 use zeno_graphics::{
-    Brush, DrawCommand, Scene, SceneBlock, SceneClip, ScenePatch, SceneSubmit, SceneTransform,
-    Shape,
+    Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneEffect,
+    ScenePatch, SceneSubmit, SceneTransform, Shape,
 };
 use zeno_text::TextSystem;
 
 use crate::{
     invalidation::DirtyReason,
     layout::{measure_node, MeasuredKind, MeasuredNode},
-    modifier::{ClipMode, TransformOrigin},
+    modifier::{BlendMode, ClipMode, TransformOrigin},
     tree::RetainedComposeTree,
     Node, NodeId, NodeKind,
 };
@@ -215,9 +216,97 @@ pub fn compose_scene(root: &Node, viewport: Size, text_system: &dyn TextSystem) 
     compose_scene_internal(root, viewport, text_system)
 }
 
+#[must_use]
+pub fn dump_scene(scene: &Scene) -> String {
+    let mut output = String::new();
+    let _ = writeln!(
+        output,
+        "scene size=({:.1}, {:.1}) clear={:?} layers={} blocks={}",
+        scene.size.width,
+        scene.size.height,
+        scene.clear_color,
+        scene.layers.len(),
+        scene.blocks.len()
+    );
+    for layer in &scene.layers {
+        let _ = writeln!(
+            output,
+            "layer id={} node={} parent={:?} order={} opacity={:.2} blend={:?} effects={:?} offscreen={} bounds={:?}",
+            layer.layer_id,
+            layer.node_id,
+            layer.parent_layer_id,
+            layer.order,
+            layer.opacity,
+            layer.blend_mode,
+            layer.effects,
+            layer.offscreen,
+            layer.bounds
+        );
+    }
+    for block in &scene.blocks {
+        let _ = writeln!(
+            output,
+            "block node={} layer={} order={} bounds={:?} clip={:?} commands={} resources={}",
+            block.node_id,
+            block.layer_id,
+            block.order,
+            block.bounds,
+            block.clip,
+            block.commands.len(),
+            block.resource_keys.len()
+        );
+    }
+    output
+}
+
+#[must_use]
+pub fn dump_layout(root: &Node, viewport: Size, text_system: &dyn TextSystem) -> String {
+    let measured = measure_node(root, Point::new(0.0, 0.0), viewport, text_system);
+    let mut output = String::new();
+    dump_layout_node(root, &measured, 0, &mut output);
+    output
+}
+
 fn compose_scene_internal(root: &Node, viewport: Size, text_system: &dyn TextSystem) -> Scene {
     let measured = measure_node(root, Point::new(0.0, 0.0), viewport, text_system);
     structured_scene_from_measured(root, viewport, &measured).2
+}
+
+fn dump_layout_node(node: &Node, measured: &MeasuredNode, depth: usize, output: &mut String) {
+    let indent = "  ".repeat(depth);
+    let kind = match (&node.kind, &measured.kind) {
+        (NodeKind::Text(_), MeasuredKind::Text(layout)) => format!(
+            "text lines={} ascent={:.1} descent={:.1}",
+            layout.metrics.line_count,
+            layout.metrics.ascent,
+            layout.metrics.descent
+        ),
+        (NodeKind::Container(_), MeasuredKind::Single(_)) => "container".to_string(),
+        (NodeKind::Stack { axis, .. }, MeasuredKind::Multiple(children)) => {
+            format!("stack axis={:?} children={}", axis, children.len())
+        }
+        (NodeKind::Spacer(_), MeasuredKind::Spacer) => "spacer".to_string(),
+        _ => "unknown".to_string(),
+    };
+    let _ = writeln!(
+        output,
+        "{}node id={} frame={:?} {}",
+        indent,
+        node.id().0,
+        measured.frame,
+        kind
+    );
+    match (&node.kind, &measured.kind) {
+        (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
+            dump_layout_node(child, measured_child, depth + 1, output);
+        }
+        (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
+            for (child, measured_child) in children.iter().zip(measured_children.iter()) {
+                dump_layout_node(child, measured_child, depth + 1, output);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn structured_scene_from_measured(
@@ -376,8 +465,59 @@ fn patch_scene_for_nodes(
     _update_ids: &HashSet<NodeId>,
 ) -> ScenePatch {
     let previous_scene = retained.scene().clone();
-    let scene = build_scene(root, retained.measured(), retained.viewport(), retained.fragments());
-    let patch = diff_scenes(&previous_scene, &scene);
+    let previous_layers_by_id: HashMap<u64, &zeno_graphics::SceneLayer> = previous_scene
+        .layers
+        .iter()
+        .map(|layer| (layer.layer_id, layer))
+        .collect();
+    let previous_blocks_by_id: HashMap<u64, &SceneBlock> = previous_scene
+        .blocks
+        .iter()
+        .map(|block| (block.node_id, block))
+        .collect();
+    let mut layer_upserts = Vec::new();
+    let mut upserts = Vec::new();
+    let mut seen_layers = HashSet::from([Scene::ROOT_LAYER_ID]);
+    let mut seen_blocks = HashSet::new();
+    let mut next_order = 1u32;
+    collect_scene_patch_items(
+        root,
+        retained.measured(),
+        retained.fragments(),
+        Scene::ROOT_LAYER_ID,
+        Point::new(0.0, 0.0),
+        Transform2D::identity(),
+        &mut next_order,
+        &previous_layers_by_id,
+        &previous_blocks_by_id,
+        &mut seen_layers,
+        &mut seen_blocks,
+        &mut layer_upserts,
+        &mut upserts,
+    );
+    let layer_removes = previous_scene
+        .layers
+        .iter()
+        .filter(|layer| layer.layer_id != Scene::ROOT_LAYER_ID)
+        .filter(|layer| !seen_layers.contains(&layer.layer_id))
+        .map(|layer| layer.layer_id)
+        .collect();
+    let removes = previous_scene
+        .blocks
+        .iter()
+        .filter(|block| !seen_blocks.contains(&block.node_id))
+        .map(|block| block.node_id)
+        .collect();
+    let patch = ScenePatch {
+        size: previous_scene.size,
+        base_layer_count: previous_scene.layers.len(),
+        base_block_count: previous_scene.blocks.len(),
+        layer_upserts,
+        layer_removes,
+        upserts,
+        removes,
+    };
+    let scene = previous_scene.apply_patch(&patch);
     retained.replace_scene(scene);
     patch
 }
@@ -454,54 +594,6 @@ fn build_scene(
 ) -> Scene {
     let (layers, blocks) = build_layers_and_blocks(root, measured, fragments_by_node, viewport);
     Scene::from_layers_and_blocks(viewport, None, layers, blocks)
-}
-
-fn diff_scenes(previous: &Scene, current: &Scene) -> ScenePatch {
-    let previous_layers_by_id: HashMap<u64, &zeno_graphics::SceneLayer> = previous
-        .layers
-        .iter()
-        .map(|layer| (layer.layer_id, layer))
-        .collect();
-    let previous_blocks_by_id: HashMap<u64, &SceneBlock> = previous
-        .blocks
-        .iter()
-        .map(|block| (block.node_id, block))
-        .collect();
-    let layer_upserts = current
-        .layers
-        .iter()
-        .filter(|layer| layer.layer_id != Scene::ROOT_LAYER_ID)
-        .filter(|layer| previous_layers_by_id.get(&layer.layer_id).copied() != Some(*layer))
-        .cloned()
-        .collect();
-    let layer_removes = previous
-        .layers
-        .iter()
-        .filter(|layer| layer.layer_id != Scene::ROOT_LAYER_ID)
-        .filter(|layer| !current.layers.iter().any(|current_layer| current_layer.layer_id == layer.layer_id))
-        .map(|layer| layer.layer_id)
-        .collect();
-    let upserts = current
-        .blocks
-        .iter()
-        .filter(|block| previous_blocks_by_id.get(&block.node_id).copied() != Some(*block))
-        .cloned()
-        .collect();
-    let removes = previous
-        .blocks
-        .iter()
-        .filter(|block| !current.blocks.iter().any(|current_block| current_block.node_id == block.node_id))
-        .map(|block| block.node_id)
-        .collect();
-    ScenePatch {
-        size: current.size,
-        base_layer_count: previous.layers.len(),
-        base_block_count: previous.blocks.len(),
-        layer_upserts,
-        layer_removes,
-        upserts,
-        removes,
-    }
 }
 
 fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &Node) {
@@ -630,6 +722,9 @@ fn style_change_reason(
         || previous_style.transform_origin != current_style.transform_origin
         || previous_style.opacity != current_style.opacity
         || previous_style.layer != current_style.layer
+        || previous_style.blend_mode != current_style.blend_mode
+        || previous_style.blur != current_style.blur
+        || previous_style.drop_shadow != current_style.drop_shadow
         || (text_node && previous_style.foreground != current_style.foreground)
     {
         return Some(DirtyReason::Paint);
@@ -664,6 +759,191 @@ fn build_layers_and_blocks(
     (layers, blocks)
 }
 
+fn collect_scene_patch_items(
+    node: &Node,
+    measured: &MeasuredNode,
+    fragments_by_node: &HashMap<NodeId, Vec<DrawCommand>>,
+    current_layer_id: u64,
+    current_layer_origin: Point,
+    current_layer_world_transform: Transform2D,
+    next_order: &mut u32,
+    previous_layers_by_id: &HashMap<u64, &zeno_graphics::SceneLayer>,
+    previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
+    seen_layers: &mut HashSet<u64>,
+    seen_blocks: &mut HashSet<u64>,
+    layer_upserts: &mut Vec<zeno_graphics::SceneLayer>,
+    upserts: &mut Vec<SceneBlock>,
+) {
+    let style = node.resolved_style();
+    let local_bounds = Rect::new(0.0, 0.0, measured.frame.size.width, measured.frame.size.height);
+    if node_creates_layer(&style) {
+        let layer_transform = layer_local_transform(
+            measured.frame.origin,
+            current_layer_origin,
+            measured.frame.size,
+            style.transform,
+            style.transform_origin,
+        );
+        let world_transform = current_layer_world_transform.then(layer_transform);
+        let effect_bounds = scene_effect_bounds(local_bounds, &style);
+        let layer_id = node.id().0;
+        let order = *next_order;
+        *next_order += 1;
+        let current_layer = zeno_graphics::SceneLayer::new(
+            layer_id,
+            node.id().0,
+            Some(current_layer_id),
+            order,
+            local_bounds,
+            world_transform.map_rect(effect_bounds),
+            layer_transform,
+            scene_clip(measured.frame.size, style.clip),
+            style.opacity,
+            scene_blend_mode(style.blend_mode),
+            scene_effects(&style),
+            style.layer || style.opacity < 1.0,
+        );
+        seen_layers.insert(layer_id);
+        if previous_layers_by_id
+            .get(&layer_id)
+            .map_or(true, |previous| **previous != current_layer)
+        {
+            layer_upserts.push(current_layer);
+        }
+        if let Some(fragment) = fragments_by_node.get(&node.id()) {
+            let current_block = SceneBlock::new(
+                node.id().0,
+                layer_id,
+                *next_order,
+                world_transform.map_rect(local_bounds),
+                Transform2D::identity(),
+                None,
+                fragment.clone(),
+            );
+            seen_blocks.insert(current_block.node_id);
+            if previous_blocks_by_id
+                .get(&current_block.node_id)
+                .map_or(true, |previous| **previous != current_block)
+            {
+                upserts.push(current_block);
+            }
+            *next_order += 1;
+        }
+        collect_scene_patch_children(
+            node,
+            measured,
+            fragments_by_node,
+            layer_id,
+            measured.frame.origin,
+            world_transform,
+            next_order,
+            previous_layers_by_id,
+            previous_blocks_by_id,
+            seen_layers,
+            seen_blocks,
+            layer_upserts,
+            upserts,
+        );
+        return;
+    }
+
+    if let Some(fragment) = fragments_by_node.get(&node.id()) {
+        let block_transform = Transform2D::translation(
+            measured.frame.origin.x - current_layer_origin.x,
+            measured.frame.origin.y - current_layer_origin.y,
+        );
+        let world_transform = current_layer_world_transform.then(block_transform);
+        let current_block = SceneBlock::new(
+            node.id().0,
+            current_layer_id,
+            *next_order,
+            world_transform.map_rect(local_bounds),
+            block_transform,
+            None,
+            fragment.clone(),
+        );
+        seen_blocks.insert(current_block.node_id);
+        if previous_blocks_by_id
+            .get(&current_block.node_id)
+            .map_or(true, |previous| **previous != current_block)
+        {
+            upserts.push(current_block);
+        }
+        *next_order += 1;
+    }
+    collect_scene_patch_children(
+        node,
+        measured,
+        fragments_by_node,
+        current_layer_id,
+        current_layer_origin,
+        current_layer_world_transform,
+        next_order,
+        previous_layers_by_id,
+        previous_blocks_by_id,
+        seen_layers,
+        seen_blocks,
+        layer_upserts,
+        upserts,
+    );
+}
+
+fn collect_scene_patch_children(
+    node: &Node,
+    measured: &MeasuredNode,
+    fragments_by_node: &HashMap<NodeId, Vec<DrawCommand>>,
+    current_layer_id: u64,
+    current_layer_origin: Point,
+    current_layer_world_transform: Transform2D,
+    next_order: &mut u32,
+    previous_layers_by_id: &HashMap<u64, &zeno_graphics::SceneLayer>,
+    previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
+    seen_layers: &mut HashSet<u64>,
+    seen_blocks: &mut HashSet<u64>,
+    layer_upserts: &mut Vec<zeno_graphics::SceneLayer>,
+    upserts: &mut Vec<SceneBlock>,
+) {
+    match (&node.kind, &measured.kind) {
+        (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
+            collect_scene_patch_items(
+                child,
+                measured_child,
+                fragments_by_node,
+                current_layer_id,
+                current_layer_origin,
+                current_layer_world_transform,
+                next_order,
+                previous_layers_by_id,
+                previous_blocks_by_id,
+                seen_layers,
+                seen_blocks,
+                layer_upserts,
+                upserts,
+            );
+        }
+        (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
+            for (child, measured_child) in children.iter().zip(measured_children.iter()) {
+                collect_scene_patch_items(
+                    child,
+                    measured_child,
+                    fragments_by_node,
+                    current_layer_id,
+                    current_layer_origin,
+                    current_layer_world_transform,
+                    next_order,
+                    previous_layers_by_id,
+                    previous_blocks_by_id,
+                    seen_layers,
+                    seen_blocks,
+                    layer_upserts,
+                    upserts,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
 fn collect_scene_items(
     node: &Node,
     measured: &MeasuredNode,
@@ -686,6 +966,7 @@ fn collect_scene_items(
             style.transform_origin,
         );
         let world_transform = current_layer_world_transform.then(layer_transform);
+        let effect_bounds = scene_effect_bounds(local_bounds, &style);
         let layer_id = node.id().0;
         let order = *next_order;
         *next_order += 1;
@@ -695,11 +976,17 @@ fn collect_scene_items(
             Some(current_layer_id),
             order,
             local_bounds,
-            world_transform.map_rect(local_bounds),
+            world_transform.map_rect(effect_bounds),
             layer_transform,
             scene_clip(measured.frame.size, style.clip),
             style.opacity,
-            style.layer || style.opacity < 1.0,
+            scene_blend_mode(style.blend_mode),
+            scene_effects(&style),
+            style.layer
+                || style.opacity < 1.0
+                || style.blend_mode != BlendMode::Normal
+                || style.blur.is_some()
+                || style.drop_shadow.is_some(),
         ));
         if let Some(fragment) = fragments_by_node.get(&node.id()) {
             blocks.push(SceneBlock::new(
@@ -800,7 +1087,13 @@ fn collect_scene_children(
 }
 
 fn node_creates_layer(style: &crate::Style) -> bool {
-    style.layer || style.opacity < 1.0 || style.clip.is_some() || !style.transform.is_identity()
+    style.layer
+        || style.opacity < 1.0
+        || style.clip.is_some()
+        || !style.transform.is_identity()
+        || style.blend_mode != BlendMode::Normal
+        || style.blur.is_some()
+        || style.drop_shadow.is_some()
 }
 
 fn layer_local_transform(
@@ -829,6 +1122,59 @@ fn scene_clip(size: Size, clip: Option<ClipMode>) -> Option<SceneClip> {
         }),
         None => None,
     }
+}
+
+fn scene_blend_mode(mode: BlendMode) -> SceneBlendMode {
+    match mode {
+        BlendMode::Normal => SceneBlendMode::Normal,
+        BlendMode::Multiply => SceneBlendMode::Multiply,
+        BlendMode::Screen => SceneBlendMode::Screen,
+    }
+}
+
+fn scene_effects(style: &crate::Style) -> Vec<SceneEffect> {
+    let mut effects = Vec::new();
+    if let Some(sigma) = style.blur {
+        effects.push(SceneEffect::Blur { sigma });
+    }
+    if let Some(shadow) = style.drop_shadow {
+        effects.push(SceneEffect::DropShadow {
+            dx: shadow.dx,
+            dy: shadow.dy,
+            blur: shadow.blur,
+            color: shadow.color,
+        });
+    }
+    effects
+}
+
+fn scene_effect_bounds(local_bounds: Rect, style: &crate::Style) -> Rect {
+    let mut bounds = local_bounds;
+    if let Some(sigma) = style.blur {
+        bounds = expand_rect(bounds, sigma * 3.0);
+    }
+    if let Some(shadow) = style.drop_shadow {
+        let shadow_bounds = expand_rect(
+            Rect::new(
+                bounds.origin.x + shadow.dx,
+                bounds.origin.y + shadow.dy,
+                bounds.size.width,
+                bounds.size.height,
+            ),
+            shadow.blur * 3.0,
+        );
+        bounds = bounds.union(&shadow_bounds);
+    }
+    bounds
+}
+
+fn expand_rect(rect: Rect, amount: f32) -> Rect {
+    Rect::new(
+        rect.origin.x - amount,
+        rect.origin.y - amount,
+        rect.size.width + amount * 2.0,
+        rect.size.height + amount * 2.0,
+    )
 }
 
 fn relayout_node(

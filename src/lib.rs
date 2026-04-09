@@ -1,8 +1,9 @@
 mod ui_runtime;
 
 pub use zeno_compose::{
-    column, compose_scene, container, row, spacer, text, Axis, ComposeRenderer, ComposeStats,
-    EdgeInsets, Modifier, Modifiers, Node, NodeId, NodeKind, Style, TextNode, TransformOrigin,
+    column, compose_scene, container, dump_layout, dump_scene, row, spacer, text, Axis,
+    BlendMode, ComposeRenderer, ComposeStats, DropShadow, EdgeInsets, Modifier, Modifiers, Node,
+    NodeId, NodeKind, Style, TextNode, TransformOrigin,
 };
 pub use zeno_core::{
     AppConfig, Backend, BackendPreference, Color, DebugConfig, PlatformCapabilities, Platform,
@@ -16,8 +17,8 @@ pub use zeno_core::{
 };
 pub use zeno_graphics::{
     Brush, CanvasOp, DrawCommand, FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface,
-    RenderSession, Renderer, Scene, SceneBlock, SceneClip, SceneLayer, ScenePatch, SceneSubmit,
-    SceneTransform, Shape,
+    RenderSession, Renderer, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneEffect,
+    SceneLayer, ScenePatch, SceneSubmit, SceneTransform, Shape,
 };
 pub use zeno_runtime::{
     BackendAttempt, BackendResolver, FramePhases, FrameScheduler, ResolvedSession,
@@ -36,7 +37,9 @@ pub use zeno_shell::AndroidShell;
 #[cfg(feature = "mobile_ios")]
 pub use zeno_shell::IosShell;
 pub use zeno_text::{
-    FallbackTextSystem, FontDescriptor, TextLayout, TextMetrics, TextParagraph, TextSystem,
+    CachedTextSystem, FallbackTextShaper, FallbackTextSystem, FontDescriptor, ParagraphTextCache,
+    ShapedGlyph, TextCache, TextCacheStats, TextCapabilities, TextLayout, TextMetrics,
+    TextParagraph, TextParagraphKey, TextShaper, TextSystem,
 };
 pub use ui_runtime::{UiFrame, UiRuntime};
 

@@ -60,6 +60,8 @@ pub struct SceneLayer {
     pub transform: SceneTransform,
     pub clip: Option<SceneClip>,
     pub opacity: f32,
+    pub blend_mode: SceneBlendMode,
+    pub effects: Vec<SceneEffect>,
     pub offscreen: bool,
 }
 
@@ -94,10 +96,23 @@ pub enum SceneSubmit {
 
 pub type SceneTransform = Transform2D;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneBlendMode {
+    Normal,
+    Multiply,
+    Screen,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SceneClip {
     Rect(Rect),
     RoundedRect { rect: Rect, radius: f32 },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SceneEffect {
+    Blur { sigma: f32 },
+    DropShadow { dx: f32, dy: f32, blur: f32, color: Color },
 }
 
 impl Scene {
@@ -225,6 +240,8 @@ impl SceneLayer {
             transform: Transform2D::identity(),
             clip: None,
             opacity: 1.0,
+            blend_mode: SceneBlendMode::Normal,
+            effects: Vec::new(),
             offscreen: false,
         }
     }
@@ -240,6 +257,8 @@ impl SceneLayer {
         transform: SceneTransform,
         clip: Option<SceneClip>,
         opacity: f32,
+        blend_mode: SceneBlendMode,
+        effects: Vec<SceneEffect>,
         offscreen: bool,
     ) -> Self {
         Self {
@@ -252,6 +271,8 @@ impl SceneLayer {
             transform,
             clip,
             opacity,
+            blend_mode,
+            effects,
             offscreen,
         }
     }
@@ -298,6 +319,25 @@ impl ScenePatch {
             .iter()
             .map(|block| block.bounds)
             .reduce(|acc, bounds| acc.union(&bounds));
+        let affected_layer_bounds = previous.and_then(|scene| {
+            let mut layer_ids: Vec<u64> = self
+                .upserts
+                .iter()
+                .map(|block| block.layer_id)
+                .filter(|layer_id| *layer_id != Scene::ROOT_LAYER_ID)
+                .collect();
+            layer_ids.extend(
+                scene
+                    .blocks
+                    .iter()
+                    .filter(|block| self.removes.contains(&block.node_id))
+                    .map(|block| block.layer_id)
+                    .filter(|layer_id| *layer_id != Scene::ROOT_LAYER_ID),
+            );
+            layer_ids.sort_unstable();
+            layer_ids.dedup();
+            scene.dirty_bounds_for_layers(&layer_ids)
+        });
         let previous_upsert_bounds = previous.and_then(|scene| {
             let node_ids: Vec<u64> = self.upserts.iter().map(|block| block.node_id).collect();
             scene.dirty_bounds_for_nodes(&node_ids)
@@ -315,6 +355,7 @@ impl ScenePatch {
         let layer_remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_layers(&self.layer_removes));
         [
             upsert_bounds,
+            affected_layer_bounds,
             previous_upsert_bounds,
             remove_bounds,
             layer_upsert_bounds,
@@ -351,7 +392,8 @@ pub enum CanvasOp {
 #[cfg(test)]
 mod tests {
     use super::{
-        Brush, DrawCommand, Scene, SceneBlock, SceneLayer, ScenePatch, SceneSubmit, Shape,
+        Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneEffect, SceneLayer,
+        ScenePatch, SceneSubmit, Shape,
     };
     use zeno_core::{Color, Rect, Size, Transform2D};
 
@@ -510,6 +552,8 @@ mod tests {
                     Transform2D::translation(20.0, 20.0),
                     None,
                     1.0,
+                    SceneBlendMode::Normal,
+                    Vec::new(),
                     false,
                 ),
             ],
@@ -529,6 +573,8 @@ mod tests {
                 Transform2D::translation(20.0, 20.0),
                 None,
                 0.5,
+                SceneBlendMode::Normal,
+                Vec::new(),
                 true,
             )],
             layer_removes: Vec::new(),
@@ -539,6 +585,108 @@ mod tests {
         assert_eq!(
             patch.dirty_bounds(Some(&previous)),
             Some(Rect::new(20.0, 20.0, 40.0, 40.0))
+        );
+    }
+
+    #[test]
+    fn dirty_bounds_include_removed_layers() {
+        let previous = Scene::from_layers_and_blocks(
+            Size::new(200.0, 200.0),
+            None,
+            vec![
+                SceneLayer::root(Size::new(200.0, 200.0)),
+                SceneLayer::new(
+                    10,
+                    10,
+                    Some(Scene::ROOT_LAYER_ID),
+                    1,
+                    Rect::new(0.0, 0.0, 40.0, 40.0),
+                    Rect::new(20.0, 20.0, 40.0, 40.0),
+                    Transform2D::translation(20.0, 20.0),
+                    None,
+                    1.0,
+                    SceneBlendMode::Normal,
+                    Vec::new(),
+                    false,
+                ),
+            ],
+            Vec::new(),
+        );
+        let patch = ScenePatch {
+            size: previous.size,
+            base_layer_count: previous.layers.len(),
+            base_block_count: previous.blocks.len(),
+            layer_upserts: Vec::new(),
+            layer_removes: vec![10],
+            upserts: Vec::new(),
+            removes: Vec::new(),
+        };
+
+        assert_eq!(
+            patch.dirty_bounds(Some(&previous)),
+            Some(Rect::new(20.0, 20.0, 40.0, 40.0))
+        );
+    }
+
+    #[test]
+    fn dirty_bounds_expand_block_updates_to_effect_layer_bounds() {
+        let previous = Scene::from_layers_and_blocks(
+            Size::new(200.0, 200.0),
+            None,
+            vec![
+                SceneLayer::root(Size::new(200.0, 200.0)),
+                SceneLayer::new(
+                    10,
+                    10,
+                    Some(Scene::ROOT_LAYER_ID),
+                    1,
+                    Rect::new(0.0, 0.0, 40.0, 40.0),
+                    Rect::new(-12.0, -12.0, 64.0, 64.0),
+                    Transform2D::identity(),
+                    None,
+                    1.0,
+                    SceneBlendMode::Normal,
+                    vec![SceneEffect::Blur { sigma: 4.0 }],
+                    true,
+                ),
+            ],
+            vec![SceneBlock::new(
+                10,
+                10,
+                2,
+                Rect::new(0.0, 0.0, 40.0, 40.0),
+                Transform2D::identity(),
+                None,
+                vec![DrawCommand::Fill {
+                    shape: Shape::Rect(Rect::new(0.0, 0.0, 40.0, 40.0)),
+                    brush: Brush::Solid(Color::WHITE),
+                }],
+            )],
+        );
+        let patch = ScenePatch {
+            size: previous.size,
+            base_layer_count: previous.layers.len(),
+            base_block_count: previous.blocks.len(),
+            layer_upserts: Vec::new(),
+            layer_removes: Vec::new(),
+            upserts: vec![SceneBlock::new(
+                10,
+                10,
+                2,
+                Rect::new(0.0, 0.0, 40.0, 40.0),
+                Transform2D::identity(),
+                None,
+                vec![DrawCommand::Fill {
+                    shape: Shape::Rect(Rect::new(0.0, 0.0, 40.0, 40.0)),
+                    brush: Brush::Solid(Color::BLACK),
+                }],
+            )],
+            removes: Vec::new(),
+        };
+
+        assert_eq!(
+            patch.dirty_bounds(Some(&previous)),
+            Some(Rect::new(-12.0, -12.0, 64.0, 64.0))
         );
     }
 }

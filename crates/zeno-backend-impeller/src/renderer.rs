@@ -14,7 +14,7 @@ impl Renderer for ImpellerRenderer {
             gpu_compositing: true,
             text_shaping: true,
             filters: true,
-            offscreen_rendering: false,
+            offscreen_rendering: true,
         }
     }
 
@@ -28,5 +28,19 @@ impl Renderer for ImpellerRenderer {
             patch_removes: 0,
             surface_id: surface.id.clone(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImpellerRenderer;
+    use zeno_graphics::Renderer;
+
+    #[test]
+    fn capabilities_report_offscreen_and_filters() {
+        let capabilities = ImpellerRenderer.capabilities();
+
+        assert!(capabilities.offscreen_rendering);
+        assert!(capabilities.filters);
     }
 }

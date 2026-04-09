@@ -1,6 +1,6 @@
 use zeno_core::{Color, Transform2D};
 
-use crate::modifier::{ClipMode, Modifier, Modifiers, TransformOrigin};
+use crate::modifier::{BlendMode, ClipMode, DropShadow, Modifier, Modifiers, TransformOrigin};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
@@ -68,6 +68,9 @@ pub struct Style {
     pub transform_origin: TransformOrigin,
     pub opacity: f32,
     pub layer: bool,
+    pub blend_mode: BlendMode,
+    pub blur: Option<f32>,
+    pub drop_shadow: Option<DropShadow>,
 }
 
 impl Default for Style {
@@ -85,6 +88,9 @@ impl Default for Style {
             transform_origin: TransformOrigin::new(0.0, 0.0),
             opacity: 1.0,
             layer: false,
+            blend_mode: BlendMode::Normal,
+            blur: None,
+            drop_shadow: None,
         }
     }
 }
@@ -120,6 +126,15 @@ impl Style {
             }
             Modifier::Layer => {
                 self.layer = true;
+            }
+            Modifier::BlendMode(mode) => {
+                self.blend_mode = *mode;
+            }
+            Modifier::Blur(sigma) => {
+                self.blur = Some((*sigma).max(0.0));
+            }
+            Modifier::DropShadow(shadow) => {
+                self.drop_shadow = Some(*shadow);
             }
         }
     }

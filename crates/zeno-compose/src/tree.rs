@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
 use zeno_core::{Point, Rect, Size, Transform2D};
-use zeno_graphics::{DrawCommand, Scene, SceneBlock, SceneClip, SceneLayer, SceneTransform};
+use zeno_graphics::{
+    DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneEffect, SceneLayer,
+    SceneTransform,
+};
 
 use crate::{
     layout::{MeasuredKind, MeasuredNode},
-    modifier::{ClipMode, TransformOrigin},
+    modifier::{BlendMode, ClipMode, TransformOrigin},
     DirtyFlags, DirtyReason, Node, NodeId, NodeKind,
 };
 
@@ -175,11 +178,6 @@ impl RetainedComposeTree {
     #[must_use]
     pub fn measured(&self) -> &MeasuredNode {
         &self.measured
-    }
-
-    #[must_use]
-    pub const fn viewport(&self) -> Size {
-        self.viewport
     }
 
     pub fn update_fragment(&mut self, node_id: NodeId, fragment: Vec<DrawCommand>) {
@@ -419,6 +417,7 @@ fn collect_scene_items(
             style.transform_origin,
         );
         let world_transform = current_layer_world_transform.then(layer_transform);
+        let effect_bounds = scene_effect_bounds(local_bounds, &style);
         let layer_id = node.id().0;
         let order = *next_order;
         *next_order += 1;
@@ -428,11 +427,17 @@ fn collect_scene_items(
             Some(current_layer_id),
             order,
             local_bounds,
-            world_transform.map_rect(local_bounds),
+            world_transform.map_rect(effect_bounds),
             layer_transform,
             scene_clip(measured.frame.size, style.clip),
             style.opacity,
-            style.layer || style.opacity < 1.0,
+            scene_blend_mode(style.blend_mode),
+            scene_effects(&style),
+            style.layer
+                || style.opacity < 1.0
+                || style.blend_mode != BlendMode::Normal
+                || style.blur.is_some()
+                || style.drop_shadow.is_some(),
         ));
         if let Some(fragment) = fragments_by_node.get(&node.id()) {
             blocks.push(SceneBlock::new(
@@ -616,7 +621,13 @@ mod tests {
 }
 
 fn node_creates_layer(style: &crate::Style) -> bool {
-    style.layer || style.opacity < 1.0 || style.clip.is_some() || !style.transform.is_identity()
+    style.layer
+        || style.opacity < 1.0
+        || style.clip.is_some()
+        || !style.transform.is_identity()
+        || style.blend_mode != BlendMode::Normal
+        || style.blur.is_some()
+        || style.drop_shadow.is_some()
 }
 
 fn layer_local_transform(
@@ -645,4 +656,57 @@ fn scene_clip(size: Size, clip: Option<ClipMode>) -> Option<SceneClip> {
         }),
         None => None,
     }
+}
+
+fn scene_blend_mode(mode: BlendMode) -> SceneBlendMode {
+    match mode {
+        BlendMode::Normal => SceneBlendMode::Normal,
+        BlendMode::Multiply => SceneBlendMode::Multiply,
+        BlendMode::Screen => SceneBlendMode::Screen,
+    }
+}
+
+fn scene_effects(style: &crate::Style) -> Vec<SceneEffect> {
+    let mut effects = Vec::new();
+    if let Some(sigma) = style.blur {
+        effects.push(SceneEffect::Blur { sigma });
+    }
+    if let Some(shadow) = style.drop_shadow {
+        effects.push(SceneEffect::DropShadow {
+            dx: shadow.dx,
+            dy: shadow.dy,
+            blur: shadow.blur,
+            color: shadow.color,
+        });
+    }
+    effects
+}
+
+fn scene_effect_bounds(local_bounds: Rect, style: &crate::Style) -> Rect {
+    let mut bounds = local_bounds;
+    if let Some(sigma) = style.blur {
+        bounds = expand_rect(bounds, sigma * 3.0);
+    }
+    if let Some(shadow) = style.drop_shadow {
+        let shadow_bounds = expand_rect(
+            Rect::new(
+                bounds.origin.x + shadow.dx,
+                bounds.origin.y + shadow.dy,
+                bounds.size.width,
+                bounds.size.height,
+            ),
+            shadow.blur * 3.0,
+        );
+        bounds = bounds.union(&shadow_bounds);
+    }
+    bounds
+}
+
+fn expand_rect(rect: Rect, amount: f32) -> Rect {
+    Rect::new(
+        rect.origin.x - amount,
+        rect.origin.y - amount,
+        rect.size.width + amount * 2.0,
+        rect.size.height + amount * 2.0,
+    )
 }

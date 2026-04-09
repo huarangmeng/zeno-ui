@@ -2,7 +2,7 @@ use zeno_core::Color;
 use zeno_text::FontDescriptor;
 
 use crate::{
-    modifier::{Modifier, Modifiers, TransformOrigin},
+    modifier::{BlendMode, DropShadow, Modifier, Modifiers, TransformOrigin},
     style::{Axis, EdgeInsets, Style},
 };
 
@@ -154,6 +154,31 @@ impl Node {
     #[must_use]
     pub fn layer(self) -> Self {
         self.modifier(Modifier::Layer)
+    }
+
+    #[must_use]
+    pub fn blend_mode(self, mode: BlendMode) -> Self {
+        self.modifier(Modifier::BlendMode(mode))
+    }
+
+    #[must_use]
+    pub fn blend_multiply(self) -> Self {
+        self.blend_mode(BlendMode::Multiply)
+    }
+
+    #[must_use]
+    pub fn blend_screen(self) -> Self {
+        self.blend_mode(BlendMode::Screen)
+    }
+
+    #[must_use]
+    pub fn blur(self, sigma: f32) -> Self {
+        self.modifier(Modifier::Blur(sigma))
+    }
+
+    #[must_use]
+    pub fn drop_shadow(self, dx: f32, dy: f32, blur: f32, color: Color) -> Self {
+        self.modifier(Modifier::DropShadow(DropShadow::new(dx, dy, blur, color)))
     }
 
     #[must_use]

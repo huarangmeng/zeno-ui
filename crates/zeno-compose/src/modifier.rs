@@ -21,6 +21,28 @@ impl TransformOrigin {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DropShadow {
+    pub dx: f32,
+    pub dy: f32,
+    pub blur: f32,
+    pub color: Color,
+}
+
+impl DropShadow {
+    #[must_use]
+    pub const fn new(dx: f32, dy: f32, blur: f32, color: Color) -> Self {
+        Self { dx, dy, blur, color }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Modifier {
     Padding(EdgeInsets),
@@ -38,6 +60,9 @@ pub enum Modifier {
     TransformOrigin(TransformOrigin),
     Opacity(f32),
     Layer,
+    BlendMode(BlendMode),
+    Blur(f32),
+    DropShadow(DropShadow),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]

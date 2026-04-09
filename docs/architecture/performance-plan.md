@@ -149,10 +149,13 @@
 - 帧统计已输出 `block_count`、`patch_upserts`、`patch_removes`，可直接观察增量提交行为。
 - 根 crate 已提供 `macos`、`linux`、`windows`、`android`、`ios` 平台 preset feature，降低首次接入成本。
 - 移动端已固定 `MobilePresenterInterface`，并为 Android/iOS 建立 platform presenter builder 与 renderer-backed session 适配层。
+- `Scene` 已进入 layer/block 结构化阶段，并补上 blend / effect / offscreen 等高阶抽象。
+- `zeno-text` 已拆出 `TextShaper / TextCache` 抽象，fallback 路径具备 paragraph cache 与命中统计。
+- 已补 `examples/text_probe`，可输出 scene dump / layout dump 与文本缓存统计。
 
 ## 当前未完成项
 - layout dirty 仍可继续细化到更小祖先集合与更精确的兄弟影响范围，当前为 MVP 级 dirty roots 策略。
-- `Scene` 已有 block/patch，但尚未演进到 layer/clip/transform 等更高阶结构化模型。
+- `Scene` 虽已具备 layer/clip/transform/blend/effect/offscreen 抽象，但更细粒度 compositor 与后端 effect 合成仍待继续推进。
 - Skia 已具备 dirty bounds 局部提交路径，Impeller 仍以全量为主，真局部 GPU 提交尚未完全落地。
-- 文本主路径仍是 fallback 测量，真实 shaping / glyph cache / paragraph cache 尚未接入。
-- bench gallery、scene dump、layout dump 等工程化工具仍未完成。
+- 文本主路径虽已具备 `TextSystem / TextShaper / TextCache` 主干、glyph 级布局数据与 Impeller glyph cache，但更完整的真实 shaping 覆盖 / Skia glyph-run 优化 / 后端共享缓存仍未接入。
+- scene dump、layout dump、text probe 已就位，但更系统的 bench gallery 与自动化工程化工具仍未完成。

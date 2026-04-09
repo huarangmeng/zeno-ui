@@ -10,6 +10,7 @@ members = [
     "crates/zeno-backend-impeller",
     "crates/zeno-text",
     "examples/minimal_app",
+    "examples/text_probe",
 ]
 resolver = "2"
 
