@@ -64,6 +64,8 @@ pub struct TextMetrics {
     pub width: f32,
     pub height: f32,
     pub line_count: usize,
+    pub ascent: f32,
+    pub descent: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]

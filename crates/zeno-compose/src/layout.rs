@@ -63,7 +63,8 @@ fn measure_container(
     available: Size,
     text_system: &dyn TextSystem,
 ) -> MeasuredNode {
-    let padding = node.style.padding;
+    let style = node.resolved_style();
+    let padding = style.padding;
     let child_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
     let child_available = inner_available(node, available);
     let measured_child = measure_node(child, child_origin, child_available, text_system);
@@ -83,7 +84,8 @@ fn measure_stack(
     available: Size,
     text_system: &dyn TextSystem,
 ) -> MeasuredNode {
-    let padding = node.style.padding;
+    let style = node.resolved_style();
+    let padding = style.padding;
     let inner = inner_available(node, available);
     let mut cursor_x = origin.x + padding.left;
     let mut cursor_y = origin.y + padding.top;
@@ -109,7 +111,7 @@ fn measure_stack(
             Axis::Horizontal => {
                 cursor_x += measured.frame.size.width;
                 if index + 1 < children.len() {
-                    cursor_x += node.style.spacing;
+                    cursor_x += style.spacing;
                 }
                 max_width = (cursor_x - origin.x - padding.left).max(max_width);
                 max_height = max_height.max(measured.frame.size.height);
@@ -117,7 +119,7 @@ fn measure_stack(
             Axis::Vertical => {
                 cursor_y += measured.frame.size.height;
                 if index + 1 < children.len() {
-                    cursor_y += node.style.spacing;
+                    cursor_y += style.spacing;
                 }
                 max_height = (cursor_y - origin.y - padding.top).max(max_height);
                 max_width = max_width.max(measured.frame.size.width);
@@ -141,8 +143,9 @@ pub(crate) fn measure_spacer(
     origin: Point,
     available: Size,
 ) -> MeasuredNode {
-    let width = node.style.width.unwrap_or(spacer.width).min(available.width.max(0.0));
-    let height = node.style.height.unwrap_or(spacer.height).min(available.height.max(0.0));
+    let style = node.resolved_style();
+    let width = style.width.unwrap_or(spacer.width).min(available.width.max(0.0));
+    let height = style.height.unwrap_or(spacer.height).min(available.height.max(0.0));
     MeasuredNode {
         frame: Rect::new(origin.x, origin.y, width, height),
         kind: MeasuredKind::Spacer,
@@ -150,19 +153,21 @@ pub(crate) fn measure_spacer(
 }
 
 pub(crate) fn inner_available(node: &Node, available: Size) -> Size {
+    let style = node.resolved_style();
     Size::new(
-        (available.width - node.style.padding.horizontal()).max(0.0),
-        (available.height - node.style.padding.vertical()).max(0.0),
+        (available.width - style.padding.horizontal()).max(0.0),
+        (available.height - style.padding.vertical()).max(0.0),
     )
 }
 
 pub(crate) fn finalize_size(node: &Node, available: Size, content: Size) -> Size {
+    let style = node.resolved_style();
     let natural = Size::new(
-        content.width + node.style.padding.horizontal(),
-        content.height + node.style.padding.vertical(),
+        content.width + style.padding.horizontal(),
+        content.height + style.padding.vertical(),
     );
     Size::new(
-        node.style.width.unwrap_or(natural.width).min(available.width.max(0.0)),
-        node.style.height.unwrap_or(natural.height).min(available.height.max(0.0)),
+        style.width.unwrap_or(natural.width).min(available.width.max(0.0)),
+        style.height.unwrap_or(natural.height).min(available.height.max(0.0)),
     )
 }

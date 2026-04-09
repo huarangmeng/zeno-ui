@@ -40,7 +40,9 @@ impl DesktopShell {
             ),
             SceneSubmit::Full(Scene {
                 size: config.size,
+                clear_color: Some(zeno_core::Color::WHITE),
                 commands: vec![DrawCommand::Clear(zeno_core::Color::WHITE)],
+                layers: vec![zeno_graphics::SceneLayer::root(config.size)],
                 blocks: Vec::new(),
             }),
         )

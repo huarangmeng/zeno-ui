@@ -1,4 +1,4 @@
-use zeno_core::{Color, Point, Rect, Size};
+use zeno_core::{Color, Point, Rect, Size, Transform2D};
 use zeno_text::TextLayout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -43,15 +43,34 @@ impl DrawCommand {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Scene {
     pub size: Size,
+    pub clear_color: Option<Color>,
     pub commands: Vec<DrawCommand>,
+    pub layers: Vec<SceneLayer>,
     pub blocks: Vec<SceneBlock>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SceneLayer {
+    pub layer_id: u64,
+    pub node_id: u64,
+    pub parent_layer_id: Option<u64>,
+    pub order: u32,
+    pub local_bounds: Rect,
+    pub bounds: Rect,
+    pub transform: SceneTransform,
+    pub clip: Option<SceneClip>,
+    pub opacity: f32,
+    pub offscreen: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SceneBlock {
     pub node_id: u64,
+    pub layer_id: u64,
     pub order: u32,
     pub bounds: Rect,
+    pub transform: SceneTransform,
+    pub clip: Option<SceneClip>,
     pub commands: Vec<DrawCommand>,
     pub resource_keys: Vec<SceneResourceKey>,
 }
@@ -59,7 +78,10 @@ pub struct SceneBlock {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ScenePatch {
     pub size: Size,
+    pub base_layer_count: usize,
     pub base_block_count: usize,
+    pub layer_upserts: Vec<SceneLayer>,
+    pub layer_removes: Vec<u64>,
     pub upserts: Vec<SceneBlock>,
     pub removes: Vec<u64>,
 }
@@ -70,30 +92,59 @@ pub enum SceneSubmit {
     Patch { patch: ScenePatch, current: Scene },
 }
 
+pub type SceneTransform = Transform2D;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SceneClip {
+    Rect(Rect),
+    RoundedRect { rect: Rect, radius: f32 },
+}
+
 impl Scene {
+    pub const ROOT_LAYER_ID: u64 = 0;
+
     #[must_use]
     pub fn new(size: Size) -> Self {
         Self {
             size,
+            clear_color: None,
             commands: Vec::new(),
+            layers: vec![SceneLayer::root(size)],
             blocks: Vec::new(),
         }
     }
 
     #[must_use]
-    pub fn from_blocks(size: Size, blocks: Vec<SceneBlock>) -> Self {
+    pub fn from_blocks(size: Size, clear_color: Option<Color>, blocks: Vec<SceneBlock>) -> Self {
+        Self::from_layers_and_blocks(size, clear_color, vec![SceneLayer::root(size)], blocks)
+    }
+
+    #[must_use]
+    pub fn from_layers_and_blocks(
+        size: Size,
+        clear_color: Option<Color>,
+        mut layers: Vec<SceneLayer>,
+        blocks: Vec<SceneBlock>,
+    ) -> Self {
+        if !layers.iter().any(|layer| layer.layer_id == Self::ROOT_LAYER_ID) {
+            layers.push(SceneLayer::root(size));
+        }
+        layers.sort_by_key(|layer| layer.order);
         let commands = blocks
             .iter()
             .flat_map(|block| block.commands.iter().cloned())
             .collect();
         Self {
             size,
+            clear_color,
             commands,
+            layers,
             blocks,
         }
     }
 
     pub fn push(&mut self, command: DrawCommand) {
+        self.layers = vec![SceneLayer::root(self.size)];
         self.blocks.clear();
         self.commands.push(command);
     }
@@ -108,6 +159,21 @@ impl Scene {
 
     #[must_use]
     pub fn apply_patch(&self, patch: &ScenePatch) -> Self {
+        let mut layers: Vec<SceneLayer> = self
+            .layers
+            .iter()
+            .filter(|layer| !patch.layer_removes.contains(&layer.layer_id))
+            .cloned()
+            .collect();
+        for upsert in &patch.layer_upserts {
+            if let Some(existing) = layers.iter_mut().find(|layer| layer.layer_id == upsert.layer_id) {
+                *existing = upsert.clone();
+            } else {
+                layers.push(upsert.clone());
+            }
+        }
+        layers.sort_by_key(|layer| layer.order);
+
         let mut blocks: Vec<SceneBlock> = self
             .blocks
             .iter()
@@ -124,7 +190,7 @@ impl Scene {
         }
 
         blocks.sort_by_key(|block| block.order);
-        Self::from_blocks(patch.size, blocks)
+        Self::from_layers_and_blocks(patch.size, self.clear_color, layers, blocks)
     }
 
     #[must_use]
@@ -135,16 +201,81 @@ impl Scene {
             .map(|block| block.bounds)
             .reduce(|acc, bounds| acc.union(&bounds))
     }
+
+    #[must_use]
+    pub fn dirty_bounds_for_layers(&self, layer_ids: &[u64]) -> Option<Rect> {
+        self.layers
+            .iter()
+            .filter(|layer| layer_ids.contains(&layer.layer_id))
+            .map(|layer| layer.bounds)
+            .reduce(|acc, bounds| acc.union(&bounds))
+    }
+}
+
+impl SceneLayer {
+    #[must_use]
+    pub fn root(size: Size) -> Self {
+        Self {
+            layer_id: Scene::ROOT_LAYER_ID,
+            node_id: Scene::ROOT_LAYER_ID,
+            parent_layer_id: None,
+            order: 0,
+            local_bounds: Rect::new(0.0, 0.0, size.width, size.height),
+            bounds: Rect::new(0.0, 0.0, size.width, size.height),
+            transform: Transform2D::identity(),
+            clip: None,
+            opacity: 1.0,
+            offscreen: false,
+        }
+    }
+
+    #[must_use]
+    pub fn new(
+        layer_id: u64,
+        node_id: u64,
+        parent_layer_id: Option<u64>,
+        order: u32,
+        local_bounds: Rect,
+        bounds: Rect,
+        transform: SceneTransform,
+        clip: Option<SceneClip>,
+        opacity: f32,
+        offscreen: bool,
+    ) -> Self {
+        Self {
+            layer_id,
+            node_id,
+            parent_layer_id,
+            order,
+            local_bounds,
+            bounds,
+            transform,
+            clip,
+            opacity,
+            offscreen,
+        }
+    }
 }
 
 impl SceneBlock {
     #[must_use]
-    pub fn new(node_id: u64, order: u32, bounds: Rect, commands: Vec<DrawCommand>) -> Self {
+    pub fn new(
+        node_id: u64,
+        layer_id: u64,
+        order: u32,
+        bounds: Rect,
+        transform: SceneTransform,
+        clip: Option<SceneClip>,
+        commands: Vec<DrawCommand>,
+    ) -> Self {
         let resource_keys = commands.iter().filter_map(DrawCommand::resource_key).collect();
         Self {
             node_id,
+            layer_id,
             order,
             bounds,
+            transform,
+            clip,
             commands,
             resource_keys,
         }
@@ -154,7 +285,10 @@ impl SceneBlock {
 impl ScenePatch {
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.upserts.is_empty() && self.removes.is_empty()
+        self.layer_upserts.is_empty()
+            && self.layer_removes.is_empty()
+            && self.upserts.is_empty()
+            && self.removes.is_empty()
     }
 
     #[must_use]
@@ -164,13 +298,32 @@ impl ScenePatch {
             .iter()
             .map(|block| block.bounds)
             .reduce(|acc, bounds| acc.union(&bounds));
+        let previous_upsert_bounds = previous.and_then(|scene| {
+            let node_ids: Vec<u64> = self.upserts.iter().map(|block| block.node_id).collect();
+            scene.dirty_bounds_for_nodes(&node_ids)
+        });
         let remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_nodes(&self.removes));
-        match (upsert_bounds, remove_bounds) {
-            (Some(a), Some(b)) => Some(a.union(&b)),
-            (Some(a), None) => Some(a),
-            (None, Some(b)) => Some(b),
-            (None, None) => None,
-        }
+        let layer_upsert_bounds = self
+            .layer_upserts
+            .iter()
+            .map(|layer| layer.bounds)
+            .reduce(|acc, bounds| acc.union(&bounds));
+        let previous_layer_bounds = previous.and_then(|scene| {
+            let layer_ids: Vec<u64> = self.layer_upserts.iter().map(|layer| layer.layer_id).collect();
+            scene.dirty_bounds_for_layers(&layer_ids)
+        });
+        let layer_remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_layers(&self.layer_removes));
+        [
+            upsert_bounds,
+            previous_upsert_bounds,
+            remove_bounds,
+            layer_upsert_bounds,
+            previous_layer_bounds,
+            layer_remove_bounds,
+        ]
+        .into_iter()
+        .flatten()
+        .reduce(|acc, bounds| acc.union(&bounds))
     }
 }
 
@@ -191,4 +344,201 @@ pub enum CanvasOp {
     Save,
     Restore,
     Translate { x: f32, y: f32 },
+    ClipRect(Rect),
+    ClipRoundedRect { rect: Rect, radius: f32 },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Brush, DrawCommand, Scene, SceneBlock, SceneLayer, ScenePatch, SceneSubmit, Shape,
+    };
+    use zeno_core::{Color, Rect, Size, Transform2D};
+
+    #[test]
+    fn dirty_bounds_merge_upserts_and_removed_blocks() {
+        let previous = Scene::from_blocks(
+            Size::new(200.0, 200.0),
+            None,
+            vec![
+                SceneBlock::new(
+                    1,
+                    Scene::ROOT_LAYER_ID,
+                    0,
+                    Rect::new(0.0, 0.0, 20.0, 20.0),
+                    Transform2D::identity(),
+                    None,
+                    vec![DrawCommand::Fill {
+                        shape: Shape::Rect(Rect::new(0.0, 0.0, 20.0, 20.0)),
+                        brush: Brush::Solid(Color::WHITE),
+                    }],
+                ),
+                SceneBlock::new(
+                    2,
+                    Scene::ROOT_LAYER_ID,
+                    1,
+                    Rect::new(80.0, 80.0, 40.0, 40.0),
+                    Transform2D::identity(),
+                    None,
+                    vec![DrawCommand::Fill {
+                        shape: Shape::Rect(Rect::new(80.0, 80.0, 40.0, 40.0)),
+                        brush: Brush::Solid(Color::WHITE),
+                    }],
+                ),
+            ],
+        );
+        let patch = ScenePatch {
+            size: previous.size,
+            base_layer_count: previous.layers.len(),
+            base_block_count: previous.blocks.len(),
+            layer_upserts: Vec::new(),
+            layer_removes: Vec::new(),
+            upserts: vec![SceneBlock::new(
+                3,
+                Scene::ROOT_LAYER_ID,
+                2,
+                Rect::new(40.0, 40.0, 10.0, 10.0),
+                Transform2D::identity(),
+                None,
+                vec![DrawCommand::Fill {
+                    shape: Shape::Rect(Rect::new(40.0, 40.0, 10.0, 10.0)),
+                    brush: Brush::Solid(Color::WHITE),
+                }],
+            )],
+            removes: vec![2],
+        };
+
+        assert_eq!(
+            patch.dirty_bounds(Some(&previous)),
+            Some(Rect::new(40.0, 40.0, 80.0, 80.0))
+        );
+    }
+
+    #[test]
+    fn patch_snapshot_without_previous_uses_current_scene() {
+        let current = Scene::from_blocks(
+            Size::new(200.0, 200.0),
+            None,
+            vec![SceneBlock::new(
+                1,
+                Scene::ROOT_LAYER_ID,
+                0,
+                Rect::new(10.0, 10.0, 30.0, 30.0),
+                Transform2D::identity(),
+                None,
+                vec![DrawCommand::Fill {
+                    shape: Shape::Rect(Rect::new(10.0, 10.0, 30.0, 30.0)),
+                    brush: Brush::Solid(Color::WHITE),
+                }],
+            )],
+        );
+        let submit = SceneSubmit::Patch {
+            patch: ScenePatch {
+                size: current.size,
+                base_layer_count: 0,
+                base_block_count: 0,
+                layer_upserts: current.layers.clone(),
+                layer_removes: Vec::new(),
+                upserts: current.blocks.clone(),
+                removes: Vec::new(),
+            },
+            current: current.clone(),
+        };
+
+        assert_eq!(submit.snapshot(None), Some(current));
+    }
+
+    #[test]
+    fn dirty_bounds_include_previous_bounds_for_moved_upserts() {
+        let previous = Scene::from_blocks(
+            Size::new(200.0, 200.0),
+            None,
+            vec![SceneBlock::new(
+                1,
+                Scene::ROOT_LAYER_ID,
+                0,
+                Rect::new(0.0, 0.0, 20.0, 20.0),
+                Transform2D::identity(),
+                None,
+                vec![DrawCommand::Fill {
+                    shape: Shape::Rect(Rect::new(0.0, 0.0, 20.0, 20.0)),
+                    brush: Brush::Solid(Color::WHITE),
+                }],
+            )],
+        );
+        let patch = ScenePatch {
+            size: previous.size,
+            base_layer_count: previous.layers.len(),
+            base_block_count: previous.blocks.len(),
+            layer_upserts: Vec::new(),
+            layer_removes: Vec::new(),
+            upserts: vec![SceneBlock::new(
+                1,
+                Scene::ROOT_LAYER_ID,
+                0,
+                Rect::new(40.0, 0.0, 20.0, 20.0),
+                Transform2D::translation(40.0, 0.0),
+                None,
+                vec![DrawCommand::Fill {
+                    shape: Shape::Rect(Rect::new(0.0, 0.0, 20.0, 20.0)),
+                    brush: Brush::Solid(Color::WHITE),
+                }],
+            )],
+            removes: Vec::new(),
+        };
+
+        assert_eq!(
+            patch.dirty_bounds(Some(&previous)),
+            Some(Rect::new(0.0, 0.0, 60.0, 20.0))
+        );
+    }
+
+    #[test]
+    fn dirty_bounds_include_layer_changes_without_block_changes() {
+        let previous = Scene::from_layers_and_blocks(
+            Size::new(200.0, 200.0),
+            None,
+            vec![
+                SceneLayer::root(Size::new(200.0, 200.0)),
+                SceneLayer::new(
+                    10,
+                    10,
+                    Some(Scene::ROOT_LAYER_ID),
+                    1,
+                    Rect::new(0.0, 0.0, 40.0, 40.0),
+                    Rect::new(20.0, 20.0, 40.0, 40.0),
+                    Transform2D::translation(20.0, 20.0),
+                    None,
+                    1.0,
+                    false,
+                ),
+            ],
+            Vec::new(),
+        );
+        let patch = ScenePatch {
+            size: previous.size,
+            base_layer_count: previous.layers.len(),
+            base_block_count: previous.blocks.len(),
+            layer_upserts: vec![SceneLayer::new(
+                10,
+                10,
+                Some(Scene::ROOT_LAYER_ID),
+                1,
+                Rect::new(0.0, 0.0, 40.0, 40.0),
+                Rect::new(20.0, 20.0, 40.0, 40.0),
+                Transform2D::translation(20.0, 20.0),
+                None,
+                0.5,
+                true,
+            )],
+            layer_removes: Vec::new(),
+            upserts: Vec::new(),
+            removes: Vec::new(),
+        };
+
+        assert_eq!(
+            patch.dirty_bounds(Some(&previous)),
+            Some(Rect::new(20.0, 20.0, 40.0, 40.0))
+        );
+    }
 }

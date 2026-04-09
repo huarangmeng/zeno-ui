@@ -1,6 +1,8 @@
+use std::env;
+
 use zeno_ui::{
-    column, container, text, zeno_session_log, AppConfig, Color, DebugConfig, EdgeInsets,
-    SceneSubmit, UiRuntime, WindowConfig,
+    column, container, text, zeno_session_log, AppConfig, Backend, BackendPreference, Color,
+    DebugConfig, EdgeInsets, Node, RendererConfig, SceneSubmit, UiRuntime, WindowConfig,
 };
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -11,6 +13,7 @@ use zeno_ui::{MinimalShell, Shell};
 fn main() {
     let config = AppConfig {
         app_name: "minimal_app".to_string(),
+        renderer: renderer_config_from_env(),
         window: WindowConfig {
             title: "Zeno Minimal App".to_string(),
             ..WindowConfig::default()
@@ -21,29 +24,20 @@ fn main() {
         },
         ..AppConfig::default()
     };
-    let root = container(
-        column(vec![
-            text("Zeno UI").font_size(28.0).foreground(Color::WHITE),
-            text("Compose 风格声明式组件层").foreground(Color::WHITE),
-            text("当前后端会自动优先选择 Impeller，否则回退到 Skia")
-                .foreground(Color::rgba(230, 236, 255, 255)),
-        ])
-        .spacing(12.0),
-    )
-    .padding(EdgeInsets::horizontal_vertical(24.0, 20.0))
-    .background(Color::rgba(39, 110, 241, 255))
-    .corner_radius(24.0)
-    .width(420.0);
     let mut runtime = UiRuntime::new(&zeno_ui::FallbackTextSystem);
-    runtime.set_root(root);
+    runtime.set_root(build_root(false));
     runtime.resize(config.window.size);
-    let _first_frame = runtime.prepare_frame().expect("first frame").expect("scene");
-    runtime.request_paint();
+    let first_frame = runtime.prepare_frame().expect("first frame").expect("scene");
+    runtime.set_root(build_root(true));
     let native_surface = DesktopShell.create_surface(&config.window);
     let (session, frame) = runtime
         .prepare_resolved_frame(native_surface.descriptor.platform, &config)
         .expect("resolved frame")
         .expect("second frame");
+    let preview_submit = match &frame.scene_submit {
+        SceneSubmit::Full(_) => "full",
+        SceneSubmit::Patch { .. } => "patch",
+    };
     let stats_after_paint = frame.compose_stats;
     let resource_count = frame.scene.resource_keys().len();
     let block_count = frame.scene.blocks.len();
@@ -68,7 +62,10 @@ fn main() {
         zeno_session_log!(
             info,
             backend = ?outcome.backend,
+            configured_preference = ?config.renderer.preference,
             attempts = outcome.attempts.len(),
+            first_frame_commands = first_frame.scene.commands.len(),
+            preview_submit,
             compose_passes = stats_after_paint.compose_passes,
             layout_passes = stats_after_paint.layout_passes,
             cache_hits = stats_after_paint.cache_hits,
@@ -76,7 +73,7 @@ fn main() {
             blocks = block_count,
             patch_upserts,
             patch_removes,
-            recomposed_after_invalidate = stats_after_paint.compose_passes > 1,
+            recomposed_after_root_change = stats_after_paint.compose_passes > 1,
             "demo session summary"
         );
     }
@@ -84,5 +81,55 @@ fn main() {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = MinimalShell.create_surface(&config.window);
+    }
+}
+
+fn build_root(accented: bool) -> Node {
+    let title_color = if accented {
+        Color::rgba(255, 244, 140, 255)
+    } else {
+        Color::WHITE
+    };
+    let container_color = if accented {
+        Color::rgba(31, 92, 224, 255)
+    } else {
+        Color::rgba(39, 110, 241, 255)
+    };
+    container(
+        column(vec![
+            text("Zeno UI").key("title").font_size(28.0).foreground(title_color),
+            text("Compose 风格声明式组件层")
+                .key("subtitle")
+                .foreground(Color::WHITE),
+            text("可通过 ZENO_DEMO_BACKEND=impeller|skia|prefer-skia|prefer-impeller 强制后端")
+                .key("body")
+                .foreground(Color::rgba(230, 236, 255, 255)),
+        ])
+        .spacing(12.0)
+        .key("content"),
+    )
+    .key("root")
+    .padding(EdgeInsets::horizontal_vertical(24.0, 20.0))
+    .background(container_color)
+    .corner_radius(24.0)
+    .width(420.0)
+}
+
+fn renderer_config_from_env() -> RendererConfig {
+    let Some(value) = env::var("ZENO_DEMO_BACKEND").ok() else {
+        return RendererConfig::default();
+    };
+    let normalized = value.trim().to_ascii_lowercase();
+    let preference = match normalized.as_str() {
+        "auto" => BackendPreference::Auto,
+        "prefer-impeller" => BackendPreference::PreferImpeller,
+        "prefer-skia" => BackendPreference::PreferSkia,
+        "impeller" => BackendPreference::Force(Backend::Impeller),
+        "skia" => BackendPreference::Force(Backend::Skia),
+        _ => BackendPreference::PreferImpeller,
+    };
+    RendererConfig {
+        preference: preference.clone(),
+        allow_fallback: !matches!(preference, BackendPreference::Force(_)),
     }
 }

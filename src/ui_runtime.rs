@@ -32,8 +32,13 @@ impl<'a> UiRuntime<'a> {
 
     pub fn set_root(&mut self, root: Node) {
         if self.root.as_ref() != Some(&root) {
+            let had_root = self.root.is_some();
             self.root = Some(root);
-            self.scheduler.invalidate_layout();
+            if had_root {
+                self.scheduler.invalidate_paint();
+            } else {
+                self.scheduler.invalidate_layout();
+            }
         }
     }
 
@@ -233,5 +238,27 @@ mod tests {
             }
             SceneSubmit::Full(_) => panic!("expected patch submit"),
         }
+    }
+
+    #[test]
+    fn runtime_keeps_layout_work_for_keyed_root_spacing_change() {
+        let mut runtime = UiRuntime::new(&FallbackTextSystem);
+        runtime.set_root(
+            column(vec![text("Hello").key("title"), text("World").key("body")])
+                .spacing(4.0)
+                .key("root"),
+        );
+        runtime.resize(Size::new(320.0, 240.0));
+
+        let first = runtime.prepare_frame().expect("frame").expect("scene");
+        runtime.set_root(
+            column(vec![text("Hello").key("title"), text("World").key("body")])
+                .spacing(12.0)
+                .key("root"),
+        );
+        let second = runtime.prepare_frame().expect("frame").expect("scene");
+
+        assert_eq!(second.compose_stats.layout_passes, first.compose_stats.layout_passes + 1);
+        assert!(matches!(second.scene_submit, SceneSubmit::Patch { .. }));
     }
 }

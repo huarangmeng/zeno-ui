@@ -40,10 +40,14 @@ impl TextSystem for FallbackTextSystem {
             let estimated_total_width = paragraph.text.chars().count() as f32 * average_advance;
             (estimated_total_width / paragraph.max_width).ceil().max(1.0) as usize
         };
+        let ascent = paragraph.font_size * 0.8;
+        let descent = paragraph.font_size * 0.2;
         let metrics = TextMetrics {
             width: measured_width,
             height: paragraph.font_size * 1.4 * line_count as f32,
             line_count,
+            ascent,
+            descent,
         };
         TextLayout { paragraph, metrics }
     }

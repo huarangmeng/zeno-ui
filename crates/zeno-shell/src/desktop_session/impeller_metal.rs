@@ -9,17 +9,18 @@ use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_impeller::MetalSceneRenderer;
-use zeno_core::{Backend, Platform, Size, ZenoError, ZenoErrorCode};
+use zeno_core::{zeno_session_log, Backend, Color, Platform, Size, ZenoError, ZenoErrorCode};
 use zeno_graphics::{FrameReport, RenderSurface, Scene, SceneSubmit};
 
 use super::desktop_session_error;
-use super::scene::{partial_scene_for_dirty_bounds, patch_stats};
+use super::scene::{default_clear_color, ensure_clear_command, partial_scene_for_dirty_bounds, patch_stats};
 
 pub(super) struct ImpellerMetalSession {
     window: Rc<Window>,
     layer: MetalLayer,
     renderer: MetalSceneRenderer,
     surface: RenderSurface,
+    clear_color: Color,
     last_scene: Option<Scene>,
 }
 
@@ -65,6 +66,7 @@ impl ImpellerMetalSession {
             layer,
             renderer,
             surface,
+            clear_color: default_clear_color(config.transparent),
             last_scene: None,
         })
     }
@@ -92,6 +94,7 @@ impl ImpellerMetalSession {
                 "scene patch requires a previous snapshot",
             )
         })?;
+        let scene = ensure_clear_command(&scene, self.clear_color);
         let drawable = self.layer.next_drawable().ok_or_else(|| {
             desktop_session_error(
                 ZenoErrorCode::SessionNextDrawableUnavailable,
@@ -106,6 +109,17 @@ impl ImpellerMetalSession {
             }
             SceneSubmit::Patch { .. } => None,
         };
+        zeno_session_log!(
+            trace,
+            op = "submit_scene",
+            backend = ?Backend::Impeller,
+            mode = if dirty_bounds.is_some() { "patch" } else { "full" },
+            surface = %self.surface.id,
+            scale_factor = self.window.scale_factor(),
+            clear = ?self.clear_color,
+            ?dirty_bounds,
+            "impeller macos scene submit"
+        );
         if let Some(bounds) = dirty_bounds {
             let partial_scene = partial_scene_for_dirty_bounds(&scene, bounds);
             self.renderer
@@ -127,6 +141,14 @@ impl ImpellerMetalSession {
             self.last_scene = Some(scene);
             report
         })
+    }
+
+    pub(super) fn cache_summary(&self) -> String {
+        format!(
+            "clear:{:?} scale:{:.2}",
+            self.clear_color,
+            self.window.scale_factor()
+        )
     }
 }
 

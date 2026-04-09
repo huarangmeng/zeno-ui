@@ -14,11 +14,11 @@ use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_skia::{render_scene_region_to_canvas, render_scene_to_canvas, SkiaTextCache};
-use zeno_core::{Backend, Platform, Size, ZenoError, ZenoErrorCode};
+use zeno_core::{zeno_session_log, Backend, Color, Platform, Size, ZenoError, ZenoErrorCode};
 use zeno_graphics::{FrameReport, RenderSurface, Scene, SceneSubmit};
 
 use super::desktop_session_error;
-use super::scene::patch_stats;
+use super::scene::{default_clear_color, ensure_clear_command, patch_stats};
 
 pub(super) struct SkiaGlSession {
     window: Rc<Window>,
@@ -28,6 +28,7 @@ pub(super) struct SkiaGlSession {
     gl_surface: Surface<WindowSurface>,
     gr_context: sk::gpu::DirectContext,
     text_cache: SkiaTextCache,
+    clear_color: Color,
     last_scene: Option<Scene>,
 }
 
@@ -91,6 +92,7 @@ impl SkiaGlSession {
             gl_surface,
             gr_context,
             text_cache: SkiaTextCache::default(),
+            clear_color: default_clear_color(config.transparent),
             last_scene: None,
         })
     }
@@ -131,6 +133,7 @@ impl SkiaGlSession {
                 "scene patch requires a previous snapshot",
             )
         })?;
+        let scene = ensure_clear_command(&scene, self.clear_color);
         let size = self.window.inner_size();
         let (width, height) = (size.width.max(1), size.height.max(1));
         self.resize(width, height)?;
@@ -174,6 +177,17 @@ impl SkiaGlSession {
             }
             SceneSubmit::Patch { .. } => None,
         };
+        zeno_session_log!(
+            trace,
+            op = "submit_scene",
+            backend = ?Backend::Skia,
+            mode = if dirty_bounds.is_some() { "patch" } else { "full" },
+            surface = %self.surface.id,
+            scale_factor = self.window.scale_factor(),
+            clear = ?self.clear_color,
+            ?dirty_bounds,
+            "skia macos scene submit"
+        );
         if let Some(bounds) = dirty_bounds {
             render_scene_region_to_canvas(surface.canvas(), &scene, bounds, &mut self.text_cache);
         } else {
@@ -208,11 +222,13 @@ impl SkiaGlSession {
     pub(super) fn cache_summary(&self) -> String {
         let stats = self.text_cache.stats();
         format!(
-            "fonts:{} typefaces:{} font_hits:{} typeface_hits:{}",
+            "fonts:{} typefaces:{} font_hits:{} typeface_hits:{} clear:{:?} scale:{:.2}",
             stats.cached_fonts,
             stats.cached_typefaces,
             stats.font_hits,
-            stats.typeface_hits
+            stats.typeface_hits,
+            self.clear_color,
+            self.window.scale_factor()
         )
     }
 }

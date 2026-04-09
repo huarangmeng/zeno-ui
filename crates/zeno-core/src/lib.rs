@@ -14,7 +14,7 @@ pub use color::{Color, PixelFormat};
 pub use config::{AppConfig, DebugConfig, RendererConfig, ScaleFactor, WindowConfig};
 pub use error::ZenoError;
 pub use error_code::ZenoErrorCode;
-pub use geometry::{Point, Rect, Size};
+pub use geometry::{Point, Rect, Size, Transform2D};
 pub use platform::Platform;
 
 #[doc(hidden)]

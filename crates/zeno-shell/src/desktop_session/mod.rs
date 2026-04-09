@@ -75,7 +75,7 @@ impl DesktopRenderSessionHandle for DesktopRenderSession {
         match self {
             Self::Skia(session) => session.cache_summary(),
             #[cfg(target_os = "macos")]
-            Self::Impeller(_) => "none".to_string(),
+            Self::Impeller(session) => session.cache_summary(),
         }
     }
 }

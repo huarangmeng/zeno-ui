@@ -1,7 +1,10 @@
 use zeno_core::Color;
 use zeno_text::FontDescriptor;
 
-use crate::style::{Axis, EdgeInsets, Style};
+use crate::{
+    modifier::{Modifier, Modifiers, TransformOrigin},
+    style::{Axis, EdgeInsets, Style},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct NodeId(pub u64);
@@ -31,13 +34,13 @@ pub enum NodeKind {
 pub struct Node {
     pub id: NodeId,
     pub kind: NodeKind,
-    pub style: Style,
+    pub modifiers: Modifiers,
 }
 
 impl Node {
     #[must_use]
-    pub(crate) fn new(id: NodeId, kind: NodeKind, style: Style) -> Self {
-        Self { id, kind, style }
+    pub(crate) fn new(id: NodeId, kind: NodeKind) -> Self {
+        Self { id, kind, modifiers: Modifiers::new() }
     }
 
     #[must_use]
@@ -52,51 +55,105 @@ impl Node {
     }
 
     #[must_use]
-    pub fn padding_all(mut self, value: f32) -> Self {
-        self.style.padding = EdgeInsets::all(value);
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifiers.push(modifier);
         self
     }
 
     #[must_use]
-    pub fn padding(mut self, padding: EdgeInsets) -> Self {
-        self.style.padding = padding;
+    pub fn modifiers(mut self, modifiers: impl IntoIterator<Item = Modifier>) -> Self {
+        self.modifiers.extend(modifiers);
         self
     }
 
     #[must_use]
-    pub fn background(mut self, color: Color) -> Self {
-        self.style.background = Some(color);
-        self
+    pub fn resolved_style(&self) -> Style {
+        self.modifiers.resolve_style()
     }
 
     #[must_use]
-    pub fn foreground(mut self, color: Color) -> Self {
-        self.style.foreground = color;
-        self
+    pub fn padding_all(self, value: f32) -> Self {
+        self.modifier(Modifier::Padding(EdgeInsets::all(value)))
     }
 
     #[must_use]
-    pub fn corner_radius(mut self, radius: f32) -> Self {
-        self.style.corner_radius = radius;
-        self
+    pub fn padding(self, padding: EdgeInsets) -> Self {
+        self.modifier(Modifier::Padding(padding))
     }
 
     #[must_use]
-    pub fn spacing(mut self, spacing: f32) -> Self {
-        self.style.spacing = spacing;
-        self
+    pub fn background(self, color: Color) -> Self {
+        self.modifier(Modifier::Background(color))
     }
 
     #[must_use]
-    pub fn width(mut self, width: f32) -> Self {
-        self.style.width = Some(width);
-        self
+    pub fn foreground(self, color: Color) -> Self {
+        self.modifier(Modifier::Foreground(color))
     }
 
     #[must_use]
-    pub fn height(mut self, height: f32) -> Self {
-        self.style.height = Some(height);
-        self
+    pub fn corner_radius(self, radius: f32) -> Self {
+        self.modifier(Modifier::CornerRadius(radius))
+    }
+
+    #[must_use]
+    pub fn spacing(self, spacing: f32) -> Self {
+        self.modifier(Modifier::Spacing(spacing))
+    }
+
+    #[must_use]
+    pub fn width(self, width: f32) -> Self {
+        self.modifier(Modifier::Width(width))
+    }
+
+    #[must_use]
+    pub fn height(self, height: f32) -> Self {
+        self.modifier(Modifier::Height(height))
+    }
+
+    #[must_use]
+    pub fn clip(self) -> Self {
+        self.modifier(Modifier::ClipBounds)
+    }
+
+    #[must_use]
+    pub fn clip_rounded(self, radius: f32) -> Self {
+        self.modifier(Modifier::ClipRounded(radius))
+    }
+
+    #[must_use]
+    pub fn translate(self, x: f32, y: f32) -> Self {
+        self.modifier(Modifier::Translate { x, y })
+    }
+
+    #[must_use]
+    pub fn scale(self, x: f32, y: f32) -> Self {
+        self.modifier(Modifier::Scale { x, y })
+    }
+
+    #[must_use]
+    pub fn scale_uniform(self, scale: f32) -> Self {
+        self.scale(scale, scale)
+    }
+
+    #[must_use]
+    pub fn rotate_degrees(self, degrees: f32) -> Self {
+        self.modifier(Modifier::RotateDegrees(degrees))
+    }
+
+    #[must_use]
+    pub fn transform_origin(self, x: f32, y: f32) -> Self {
+        self.modifier(Modifier::TransformOrigin(TransformOrigin::new(x, y)))
+    }
+
+    #[must_use]
+    pub fn opacity(self, opacity: f32) -> Self {
+        self.modifier(Modifier::Opacity(opacity))
+    }
+
+    #[must_use]
+    pub fn layer(self) -> Self {
+        self.modifier(Modifier::Layer)
     }
 
     #[must_use]

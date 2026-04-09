@@ -18,7 +18,9 @@ fn fake_handle(seed: usize) -> NonZeroUsize {
 fn test_submit() -> SceneSubmit {
     SceneSubmit::Full(Scene {
         size: Size::new(120.0, 80.0),
+        clear_color: Some(Color::WHITE),
         commands: vec![DrawCommand::Clear(Color::WHITE)],
+        layers: vec![zeno_graphics::SceneLayer::root(Size::new(120.0, 80.0))],
         blocks: Vec::new(),
     })
 }

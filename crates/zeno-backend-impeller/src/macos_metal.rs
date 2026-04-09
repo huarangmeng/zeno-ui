@@ -1,15 +1,18 @@
 mod shaders;
 mod text;
 
+use std::collections::HashMap;
+
 use fontdue::Font;
 use metal::{
     Buffer, CommandQueue, CompileOptions, Device, MTLClearColor, MTLBlendFactor, MTLLoadAction,
-    MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion, MTLResourceOptions, MTLSize,
-    MTLStoreAction, MTLTextureType, MTLTextureUsage, MetalDrawableRef, RenderPassDescriptor,
-    RenderPipelineDescriptor, RenderPipelineState, Texture, TextureDescriptor,
+    MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion, MTLResourceOptions, MTLScissorRect,
+    MTLSize, MTLStoreAction, MTLTextureType, MTLTextureUsage, MetalDrawableRef,
+    RenderPassDescriptor, RenderPipelineDescriptor, RenderPipelineState, Texture,
+    TextureDescriptor,
 };
-use zeno_core::{Color, Rect, ZenoError, ZenoErrorCode};
-use zeno_graphics::{DrawCommand, Scene, Shape};
+use zeno_core::{Color, Point, Rect, Transform2D, ZenoError, ZenoErrorCode};
+use zeno_graphics::{DrawCommand, Scene, SceneBlock, SceneClip, SceneLayer, Shape};
 use shaders::SHADERS;
 use text::{load_system_font, rasterize_text};
 
@@ -105,51 +108,30 @@ impl MetalSceneRenderer {
         let viewport_width = scene.size.width.max(1.0);
         let viewport_height = scene.size.height.max(1.0);
 
-        for command in &scene.commands {
-            match command {
-                DrawCommand::Clear(_) => {}
-                DrawCommand::Fill { shape, brush } => {
-                    let zeno_graphics::Brush::Solid(color) = brush;
-                    if let Some(vertices) =
-                        build_shape_vertices(shape, *color, viewport_width, viewport_height)
-                    {
-                        let buffer = new_buffer(&self.device, &vertices);
-                        encoder.set_render_pipeline_state(&self.color_pipeline);
-                        encoder.set_vertex_buffer(0, Some(&buffer), 0);
-                        encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
-                    }
-                }
-                DrawCommand::Stroke { .. } => {}
-                DrawCommand::Text {
-                    position,
-                    layout,
-                    color,
-                } => {
-                    let Some(font) = self.font.as_ref() else {
-                        continue;
-                    };
-                    let Some((mask, width, height, baseline)) =
-                        rasterize_text(font, layout.paragraph.text.as_str(), layout.paragraph.font_size)
-                    else {
-                        continue;
-                    };
-                    let texture = make_text_texture(&self.device, &mask, width, height);
-                    let vertices = build_text_vertices(
-                        position.x,
-                        position.y - baseline,
-                        width as f32,
-                        height as f32,
-                        *color,
-                        viewport_width,
-                        viewport_height,
-                    );
-                    let buffer = new_buffer(&self.device, &vertices);
-                    encoder.set_render_pipeline_state(&self.text_pipeline);
-                    encoder.set_vertex_buffer(0, Some(&buffer), 0);
-                    encoder.set_fragment_texture(0, Some(&texture));
-                    encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
-                }
-            }
+        if scene.blocks.is_empty() {
+            draw_commands(
+                &self.device,
+                &self.color_pipeline,
+                &self.text_pipeline,
+                self.font.as_ref(),
+                &encoder,
+                &scene.commands,
+                viewport_width,
+                viewport_height,
+                Transform2D::identity(),
+                1.0,
+            );
+        } else {
+            render_scene_layers(
+                &self.device,
+                &self.color_pipeline,
+                &self.text_pipeline,
+                self.font.as_ref(),
+                &encoder,
+                scene,
+                viewport_width,
+                viewport_height,
+            );
         }
 
         encoder.end_encoding();
@@ -271,18 +253,232 @@ fn create_text_pipeline(
         })
 }
 
+fn draw_commands(
+    device: &Device,
+    color_pipeline: &RenderPipelineState,
+    text_pipeline: &RenderPipelineState,
+    font: Option<&Font>,
+    encoder: &metal::RenderCommandEncoderRef,
+    commands: &[DrawCommand],
+    viewport_width: f32,
+    viewport_height: f32,
+    transform: Transform2D,
+    opacity_multiplier: f32,
+) {
+    for command in commands {
+        match command {
+            DrawCommand::Clear(_) => {}
+            DrawCommand::Fill { shape, brush } => {
+                let zeno_graphics::Brush::Solid(color) = brush;
+                if let Some(vertices) =
+                    build_shape_vertices(
+                        shape,
+                        apply_alpha(*color, opacity_multiplier),
+                        viewport_width,
+                        viewport_height,
+                        transform,
+                    )
+                {
+                    let buffer = new_buffer(device, &vertices);
+                    encoder.set_render_pipeline_state(color_pipeline);
+                    encoder.set_vertex_buffer(0, Some(&buffer), 0);
+                    encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
+                }
+            }
+            DrawCommand::Stroke { .. } => {}
+            DrawCommand::Text {
+                position,
+                layout,
+                color,
+            } => {
+                let Some(font) = font else {
+                    continue;
+                };
+                let Some((mask, width, height, baseline)) =
+                    rasterize_text(font, layout.paragraph.text.as_str(), layout.paragraph.font_size)
+                else {
+                    continue;
+                };
+                let texture = make_text_texture(device, &mask, width, height);
+                let mapped = transform.map_point(Point::new(position.x, position.y - baseline));
+                let vertices = build_text_vertices(
+                    mapped.x,
+                    mapped.y,
+                    width as f32,
+                    height as f32,
+                    apply_alpha(*color, opacity_multiplier),
+                    viewport_width,
+                    viewport_height,
+                );
+                let buffer = new_buffer(device, &vertices);
+                encoder.set_render_pipeline_state(text_pipeline);
+                encoder.set_vertex_buffer(0, Some(&buffer), 0);
+                encoder.set_fragment_texture(0, Some(&texture));
+                encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
+            }
+        }
+    }
+}
+
+fn render_scene_layers(
+    device: &Device,
+    color_pipeline: &RenderPipelineState,
+    text_pipeline: &RenderPipelineState,
+    font: Option<&Font>,
+    encoder: &metal::RenderCommandEncoderRef,
+    scene: &Scene,
+    viewport_width: f32,
+    viewport_height: f32,
+) {
+    let layers_by_id: HashMap<u64, &SceneLayer> =
+        scene.layers.iter().map(|layer| (layer.layer_id, layer)).collect();
+    let mut child_layers_by_parent: HashMap<u64, Vec<&SceneLayer>> = HashMap::new();
+    let mut blocks_by_layer: HashMap<u64, Vec<&SceneBlock>> = HashMap::new();
+    for layer in &scene.layers {
+        if let Some(parent_id) = layer.parent_layer_id {
+            child_layers_by_parent.entry(parent_id).or_default().push(layer);
+        }
+    }
+    for block in &scene.blocks {
+        blocks_by_layer.entry(block.layer_id).or_default().push(block);
+    }
+    let full_scissor = scissor_for_rect(
+        Rect::new(0.0, 0.0, viewport_width, viewport_height),
+        viewport_width,
+        viewport_height,
+    );
+    render_layer(
+        device,
+        color_pipeline,
+        text_pipeline,
+        font,
+        encoder,
+        Scene::ROOT_LAYER_ID,
+        Transform2D::identity(),
+        1.0,
+        full_scissor,
+        &layers_by_id,
+        &child_layers_by_parent,
+        &blocks_by_layer,
+        viewport_width,
+        viewport_height,
+    );
+    encoder.set_scissor_rect(full_scissor);
+}
+
+fn render_layer(
+    device: &Device,
+    color_pipeline: &RenderPipelineState,
+    text_pipeline: &RenderPipelineState,
+    font: Option<&Font>,
+    encoder: &metal::RenderCommandEncoderRef,
+    layer_id: u64,
+    parent_transform: Transform2D,
+    parent_opacity: f32,
+    parent_scissor: MTLScissorRect,
+    layers_by_id: &HashMap<u64, &SceneLayer>,
+    child_layers_by_parent: &HashMap<u64, Vec<&SceneLayer>>,
+    blocks_by_layer: &HashMap<u64, Vec<&SceneBlock>>,
+    viewport_width: f32,
+    viewport_height: f32,
+) {
+    let Some(layer) = layers_by_id.get(&layer_id).copied() else {
+        return;
+    };
+    let combined_transform = parent_transform.then(layer.transform);
+    let combined_opacity = parent_opacity * layer.opacity;
+    let layer_scissor = layer.clip.map_or(parent_scissor, |clip| {
+        intersect_scissor(
+            parent_scissor,
+            scissor_for_rect(clip_rect(clip, combined_transform), viewport_width, viewport_height),
+        )
+    });
+    encoder.set_scissor_rect(layer_scissor);
+    let mut items = Vec::new();
+    if let Some(blocks) = blocks_by_layer.get(&layer_id) {
+        for block in blocks {
+            items.push((block.order, LayerItem::Block(*block)));
+        }
+    }
+    if let Some(children) = child_layers_by_parent.get(&layer_id) {
+        for child in children {
+            items.push((child.order, LayerItem::Layer(child.layer_id)));
+        }
+    }
+    items.sort_by_key(|(order, _)| *order);
+    for (_, item) in items {
+        match item {
+            LayerItem::Block(block) => {
+                let block_transform = combined_transform.then(block.transform);
+                let block_scissor = block.clip.map_or(layer_scissor, |clip| {
+                    intersect_scissor(
+                        layer_scissor,
+                        scissor_for_rect(
+                            clip_rect(clip, block_transform),
+                            viewport_width,
+                            viewport_height,
+                        ),
+                    )
+                });
+                encoder.set_scissor_rect(block_scissor);
+                draw_commands(
+                    device,
+                    color_pipeline,
+                    text_pipeline,
+                    font,
+                    encoder,
+                    &block.commands,
+                    viewport_width,
+                    viewport_height,
+                    block_transform,
+                    combined_opacity,
+                );
+                encoder.set_scissor_rect(layer_scissor);
+            }
+            LayerItem::Layer(child_layer_id) => render_layer(
+                device,
+                color_pipeline,
+                text_pipeline,
+                font,
+                encoder,
+                child_layer_id,
+                combined_transform,
+                combined_opacity,
+                layer_scissor,
+                layers_by_id,
+                child_layers_by_parent,
+                blocks_by_layer,
+                viewport_width,
+                viewport_height,
+            ),
+        }
+    }
+}
+
+enum LayerItem<'a> {
+    Block(&'a SceneBlock),
+    Layer(u64),
+}
+
 fn build_shape_vertices(
     shape: &Shape,
     color: Color,
     viewport_width: f32,
     viewport_height: f32,
+    transform: Transform2D,
 ) -> Option<Vec<ColorVertex>> {
     let (rect, radius) = match shape {
         Shape::Rect(rect) => (*rect, 0.0),
         Shape::RoundedRect { rect, radius } => (*rect, *radius),
         Shape::Circle { .. } => return None,
     };
-    Some(build_quad_vertices(rect, radius, color, viewport_width, viewport_height))
+    Some(build_quad_vertices(
+        transform.map_rect(rect),
+        radius,
+        color,
+        viewport_width,
+        viewport_height,
+    ))
 }
 
 fn build_quad_vertices(
@@ -370,12 +566,11 @@ fn make_text_texture(device: &Device, alpha: &[u8], width: u32, height: u32) -> 
 
 fn clear_color_for_scene(scene: &Scene) -> MTLClearColor {
     let clear = scene
-        .commands
-        .iter()
-        .find_map(|command| match command {
+        .clear_color
+        .or_else(|| scene.commands.iter().find_map(|command| match command {
             DrawCommand::Clear(color) => Some(*color),
             _ => None,
-        })
+        }))
         .unwrap_or(Color::WHITE);
     MTLClearColor::new(
         f64::from(clear.red) / 255.0,
@@ -407,4 +602,48 @@ fn new_buffer<T>(device: &Device, values: &[T]) -> Buffer {
         std::mem::size_of_val(values) as u64,
         MTLResourceOptions::CPUCacheModeDefaultCache,
     )
+}
+
+fn clip_rect(clip: SceneClip, transform: Transform2D) -> Rect {
+    match clip {
+        SceneClip::Rect(rect) => transform.map_rect(rect),
+        SceneClip::RoundedRect { rect, .. } => transform.map_rect(rect),
+    }
+}
+
+fn scissor_for_rect(rect: Rect, viewport_width: f32, viewport_height: f32) -> MTLScissorRect {
+    let min_x = rect.origin.x.max(0.0).floor() as u64;
+    let min_y = rect.origin.y.max(0.0).floor() as u64;
+    let max_x = (rect.origin.x + rect.size.width)
+        .min(viewport_width)
+        .max(min_x as f32)
+        .ceil() as u64;
+    let max_y = (rect.origin.y + rect.size.height)
+        .min(viewport_height)
+        .max(min_y as f32)
+        .ceil() as u64;
+    MTLScissorRect {
+        x: min_x,
+        y: min_y,
+        width: max_x.saturating_sub(min_x),
+        height: max_y.saturating_sub(min_y),
+    }
+}
+
+fn intersect_scissor(a: MTLScissorRect, b: MTLScissorRect) -> MTLScissorRect {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    let right = (a.x + a.width).min(b.x + b.width);
+    let bottom = (a.y + a.height).min(b.y + b.height);
+    MTLScissorRect {
+        x,
+        y,
+        width: right.saturating_sub(x),
+        height: bottom.saturating_sub(y),
+    }
+}
+
+fn apply_alpha(color: Color, opacity_multiplier: f32) -> Color {
+    let alpha = ((f32::from(color.alpha) * opacity_multiplier).clamp(0.0, 255.0)).round() as u8;
+    Color::rgba(color.red, color.green, color.blue, alpha)
 }
