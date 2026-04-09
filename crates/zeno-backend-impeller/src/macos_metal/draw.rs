@@ -1,14 +1,13 @@
-use std::collections::HashMap;
-
 use fontdue::Font;
 use metal::{
     Buffer, Device, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion, MTLResourceOptions,
     MTLSize, MTLTextureType, MTLTextureUsage, RenderPipelineState, Texture,
 };
 use zeno_core::{Color, Point, Rect, Transform2D};
-use zeno_graphics::{DrawCommand, Scene, Shape};
+use zeno_scene::{DrawCommand, Scene, Shape};
+use zeno_text::GlyphRasterCache;
 
-use super::text::{CachedGlyph, GlyphCacheKey, glyph_cache_key, rasterize_glyph, rasterize_layout};
+use super::text::rasterize_layout;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -50,13 +49,13 @@ pub(super) fn draw_commands(
     viewport_height: f32,
     transform: Transform2D,
     opacity_multiplier: f32,
-    glyph_cache: &mut HashMap<GlyphCacheKey, CachedGlyph>,
+    glyph_cache: &GlyphRasterCache,
 ) {
     for command in commands {
         match command {
             DrawCommand::Clear(_) => {}
             DrawCommand::Fill { shape, brush } => {
-                let zeno_graphics::Brush::Solid(color) = brush;
+                let zeno_scene::Brush::Solid(color) = brush;
                 if let Some(vertices) = build_shape_vertices(
                     shape,
                     apply_alpha(*color, opacity_multiplier),
@@ -81,13 +80,7 @@ pub(super) fn draw_commands(
                 };
                 let Some((mask, width, height)) =
                     rasterize_layout(layout, |glyph_id, glyph, font_size| {
-                        let key = glyph_cache_key(glyph_id, font_size);
-                        if let Some(cached) = glyph_cache.get(&key) {
-                            return Some(cached.clone());
-                        }
-                        let cached = rasterize_glyph(font, glyph_id, glyph, font_size);
-                        glyph_cache.insert(key, cached.clone());
-                        Some(cached)
+                        Some(glyph_cache.get_or_rasterize(font, glyph_id, glyph, font_size))
                     })
                 else {
                     continue;

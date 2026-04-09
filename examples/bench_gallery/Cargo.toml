@@ -1,0 +1,13 @@
+[package]
+name = "bench_gallery"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zeno-core = { path = "../../crates/zeno-core" }
+zeno-foundation = { path = "../../crates/zeno-foundation" }
+zeno-runtime = { path = "../../crates/zeno-runtime" }
+zeno-scene = { path = "../../crates/zeno-scene" }
+zeno-text = { path = "../../crates/zeno-text" }
+zeno-ui = { path = "../../crates/zeno-ui"}

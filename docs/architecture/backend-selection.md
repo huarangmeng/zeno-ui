@@ -18,12 +18,12 @@
 | Windows | probe 返回未实现 | 策略层可解析，桌面实现以 Skia 为主 | 当前解析到 Skia |
 | macOS | 已有 Metal presenter 路径 | 已有真实桌面路径 | 默认优先解析到 Impeller |
 | Linux | probe 返回未实现 | 策略层可解析，桌面实现以 Skia 为主 | 当前解析到 Skia |
-| Android | probe 返回未实现 | 已有 native-window presenter builder 与 render session 工厂路径 | 当前 Impeller probe 返回未实现 |
-| iOS | probe 返回未实现 | 已有 view/metal-layer presenter builder 与 render session 工厂路径 | 当前 Impeller probe 返回未实现 |
+| Android | probe 返回未实现 | shell 已统一拒绝 Impeller session/presenter 构建，仅保留 Skia native-window 路径 | 当前 Impeller probe 返回未实现且不会再被 session builder 乐观放行 |
+| iOS | probe 返回未实现 | shell 已统一拒绝 Impeller session/presenter 构建，仅保留 Skia view/metal-layer 路径 | 当前 Impeller probe 返回未实现且不会再被 session builder 乐观放行 |
 
 ## 当前限制
-- `ImpellerBackend::probe` 目前只有 macOS 返回 available，其他平台仍返回 `NotImplementedForPlatform`。
-- `ResolvedSession` 现在已显式携带 `platform + backend + attempts + frame_stats`，shell 已能在桌面/移动两侧基于统一 session descriptor 规划会话绑定；移动端还新增了 `MobileAttachContext`、固定的 `MobilePresenterInterface`、平台 presenter builder 与 `create_render_session` 工厂。
+- `ImpellerBackend::probe` 目前只有 macOS 返回 available，其他平台仍返回 `NotImplementedForPlatform`；shell 侧也已经把这份能力矩阵收敛为统一真相源，避免“probe 不可用但 presenter/session 仍可创建”的分叉。
+- `ResolvedSession` 现在已显式携带 `platform + backend + attempts + frame_stats`，shell 已能在桌面/移动两侧基于统一 session descriptor 规划会话绑定；移动端还新增了 `MobileAttachContext`、固定的 `MobilePresenterInterface`、平台 presenter builder 与 `create_render_session` 工厂，并在 bind/attach 阶段校验所需宿主 surface 类型。
 - macOS 上 runtime 虽然会优先选 Impeller，但 `Renderer` trait 对应的 Impeller 实现仍偏占位，真实桌面渲染依赖 shell 内的 Metal session。
 - Skia 作为兜底策略已经成立，但真实 GPU 桌面呈现依然主要由 shell 持有 surface 与上下文。
 
@@ -36,5 +36,5 @@
 
 ## 下一步
 - 为 Android/iOS 的 platform presenter 继续接入真实 swapchain / drawable / command buffer 生命周期，让当前 renderer-backed presenter 适配层演进为完整原生 GPU presenter。
-- 继续补齐非 macOS 平台的 Impeller presenter，实现 probe available 与真实可创建 session 的一致性。
+- 真正补齐非 macOS 平台的 Impeller presenter 时，需要同时更新 runtime probe、shell session plan、surface host requirement 与 presenter builder，继续保持单一真相源。
 - 持续扩展验证用例，保持默认策略、fallback、强制失败以及 desktop/mobile session 规划逻辑都可回归验证。

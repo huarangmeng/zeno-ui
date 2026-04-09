@@ -1,14 +1,15 @@
 [workspace]
 members = [
-    ".",
-    "crates/zeno-compose",
+    "crates/zeno-ui",
     "crates/zeno-core",
-    "crates/zeno-graphics",
+    "crates/zeno-foundation",
+    "crates/zeno-scene",
     "crates/zeno-runtime",
-    "crates/zeno-shell",
+    "crates/zeno-platform",
     "crates/zeno-backend-skia",
     "crates/zeno-backend-impeller",
     "crates/zeno-text",
+    "examples/bench_gallery",
     "examples/minimal_app",
     "examples/text_probe",
 ]
@@ -23,31 +24,3 @@ authors = ["zeno-ui"]
 [workspace.dependencies]
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
-
-[package]
-name = "zeno-ui"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[lib]
-crate-type = ["rlib", "staticlib", "cdylib"]
-
-[dependencies]
-zeno-compose = { path = "crates/zeno-compose" }
-zeno-core = { path = "crates/zeno-core" }
-zeno-graphics = { path = "crates/zeno-graphics" }
-zeno-runtime = { path = "crates/zeno-runtime" }
-zeno-text = { path = "crates/zeno-text" }
-zeno-shell = { path = "crates/zeno-shell", default-features = false }
-
-[features]
-default = []
-desktop = ["zeno-shell/desktop_winit"]
-macos = ["desktop"]
-linux = ["desktop"]
-windows = ["desktop"]
-mobile_android = ["zeno-shell/mobile_android"]
-mobile_ios = ["zeno-shell/mobile_ios"]
-android = ["mobile_android"]
-ios = ["mobile_ios"]

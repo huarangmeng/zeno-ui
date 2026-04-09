@@ -13,7 +13,7 @@
 - Skia 已具备真实绘制实现。
 - macOS Impeller 已具备 Metal presenter 与基础 scene 绘制原型。
 - 桌面窗口生命周期已经统一到 shell/presenter 侧。
-- runtime 与 shell 已完成统一 `ResolvedSession -> RenderSession` 主链路。
+- runtime 与 platform 已完成统一 `ResolvedSession -> RenderSession` 主链路，其中 runtime 负责 app/runtime 闭环，platform 负责 session host。
 - 移动端 shell 已具备 session binding、attachment、platform presenter builder 与 render session 主链路。
 - 当前仍未完成的部分：
   - Impeller 的通用 renderer 抽象仍偏占位。
@@ -24,8 +24,8 @@
 ## Phase 3 下一阶段重点
 - 继续细化 retained tree、dirty propagation、局部布局与局部重绘。
 - 继续重构 `Scene`，补齐资源句柄、layer、clip、transform 与更高阶缓存友好结构。
-- 将文本系统升级为真实 shaping + cache 管线，而不是只依赖 fallback 测量。
-- 增加 bench gallery、scene dump、layout dump 与更稳定的 frame stats 观测能力。
+- 继续扩真实 shaping 覆盖、字体 fallback 与缓存统计，而不是停留在当前 system shaping + glyph raster cache 主路径。
+- 在已有 bench gallery、scene dump、layout dump、bench suite 与 CI workflow 基础上，继续补 golden image 与性能基线管理能力。
 
 ## Phase 4 面向完整 UI 框架
 - 增加状态驱动与重组模型，逐步靠近真正 Compose 风格 runtime。
@@ -34,6 +34,6 @@
 
 ## 当前优先级
 1. 继续细化增量布局、局部提交与 Scene 高阶结构。
-2. 为 text 与 backend 补齐真实缓存与主路径能力。
+2. 为 text、effect/filter 与 backend 补齐更高阶缓存、融合与观测能力。
 3. 继续推进移动端 presenter/native object 的真实接入与 GPU 生命周期管理。
-4. 再扩展更复杂的 UI 语义、调试工具与跨平台宿主能力。
+4. 再扩展 golden image、调试工具与跨平台宿主能力。

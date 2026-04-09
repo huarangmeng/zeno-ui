@@ -1,17 +1,23 @@
-mod frame_scheduler;
-mod resolver;
-mod session;
+mod app;
+pub mod animation;
+mod host;
+pub mod input;
+pub mod lifecycle;
+mod scheduler;
 
-pub use frame_scheduler::{FramePhases, FrameScheduler};
-pub use resolver::{BackendAttempt, BackendResolver, ResolvedBackend};
-pub use session::ResolvedSession;
+pub use app::{App, AppFrame, AppView, PointerState};
+pub use host::{
+    AppHost, UiFrame, UiRuntime, run_app, run_app_with_text_system,
+};
+pub use scheduler::{FramePhases, FrameScheduler};
 
 #[cfg(test)]
 mod tests {
-    use super::{BackendResolver, FrameScheduler, ResolvedSession};
+    use super::FrameScheduler;
     use zeno_core::{
         Backend, BackendPreference, Platform, RendererConfig, WindowConfig, ZenoError,
     };
+    use zeno_platform::{BackendResolver, ResolvedSession};
 
     #[test]
     fn falls_back_to_skia_when_impeller_is_not_implemented_yet() {

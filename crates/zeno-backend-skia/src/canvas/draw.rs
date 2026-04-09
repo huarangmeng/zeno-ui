@@ -1,5 +1,5 @@
 use skia_safe as sk;
-use zeno_graphics::DrawCommand;
+use zeno_scene::DrawCommand;
 
 use crate::canvas::{
     mapping::{draw_shape, sk_color},
@@ -15,7 +15,7 @@ pub(crate) fn draw_command(canvas: &sk::Canvas, cmd: &DrawCommand, text_cache: &
             let mut paint = sk::Paint::default();
             paint.set_style(sk::paint::Style::Fill);
             paint.set_anti_alias(true);
-            let zeno_graphics::Brush::Solid(color) = brush;
+            let zeno_scene::Brush::Solid(color) = brush;
             paint.set_color(sk_color(*color));
             draw_shape(canvas, shape, &paint);
         }
@@ -41,31 +41,46 @@ pub(crate) fn draw_command(canvas: &sk::Canvas, cmd: &DrawCommand, text_cache: &
                 layout.paragraph.font_size.max(12.0),
             );
             font.set_edging(sk::font::Edging::AntiAlias);
-
-            // 优先走 glyph 提交路径，这样可以直接复用上游已经完成的 shaping 结果。
-            if layout.glyphs.iter().all(|glyph| glyph.glyph_id != 0) {
-                let glyph_ids: Vec<u16> =
-                    layout.glyphs.iter().map(|glyph| glyph.glyph_id).collect();
-                let positions: Vec<sk::Point> = layout
-                    .glyphs
-                    .iter()
-                    .map(|glyph| sk::Point::new(glyph.x, glyph.baseline_y))
-                    .collect();
-                canvas.draw_glyphs_at(
-                    &glyph_ids,
-                    positions.as_slice(),
-                    sk::Point::new(position.x, position.y),
-                    &font,
-                    &paint,
-                );
-            } else {
+            let mut glyph_run = Vec::new();
+            for glyph in &layout.glyphs {
+                if glyph.glyph_id != 0 {
+                    glyph_run.push(glyph);
+                    continue;
+                }
+                flush_glyph_run(canvas, &glyph_run, *position, &font, &paint);
+                glyph_run.clear();
                 canvas.draw_str(
-                    layout.paragraph.text.as_str(),
-                    (position.x, position.y),
+                    glyph.glyph.to_string(),
+                    (position.x + glyph.x, position.y + glyph.baseline_y),
                     &font,
                     &paint,
                 );
             }
+            flush_glyph_run(canvas, &glyph_run, *position, &font, &paint);
         }
     }
+}
+
+fn flush_glyph_run(
+    canvas: &sk::Canvas,
+    glyph_run: &[&zeno_text::ShapedGlyph],
+    position: zeno_core::Point,
+    font: &sk::Font,
+    paint: &sk::Paint,
+) {
+    if glyph_run.is_empty() {
+        return;
+    }
+    let glyph_ids: Vec<u16> = glyph_run.iter().map(|glyph| glyph.glyph_id).collect();
+    let positions: Vec<sk::Point> = glyph_run
+        .iter()
+        .map(|glyph| sk::Point::new(glyph.x, glyph.baseline_y))
+        .collect();
+    canvas.draw_glyphs_at(
+        &glyph_ids,
+        positions.as_slice(),
+        sk::Point::new(position.x, position.y),
+        font,
+        paint,
+    );
 }

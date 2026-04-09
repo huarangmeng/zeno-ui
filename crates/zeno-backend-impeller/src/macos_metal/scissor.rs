@@ -1,6 +1,6 @@
 use metal::MTLScissorRect;
 use zeno_core::{Rect, Transform2D};
-use zeno_graphics::SceneClip;
+use zeno_scene::SceneClip;
 
 // 统一管理裁剪矩形与坐标变换，避免渲染递归里散落几何细节。
 pub(super) fn clip_rect(clip: SceneClip, transform: Transform2D) -> Rect {

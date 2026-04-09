@@ -3,20 +3,20 @@
 ## 目标
 
 - 对外按“平台 SDK”交付，而不是要求接入方自己拼装 `runtime + shell + backend`。
-- `zeno-shell` 跟随平台 SDK 一起发布，因为它承担宿主层职责：窗口、事件循环、surface、session binding、平台 presenter 规划。
+- `zeno-platform` 跟随平台 SDK 一起发布，因为它承担宿主层职责：窗口、事件循环、surface、session binding、平台 presenter 规划。
 - 根 crate `zeno-ui` 作为统一发布入口，内部继续保持多 crate 分层。
 
 ## 当前建议的交付层次
 
 ### 1. Core SDK
 
-- 组成：`zeno-compose`、`zeno-runtime`、`zeno-graphics`、`zeno-text`
+- 组成：`zeno-ui`、`zeno-runtime`、`zeno-scene`、`zeno-text`
 - 用途：给需要自行接宿主层的高级接入方
 - 形式：Rust crate 依赖
 
 ### 2. Platform SDK
 
-- 组成：Core SDK + `zeno-shell` + 对应 backend
+- 组成：Core SDK + `zeno-platform` + 对应 backend
 - 用途：给真正要落地到 macOS / Linux / Windows / Android / iOS 的业务方
 - 形式：
   - 桌面：Rust crate 或 native library bundle
@@ -29,11 +29,11 @@
 - iOS：Swift / Objective-C facade
 - 桌面：Rust facade 或上层语言绑定
 
-## 为什么平台 SDK 必须包含 zeno-shell
+## 为什么平台 SDK 必须包含 zeno-platform
 
-- `zeno-runtime` 只负责解析 `ResolvedSession`，不接真实宿主对象。
-- `zeno-shell` 负责平台 surface、窗口生命周期、事件循环和移动端 session binding。
-- 如果平台 SDK 不带 `zeno-shell`，接入方就必须自己实现宿主层，SDK 将退化成渲染内核而不是可直接接入的跨平台 SDK。
+- `zeno-runtime` 只负责 `App/AppFrame/AppHost/run_app + UiRuntime` 闭环，不接真实宿主对象。
+- `zeno-platform` 负责平台 surface、窗口生命周期、事件循环和移动端 session binding。
+- 如果平台 SDK 不带 `zeno-platform`，接入方就必须自己实现宿主层，SDK 将退化成渲染内核而不是可直接接入的跨平台 SDK。
 
 ## 当前仓库里的打包入口
 

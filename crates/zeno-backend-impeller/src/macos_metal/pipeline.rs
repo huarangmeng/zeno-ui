@@ -2,7 +2,7 @@ use metal::{
     Device, MTLBlendFactor, MTLPixelFormat, RenderPipelineDescriptor, RenderPipelineState,
 };
 use zeno_core::{ZenoError, ZenoErrorCode};
-use zeno_graphics::SceneBlendMode;
+use zeno_scene::SceneBlendMode;
 
 // 负责创建 Metal 渲染管线，避免主入口文件继续堆叠初始化细节。
 pub(super) fn create_color_pipeline(

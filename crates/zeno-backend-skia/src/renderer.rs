@@ -1,6 +1,6 @@
 use skia_safe as sk;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
-use zeno_graphics::{FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene};
+use zeno_scene::{FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene};
 
 use crate::canvas::{SkiaTextCache, render_scene_to_canvas};
 

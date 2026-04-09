@@ -1,5 +1,5 @@
 use zeno_core::{Backend, Platform, ZenoError};
-use zeno_graphics::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
+use zeno_scene::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
 
 #[cfg(feature = "native_skia")]
 use crate::renderer::SkiaRenderer as SelectedRenderer;

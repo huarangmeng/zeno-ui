@@ -102,6 +102,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
+name = "bench_gallery"
+version = "0.1.0"
+dependencies = [
+ "zeno-core",
+ "zeno-foundation",
+ "zeno-runtime",
+ "zeno-scene",
+ "zeno-text",
+ "zeno-ui",
+]
+
+[[package]]
 name = "bindgen"
 version = "0.72.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1024,7 +1036,11 @@ checksum = "68354c5c6bd36d73ff3feceb05efa59b6acb7626617f4962be322a825e61f79a"
 name = "minimal_app"
 version = "0.1.0"
 dependencies = [
- "zeno-shell",
+ "zeno-core",
+ "zeno-foundation",
+ "zeno-platform",
+ "zeno-runtime",
+ "zeno-scene",
  "zeno-text",
  "zeno-ui",
 ]
@@ -1887,6 +1903,11 @@ dependencies = [
 name = "text_probe"
 version = "0.1.0"
 dependencies = [
+ "zeno-core",
+ "zeno-foundation",
+ "zeno-runtime",
+ "zeno-scene",
+ "zeno-text",
  "zeno-ui",
 ]
 
@@ -2644,7 +2665,7 @@ dependencies = [
  "fontdue",
  "metal",
  "zeno-core",
- "zeno-graphics",
+ "zeno-scene",
  "zeno-text",
 ]
 
@@ -2654,15 +2675,7 @@ version = "0.1.0"
 dependencies = [
  "skia-safe",
  "zeno-core",
- "zeno-graphics",
-]
-
-[[package]]
-name = "zeno-compose"
-version = "0.1.0"
-dependencies = [
- "zeno-core",
- "zeno-graphics",
+ "zeno-scene",
  "zeno-text",
 ]
 
@@ -2675,25 +2688,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "zeno-graphics"
+name = "zeno-foundation"
 version = "0.1.0"
 dependencies = [
- "zeno-core",
  "zeno-text",
+ "zeno-ui",
 ]
 
 [[package]]
-name = "zeno-runtime"
-version = "0.1.0"
-dependencies = [
- "zeno-backend-impeller",
- "zeno-backend-skia",
- "zeno-core",
- "zeno-graphics",
-]
-
-[[package]]
-name = "zeno-shell"
+name = "zeno-platform"
 version = "0.1.0"
 dependencies = [
  "cocoa",
@@ -2708,8 +2711,27 @@ dependencies = [
  "zeno-backend-impeller",
  "zeno-backend-skia",
  "zeno-core",
- "zeno-graphics",
- "zeno-runtime",
+ "zeno-scene",
+ "zeno-text",
+]
+
+[[package]]
+name = "zeno-runtime"
+version = "0.1.0"
+dependencies = [
+ "zeno-core",
+ "zeno-platform",
+ "zeno-scene",
+ "zeno-text",
+ "zeno-ui",
+]
+
+[[package]]
+name = "zeno-scene"
+version = "0.1.0"
+dependencies = [
+ "zeno-core",
+ "zeno-text",
 ]
 
 [[package]]
@@ -2717,6 +2739,7 @@ name = "zeno-text"
 version = "0.1.0"
 dependencies = [
  "font-kit",
+ "fontdue",
  "rustybuzz",
  "zeno-core",
 ]
@@ -2725,11 +2748,9 @@ dependencies = [
 name = "zeno-ui"
 version = "0.1.0"
 dependencies = [
- "zeno-compose",
  "zeno-core",
- "zeno-graphics",
- "zeno-runtime",
- "zeno-shell",
+ "zeno-foundation",
+ "zeno-scene",
  "zeno-text",
 ]
 

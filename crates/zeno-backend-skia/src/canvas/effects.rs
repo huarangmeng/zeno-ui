@@ -1,6 +1,6 @@
 use skia_safe as sk;
 use zeno_core::Rect;
-use zeno_graphics::{SceneBlendMode, SceneEffect, SceneLayer};
+use zeno_scene::{SceneBlendMode, SceneEffect, SceneLayer};
 
 use crate::canvas::mapping::sk_color;
 

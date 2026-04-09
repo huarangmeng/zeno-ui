@@ -1,5 +1,5 @@
 use zeno_core::{Backend, ZenoError};
-use zeno_graphics::{FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene};
+use zeno_scene::{FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ImpellerRenderer;
@@ -34,7 +34,7 @@ impl Renderer for ImpellerRenderer {
 #[cfg(test)]
 mod tests {
     use super::ImpellerRenderer;
-    use zeno_graphics::Renderer;
+    use zeno_scene::Renderer;
 
     #[test]
     fn capabilities_report_offscreen_and_filters() {

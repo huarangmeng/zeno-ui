@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 
 use fontdue::Font;
-use metal::{CommandBufferRef, Device, MTLScissorRect, RenderPipelineState};
+use metal::{CommandQueue, Device, MTLScissorRect, RenderPipelineState};
 use zeno_core::Transform2D;
-use zeno_graphics::{Scene, SceneBlock, SceneLayer};
+use zeno_scene::{Scene, SceneBlock, SceneLayer};
+use zeno_text::GlyphRasterCache;
 
 use super::{
     draw::draw_commands,
     offscreen::{render_offscreen_layer, should_render_offscreen},
     scissor::{clip_rect, intersect_scissor, scissor_for_rect},
-    text::{CachedGlyph, GlyphCacheKey},
 };
 
 enum LayerItem<'a> {
@@ -21,19 +21,19 @@ enum LayerItem<'a> {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_scene_layers(
     device: &Device,
+    queue: &CommandQueue,
     color_pipeline: &RenderPipelineState,
     text_pipeline: &RenderPipelineState,
     composite_pipeline: &RenderPipelineState,
     composite_multiply_pipeline: &RenderPipelineState,
     composite_screen_pipeline: &RenderPipelineState,
     font: Option<&Font>,
-    command_buffer: &CommandBufferRef,
     encoder: &metal::RenderCommandEncoderRef,
     scene: &Scene,
     root_scissor: MTLScissorRect,
     viewport_width: f32,
     viewport_height: f32,
-    glyph_cache: &mut HashMap<GlyphCacheKey, CachedGlyph>,
+    glyph_cache: &GlyphRasterCache,
 ) {
     let layers_by_id: HashMap<u64, &SceneLayer> = scene
         .layers
@@ -61,13 +61,13 @@ pub(super) fn render_scene_layers(
     };
     render_layer(
         device,
+        queue,
         color_pipeline,
         text_pipeline,
         composite_pipeline,
         composite_multiply_pipeline,
         composite_screen_pipeline,
         font,
-        command_buffer,
         encoder,
         root_layer,
         Transform2D::identity(),
@@ -86,13 +86,13 @@ pub(super) fn render_scene_layers(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_layer(
     device: &Device,
+    queue: &CommandQueue,
     color_pipeline: &RenderPipelineState,
     text_pipeline: &RenderPipelineState,
     composite_pipeline: &RenderPipelineState,
     composite_multiply_pipeline: &RenderPipelineState,
     composite_screen_pipeline: &RenderPipelineState,
     font: Option<&Font>,
-    command_buffer: &CommandBufferRef,
     encoder: &metal::RenderCommandEncoderRef,
     layer: &SceneLayer,
     combined_transform: Transform2D,
@@ -103,7 +103,7 @@ pub(super) fn render_layer(
     blocks_by_layer: &HashMap<u64, Vec<&SceneBlock>>,
     viewport_width: f32,
     viewport_height: f32,
-    glyph_cache: &mut HashMap<GlyphCacheKey, CachedGlyph>,
+    glyph_cache: &GlyphRasterCache,
 ) {
     let layer_scissor = layer.clip.map_or(parent_scissor, |clip| {
         intersect_scissor(
@@ -167,13 +167,13 @@ pub(super) fn render_layer(
                 if should_render_offscreen(child_layer) {
                     render_offscreen_layer(
                         device,
+                        queue,
                         color_pipeline,
                         text_pipeline,
                         composite_pipeline,
                         composite_multiply_pipeline,
                         composite_screen_pipeline,
                         font,
-                        command_buffer,
                         encoder,
                         child_layer,
                         child_transform,
@@ -190,13 +190,13 @@ pub(super) fn render_layer(
                 } else {
                     render_layer(
                         device,
+                        queue,
                         color_pipeline,
                         text_pipeline,
                         composite_pipeline,
                         composite_multiply_pipeline,
                         composite_screen_pipeline,
                         font,
-                        command_buffer,
                         encoder,
                         child_layer,
                         child_transform,

@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use fontdue::Font;
 use metal::{
-    CommandBufferRef, Device, MTLClearColor, MTLLoadAction, MTLPrimitiveType, MTLScissorRect,
+    CommandQueue, Device, MTLClearColor, MTLLoadAction, MTLPrimitiveType, MTLScissorRect,
     MTLStoreAction, RenderPassDescriptor, RenderPipelineState, Texture,
 };
-use zeno_core::{Rect, Transform2D};
-use zeno_graphics::{Scene, SceneBlendMode, SceneBlock, SceneEffect, SceneLayer};
+use zeno_core::{Rect, Transform2D, zeno_session_log};
+use zeno_scene::{Scene, SceneBlendMode, SceneBlock, SceneEffect, SceneLayer};
+use zeno_text::GlyphRasterCache;
 
 use super::{
     draw::{
@@ -16,7 +17,6 @@ use super::{
     scissor::{
         intersect_scissor, inverse_map_rect, rect_from_scissor, rect_intersection, scissor_for_rect,
     },
-    text::{CachedGlyph, GlyphCacheKey},
 };
 
 #[repr(C, align(16))]
@@ -35,13 +35,13 @@ pub(super) struct CompositeParams {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_offscreen_layer(
     device: &Device,
+    queue: &CommandQueue,
     color_pipeline: &RenderPipelineState,
     text_pipeline: &RenderPipelineState,
     composite_pipeline: &RenderPipelineState,
     composite_multiply_pipeline: &RenderPipelineState,
     composite_screen_pipeline: &RenderPipelineState,
     font: Option<&Font>,
-    command_buffer: &CommandBufferRef,
     parent_encoder: &metal::RenderCommandEncoderRef,
     layer: &SceneLayer,
     combined_transform: Transform2D,
@@ -52,7 +52,7 @@ pub(super) fn render_offscreen_layer(
     blocks_by_layer: &HashMap<u64, Vec<&SceneBlock>>,
     parent_viewport_width: f32,
     parent_viewport_height: f32,
-    glyph_cache: &mut HashMap<GlyphCacheKey, CachedGlyph>,
+    glyph_cache: &GlyphRasterCache,
 ) {
     let effect_bounds = local_effect_bounds(layer);
     let texture_width = effect_bounds.size.width.max(1.0).ceil() as u64;
@@ -66,12 +66,24 @@ pub(super) fn render_offscreen_layer(
     attachment.set_load_action(MTLLoadAction::Clear);
     attachment.set_store_action(MTLStoreAction::Store);
     attachment.set_clear_color(MTLClearColor::new(0.0, 0.0, 0.0, 0.0));
-    let offscreen_encoder = command_buffer.new_render_command_encoder(&render_pass);
+    zeno_session_log!(
+        trace,
+        op = "impeller_encoder_offscreen_begin",
+        layer_id = layer.layer_id,
+        texture_width,
+        texture_height,
+        "impeller offscreen encoder begin"
+    );
+    let offscreen_command_buffer = queue.new_command_buffer();
+    let offscreen_encoder = offscreen_command_buffer.new_render_command_encoder(&render_pass);
     let offscreen_width = texture_width as f32;
     let offscreen_height = texture_height as f32;
     let parent_dirty_rect = rect_from_scissor(parent_scissor);
     let local_dirty_rect = inverse_map_rect(combined_transform, parent_dirty_rect)
         .and_then(|bounds| rect_intersection(bounds, effect_bounds))
+        .map(|bounds| {
+            expand_and_clip_rect(bounds, offscreen_sampling_padding(layer), effect_bounds)
+        })
         .unwrap_or(effect_bounds);
     let offscreen_scissor = scissor_for_rect(
         Rect::new(
@@ -86,13 +98,13 @@ pub(super) fn render_offscreen_layer(
     offscreen_encoder.set_scissor_rect(offscreen_scissor);
     render_layer(
         device,
+        queue,
         color_pipeline,
         text_pipeline,
         composite_pipeline,
         composite_multiply_pipeline,
         composite_screen_pipeline,
         font,
-        command_buffer,
         &offscreen_encoder,
         layer,
         Transform2D::translation(-effect_bounds.origin.x, -effect_bounds.origin.y),
@@ -105,7 +117,15 @@ pub(super) fn render_offscreen_layer(
         offscreen_height,
         glyph_cache,
     );
+    zeno_session_log!(
+        trace,
+        op = "impeller_encoder_offscreen_end",
+        layer_id = layer.layer_id,
+        "impeller offscreen encoder end"
+    );
     offscreen_encoder.end_encoding();
+    offscreen_command_buffer.commit();
+    offscreen_command_buffer.wait_until_completed();
 
     let composite_rect = combined_transform.map_rect(effect_bounds);
     let composite_scissor = intersect_scissor(
@@ -244,6 +264,18 @@ pub(super) fn local_effect_bounds(layer: &SceneLayer) -> Rect {
     bounds
 }
 
+pub(super) fn offscreen_sampling_padding(layer: &SceneLayer) -> f32 {
+    layer
+        .effects
+        .iter()
+        .fold(0.0, |padding, effect| match effect {
+            SceneEffect::Blur { sigma } => padding.max(sigma * 3.0),
+            SceneEffect::DropShadow { dx, dy, blur, .. } => {
+                padding.max(blur * 3.0 + dx.abs().max(dy.abs()))
+            }
+        })
+}
+
 pub(super) fn expand_rect(rect: Rect, amount: f32) -> Rect {
     Rect::new(
         rect.origin.x - amount,
@@ -251,4 +283,8 @@ pub(super) fn expand_rect(rect: Rect, amount: f32) -> Rect {
         rect.size.width + amount * 2.0,
         rect.size.height + amount * 2.0,
     )
+}
+
+fn expand_and_clip_rect(rect: Rect, amount: f32, clip: Rect) -> Rect {
+    rect_intersection(expand_rect(rect, amount), clip).unwrap_or(clip)
 }

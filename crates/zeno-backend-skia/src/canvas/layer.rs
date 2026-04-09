@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use skia_safe as sk;
-use zeno_graphics::{Scene, SceneBlock, SceneLayer};
+use zeno_scene::{Scene, SceneBlock, SceneLayer};
 
 use crate::canvas::{
     draw::draw_command,

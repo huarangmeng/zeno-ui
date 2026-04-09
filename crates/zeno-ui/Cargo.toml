@@ -1,0 +1,13 @@
+[package]
+name = "zeno-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zeno-core = { path = "../zeno-core" }
+zeno-scene = { path = "../zeno-scene" }
+zeno-text = { path = "../zeno-text" }
+
+[dev-dependencies]
+zeno-foundation = { path = "../zeno-foundation" }

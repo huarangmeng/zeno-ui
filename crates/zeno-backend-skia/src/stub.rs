@@ -1,5 +1,5 @@
 use zeno_core::{Backend, ZenoError};
-use zeno_graphics::{FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene};
+use zeno_scene::{FrameReport, RenderCapabilities, RenderSurface, Renderer, Scene};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StubSkiaRenderer;

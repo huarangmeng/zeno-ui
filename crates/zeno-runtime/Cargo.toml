@@ -5,7 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-zeno-backend-impeller = { path = "../zeno-backend-impeller" }
-zeno-backend-skia = { path = "../zeno-backend-skia" }
+zeno-ui = { path = "../zeno-ui" }
 zeno-core = { path = "../zeno-core" }
-zeno-graphics = { path = "../zeno-graphics" }
+zeno-platform = { path = "../zeno-platform", default-features = false }
+zeno-scene = { path = "../zeno-scene" }
+zeno-text = { path = "../zeno-text" }
+
+[features]
+default = []
+desktop_winit = ["zeno-platform/desktop_winit"]
+mobile_android = ["zeno-platform/mobile_android"]
+mobile_ios = ["zeno-platform/mobile_ios"]

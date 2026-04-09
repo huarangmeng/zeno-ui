@@ -1,9 +1,6 @@
-use std::sync::OnceLock;
-
-use font_kit::source::SystemSource;
 use rustybuzz::UnicodeBuffer;
 
-use crate::{ShapedGlyph, TextLayout, TextMetrics, TextParagraph};
+use crate::{ShapedGlyph, TextLayout, TextMetrics, TextParagraph, font::system_font_data};
 
 pub trait TextShaper: Send + Sync {
     fn name(&self) -> &'static str;
@@ -20,10 +17,20 @@ impl TextShaper for FallbackTextShaper {
     }
 
     fn shape(&self, paragraph: TextParagraph) -> TextLayout {
-        if let Some(layout) = shape_with_system_font(&paragraph) {
-            return layout;
-        }
         fallback_shape(paragraph)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub struct SystemTextShaper;
+
+impl TextShaper for SystemTextShaper {
+    fn name(&self) -> &'static str {
+        "system-shaper"
+    }
+
+    fn shape(&self, paragraph: TextParagraph) -> TextLayout {
+        shape_with_system_font(&paragraph).unwrap_or_else(|| fallback_shape(paragraph))
     }
 }
 
@@ -172,39 +179,13 @@ fn estimated_advance(glyph: char, font_size: f32) -> f32 {
     (font_size * factor).max(1.0)
 }
 
-fn system_font_data() -> Option<&'static [u8]> {
-    static FONT_DATA: OnceLock<Option<&'static [u8]>> = OnceLock::new();
-    FONT_DATA.get_or_init(load_system_font_data).to_owned()
-}
-
-fn load_system_font_data() -> Option<&'static [u8]> {
-    let families = [
-        "PingFang SC",
-        "Helvetica Neue",
-        "Arial",
-        "Noto Sans CJK SC",
-        "Noto Sans",
-    ];
-    for family in families {
-        if let Ok(handle) = SystemSource::new().select_family_by_name(family)
-            && let Some(font_handle) = handle.fonts().first()
-            && let Ok(font) = font_handle.load()
-            && let Some(bytes) = font.copy_font_data()
-        {
-            let leaked: &'static mut [u8] = Box::leak(bytes.as_slice().to_vec().into_boxed_slice());
-            return Some(leaked);
-        }
-    }
-    None
-}
-
 fn cluster_char(text: &str, cluster_index: usize) -> Option<char> {
     text.get(cluster_index..)?.chars().next()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{FallbackTextShaper, TextShaper};
+    use super::{FallbackTextShaper, SystemTextShaper, TextShaper};
     use crate::TextParagraph;
 
     #[test]
@@ -219,5 +200,14 @@ mod tests {
                 .windows(2)
                 .any(|pair| pair[1].baseline_y > pair[0].baseline_y)
         );
+        assert!(layout.glyphs.iter().all(|glyph| glyph.glyph_id == 0));
+    }
+
+    #[test]
+    fn system_shaper_uses_real_glyph_ids_when_font_is_available() {
+        let layout = SystemTextShaper.shape(TextParagraph::new("System shaping", 200.0));
+
+        assert!(!layout.glyphs.is_empty());
+        assert!(layout.glyphs.iter().any(|glyph| glyph.glyph_id != 0));
     }
 }

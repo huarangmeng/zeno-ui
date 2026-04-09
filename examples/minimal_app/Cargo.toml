@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-zeno-ui = { path = "../..", features = ["desktop"] }
-zeno-shell = { path = "../../crates/zeno-shell", features = ["desktop_winit"] }
+zeno-core = { path = "../../crates/zeno-core" }
+zeno-foundation = { path = "../../crates/zeno-foundation" }
+zeno-platform = { path = "../../crates/zeno-platform", features = ["desktop_winit"] }
+zeno-runtime = { path = "../../crates/zeno-runtime", features = ["desktop_winit"] }
+zeno-scene = { path = "../../crates/zeno-scene" }
 zeno-text = { path = "../../crates/zeno-text" }
+zeno-ui = { path = "../../crates/zeno-ui" }

@@ -11,10 +11,10 @@
 
 ## Current Scope
 - `Node` 作为统一声明式节点。
-- `text`、`container`、`column`、`row`、`spacer` 作为首批基础构件。
-- `Modifier` 链是节点装饰的唯一真相源；padding、background、foreground、corner radius、spacing、fixed size、clip、2D transform、transform origin、opacity、layer、effect 都在布局/绘制阶段按需解析。
+- `zeno-ui` 保留节点模型、modifier、layout、retained tree 与 scene 翻译；`text / container / column / row / spacer` 等首批基础构件已迁入 `zeno-foundation`，作为更接近 Compose Foundation 的稳定入口。
+- `Modifier` 链是节点装饰的唯一真相源；padding、background、foreground、font size、corner radius、spacing、fixed size、clip、2D transform、transform origin、opacity、layer、effect 都在布局/绘制阶段按需解析。
 - `ComposeRenderer` / `ComposeEngine` 负责把节点树测量并转换为 `SceneSubmit`。
-- 当前文本测量仍依赖 `TextSystem`，默认实现是 fallback 估算模型。
+- 当前文本测量依赖 `TextSystem`；默认门面路径可选择 fallback/system shaping 实现。
 
 ## Flow
 1. 上层通过声明式节点 API 构建组件树。
@@ -22,17 +22,17 @@
 3. 组件树进入布局系统，基于 viewport 和文本测量得到 frame。
 4. `ComposeRenderer` 把测量结果翻译为带 `SceneLayer + SceneBlock` 的结构化 `SceneSubmit`，其中 layer 承载 subtree clip / transform / opacity / blend / effect / offscreen 语义，必要时生成 `ScenePatch`。
 5. keyed rebuild 会先按 `NodeId` 做局部 reconcile，再决定走 cache hit、局部 relayout 或 patch 提交。
-6. runtime 解析 backend，shell 再将结构化 scene 提交给具体 render session。
+6. `UiRuntime` 与 runtime/shell 闭环会决定何时重组、何时提交；外部 app 只声明 `AppView`，不直接感知 `SceneSubmit`。
 
 ## 当前限制
 - keyed rebuild 目前依赖稳定 `NodeId`；未显式 `.key()` 的节点仍会退化为更粗粒度更新。
 - modifier 已覆盖样式、clip、完整 2D transform、transform origin、opacity、显式 layer 以及 blend / blur / drop shadow effect 链，但还没有扩展到 gesture、semantics 与更复杂 effect 参数。
-- dirty root 归并目前仍是 MVP，但已优先保留最小 dirty-root 集合，layout/text 兄弟节点可作为独立脏根并由父容器按需决定后续重排范围；结构变更会优先停留在最小容器根，避免无意义升级到更高祖先；当前剩余问题主要集中在更复杂 structure edit 下的跨层祖先裁剪策略。
+- dirty root 归并已从单纯祖先去重推进到“最小容器根 + 同父结构/顺序脏根合并”策略：layout/text 兄弟节点仍可作为独立脏根，结构变更与顺序变更会尽量收敛到最小共同容器根，并避免无意义升级到更高祖先；当前剩余问题主要集中在更复杂 effect tree 与更高阶结构 patch 类型。
 - `Scene` 已支持 `SceneLayer + SceneBlock + ScenePatch`，并具备 subtree clip / opacity / transform origin / effect stack 驱动的 retained compositor 基础；当前主要待补的是 filter graph、effect fusion 与更复杂 effect tree。
 - 文本布局结果在 `Scene` 发射阶段仍会复制，缺少缓存与共享引用结构。
 
 ## Next Steps
-- 继续细化 dirty root 合并策略与局部 relayout 影响范围，尤其是更复杂 structure edit 下的跨层祖先裁剪与 sibling 影响判定。
-- 继续细化 keyed reconcile 的 dirty reason 判断，把更多插入/删除/嵌套 layer 变化继续压缩成更小 patch，并在必要时扩展到 layer reorder / block reorder 之外的结构化 patch 类型。
+- 继续把当前“最小容器根 + 结构 patch”策略扩展到更复杂的 layer/effect tree，进一步减少高阶结构编辑时的 patch 面积。
+- 在现有 keyed reconcile 基础上继续扩展结构化 patch 类型，把更多 layer/effect 级编辑压缩为更小增量，而不是回退到更粗粒度 rebuild。
 - 把 modifier 从当前样式/compositor/effect 链继续扩展为可承载 filter graph、gesture 与交互语义的通用节点装饰模型。
-- 增加状态驱动、重组模型和更丰富的基础组件。
+- 在 `zeno-foundation` 中继续扩展 scroll、basic controls 与交互基础组件，并把更高层 design system 留给后续独立层。

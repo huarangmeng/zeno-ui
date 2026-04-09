@@ -1,5 +1,5 @@
 use zeno_core::{Backend, BackendUnavailableReason, Platform, ZenoError, ZenoErrorCode};
-use zeno_graphics::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
+use zeno_scene::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
 
 use crate::renderer::ImpellerRenderer;
 

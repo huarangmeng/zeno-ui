@@ -6,7 +6,8 @@ license.workspace = true
 
 [dependencies]
 zeno-core = { path = "../zeno-core" }
-zeno-graphics = { path = "../zeno-graphics" }
+zeno-scene = { path = "../zeno-scene" }
+zeno-text = { path = "../zeno-text" }
 
 [dependencies.skia-safe]
 version = "0.93"

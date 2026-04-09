@@ -1,6 +1,6 @@
 use skia_safe as sk;
 use zeno_core::{Color, Transform2D};
-use zeno_graphics::{SceneClip, Shape};
+use zeno_scene::{SceneClip, Shape};
 
 pub(crate) fn sk_color(color: Color) -> sk::Color {
     sk::Color::from_argb(color.alpha, color.red, color.green, color.blue)

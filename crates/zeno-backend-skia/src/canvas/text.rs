@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use skia_safe as sk;
-use zeno_graphics::SceneResourceKey;
+use zeno_scene::SceneResourceKey;
+use zeno_text::preferred_font_families;
 
 #[derive(Default)]
 pub struct SkiaTextCache {
@@ -83,17 +84,7 @@ fn build_font(typeface: Option<sk::Typeface>, font_size: f32) -> sk::Font {
 
 fn resolve_typeface_uncached(requested_family: &str) -> Option<sk::Typeface> {
     let font_mgr = sk::FontMgr::default();
-    let mut families = vec![
-        requested_family,
-        "PingFang SC",
-        "Helvetica Neue",
-        "Arial",
-        "Noto Sans",
-    ];
-    families.retain(|family| !family.is_empty() && *family != "System");
-
-    // 这里显式保留中文和通用西文字体回退，保证默认 macOS 桌面场景下的文本可读性。
-    for family in families {
+    for family in preferred_font_families(requested_family) {
         if let Some(typeface) = font_mgr.match_family_style(family, sk::FontStyle::normal()) {
             return Some(typeface);
         }

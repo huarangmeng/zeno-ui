@@ -17,7 +17,7 @@
 ## 当前共识
 
 - 代码已经从“纯骨架期”进入“统一 session + retained/patch MVP”阶段。
-- `zeno-compose -> SceneSubmit -> runtime -> shell -> backend` 主链路已经打通。
+- `zeno-ui -> SceneSubmit -> runtime -> shell -> backend` 主链路已经打通。
 - 桌面 Skia 路径稳定可用，macOS 上 Impeller 已具备 Metal presenter。
 - 移动端 shell 已具备 `session binding / attachment / presenter interface / render session` 主链路，Android/iOS 的 presenter 创建接口已经固定。
 - 下一阶段的重点不再是补主链路，而是继续细化 dirty root、局部 GPU 提交、文本主路径与工程化验证工具。
@@ -27,16 +27,16 @@
 - Workspace 已按 `core / graphics / runtime / shell / compose / text / backend-*` 垂直拆分。
 - Runtime 已实现 Impeller 优先、Skia 兜底的后端选择策略。
 - `zeno-backend-skia` 已提供真实 Scene 到 Skia Canvas 的翻译路径。
-- `zeno-shell` 已收敛出统一平台集成层，支持桌面 presenter 路径与移动端 `binding / attachment / presenter builder / render session` 链路。
-- `zeno-compose` 已具备 retained tree、dirty propagation、layout dirty roots、paint-only patch 与 `SceneSubmit` 提交模型。
+- `zeno-platform` 已收敛出统一平台集成层，支持桌面 presenter 路径与移动端 `binding / attachment / presenter builder / render session` 链路。
+- `zeno-ui` 已具备 retained tree、dirty propagation、layout dirty roots、paint-only patch 与 `SceneSubmit` 提交模型。
 - 根 crate 已提供 `macos`、`linux`、`windows`、`android`、`ios` 平台 preset feature。
 
 ## 进行中
 
-- `zeno-text` 仍以 fallback 测量为主，缺少真实 shaping 与缓存抽象。
-- `zeno-graphics::Scene` 已有 block / patch，但尚未继续演进到 layer、clip、transform 和更高阶资源句柄模型。
-- Impeller 的真实能力目前仍主要集中在 macOS；移动端虽已有 presenter 适配层，但真实 swapchain / drawable / command buffer 生命周期仍未完全落地，非 macOS 桌面与真局部 GPU 提交也仍未完成。
-- bench gallery、scene dump、layout dump、文本主路径等工程化与性能能力仍待继续补齐。
+- `zeno-text` 已补上 system shaping（rustybuzz）、paragraph cache 与后端共享 glyph 栅格缓存；下一步转向更完整的 shaping 覆盖与更强的缓存/统计体系。
+- `zeno-scene::Scene` 已具备 layer/clip/transform/effect/offscreen 的 retained compositor MVP；下一步转向更复杂 filter graph、多级 effect fusion 与资源句柄化。
+- Impeller 的真实能力目前仍主要集中在 macOS；移动端虽已有 presenter 适配层，但真实 swapchain / drawable / command buffer 生命周期仍未完全落地，非 macOS 桌面 Impeller 也仍未完成。
+- 已补 `examples/text_probe` 与 `examples/bench_gallery` 并提供 bench suite 脚本与 CI workflow；后续重点转向 golden image、更多场景覆盖与基线管理策略。
 
 ## 下一步整理原则
 

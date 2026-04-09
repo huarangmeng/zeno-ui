@@ -1,10 +1,7 @@
-mod ui_runtime;
-
-pub use ui_runtime::{UiFrame, UiRuntime};
-pub use zeno_compose::{
+pub use zeno_ui::{
     Axis, BlendMode, ComposeRenderer, ComposeStats, DropShadow, EdgeInsets, Modifier, Modifiers,
-    Node, NodeId, NodeKind, Style, TextNode, TransformOrigin, column, compose_scene, container,
-    dump_layout, dump_scene, row, spacer, text,
+    Node, NodeId, NodeKind, Style, TextNode, TransformOrigin, compose_scene, dump_layout,
+    dump_scene,
 };
 pub use zeno_core::{
     AppConfig, Backend, BackendPreference, Color, DebugConfig, Platform, PlatformCapabilities,
@@ -16,32 +13,43 @@ pub use zeno_core::{
     zeno_session_error, zeno_session_log, zeno_session_warn, zeno_trace, zeno_warn,
     zeno_warn_error, zeno_window_error, zeno_window_warn,
 };
-pub use zeno_graphics::{
+pub use zeno_foundation::{column, container, row, spacer, text};
+pub use zeno_scene::{
     Brush, CanvasOp, DrawCommand, FrameReport, GraphicsBackend, RenderCapabilities, RenderSession,
     RenderSurface, Renderer, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneEffect, SceneLayer,
     ScenePatch, SceneSubmit, SceneTransform, Shape,
 };
 pub use zeno_runtime::{
-    BackendAttempt, BackendResolver, FramePhases, FrameScheduler, ResolvedSession,
+    App, AppFrame, AppHost, AppView, PointerState, UiFrame, UiRuntime, run_app,
+    run_app_with_text_system,
 };
+pub use zeno_runtime::{
+    FramePhases, FrameScheduler,
+};
+pub use zeno_platform::session::{BackendAttempt, BackendResolver, ResolvedSession};
 #[cfg(feature = "mobile_android")]
-pub use zeno_shell::AndroidShell;
+pub use zeno_platform::android::AndroidShell;
 #[cfg(feature = "mobile_ios")]
-pub use zeno_shell::IosShell;
+pub use zeno_platform::ios::IosShell;
 #[cfg(any(feature = "mobile_android", feature = "mobile_ios"))]
-pub use zeno_shell::{
+pub use zeno_platform::mobile::{
     AndroidAttachContext, BoxedMobileRenderSession, IosMetalLayerAttachContext,
     IosViewAttachContext, MobileAttachContext, MobileAttachedSession, MobileHostKind,
     MobilePlatform, MobilePresenterAttachment, MobilePresenterInterface, MobilePresenterKind,
     MobileRenderSessionHandle, MobileSessionBinding, MobileShell, MobileViewport,
     create_mobile_render_session,
 };
-pub use zeno_shell::{MinimalShell, NativeSurface, PlatformDescriptor, Shell};
+pub use zeno_platform::{
+    MinimalShell, NativeSurface, NativeSurfaceHostAttachment, NativeSurfaceHostRequirement,
+    PlatformDescriptor, Shell,
+};
 pub use zeno_text::{
-    CachedTextSystem, FallbackTextShaper, FallbackTextSystem, FontDescriptor, ParagraphTextCache,
-    ShapedGlyph, TextCache, TextCacheStats, TextCapabilities, TextLayout, TextMetrics,
-    TextParagraph, TextParagraphKey, TextShaper, TextSystem,
+    CachedGlyph, CachedTextSystem, FallbackTextShaper, FallbackTextSystem, FontDescriptor,
+    GlyphRasterCache, GlyphRasterKey, GlyphRasterMetrics, ParagraphTextCache, ShapedGlyph,
+    SystemTextShaper, SystemTextSystem, TextCache, TextCacheStats, TextCapabilities, TextLayout,
+    TextMetrics, TextParagraph, TextParagraphKey, TextShaper, TextSystem, load_system_font,
+    preferred_font_families, system_font_available, system_font_data,
 };
 
 #[cfg(feature = "desktop")]
-pub use zeno_shell::{DesktopShell, DesktopWindowHandle, ResolvedWindowRun};
+pub use zeno_platform::desktop::{DesktopShell, DesktopWindowHandle, ResolvedWindowRun};

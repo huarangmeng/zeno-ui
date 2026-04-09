@@ -6,7 +6,7 @@ mod text;
 
 use skia_safe as sk;
 use zeno_core::{Color, Rect};
-use zeno_graphics::{DrawCommand, Scene};
+use zeno_scene::{DrawCommand, Scene};
 
 pub use text::{SkiaTextCache, SkiaTextCacheStats};
 

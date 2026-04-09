@@ -3,17 +3,17 @@
 ## 状态
 - 状态：进行中
 - 目标：把当前“桌面双后端原型”演进成适合 Compose 风格跨平台 UI 的高性能架构，同时提升调试、验证与接入体验。
-- 当前完成度：P0 已完成；P1 已完成 retained tree、layout dirty roots 与 Structured Scene 的 MVP 主链路；P2 仍以文本系统与 bench/devtools 工程化能力为主。
+- 当前完成度：P0 已完成；P1 已完成 retained tree、layout dirty roots 与 Structured Scene 的 MVP 主链路；P2 中“文本主路径 + bench/devtools 工程化能力”已完成，后续重点转向更复杂 effect/filter、golden image 与移动端 presenter 原生化。
 
 ## 当前阶段判断
-- 当前主链路已经成立：`zeno-compose -> zeno-graphics::Scene -> zeno-runtime -> zeno-shell -> backend-*`。
+- 当前主链路已经成立：`zeno-ui -> zeno-scene::Scene -> zeno-runtime -> zeno-platform -> backend-*`。
 - 当前最大的收益点不在继续堆更多组件或绘制命令，而在补齐 retained tree、帧调度、缓存与统一的渲染会话抽象。
 - 桌面是当前最成熟的验证面：Skia 可用，macOS Impeller 有 Metal presenter 原型。
 
 ## 当前瓶颈
 
 ### 1. 局部更新能力已具备 MVP，仍待继续细化
-- `zeno-compose` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径。
+- `zeno-ui` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径。
 - `Scene` 已从单纯扁平命令流升级到 block/patch 提交模型，session 可消费 `SceneSubmit`。
 - 当前剩余差距主要在更细粒度的 dirty root 归并、更复杂结构编辑下的 patch 收敛，以及后端更深层级的局部 GPU 提交能力。
 
@@ -22,22 +22,22 @@
 - 当前剩余问题主要在动画驱动、未来更细粒度 invalidation 与观测工具，而不是空闲态自旋本身。
 
 ### 3. runtime 与 shell 边界已完成收敛
-- runtime 已负责解析 backend，并直接生成 `ResolvedSession`。
-- `ResolvedSession` 现在作为纯 descriptor 保留在 runtime；具体桌面/移动端 `RenderSession` 创建已统一收敛到 `zeno-shell` 这一平台集成层。
+- runtime 现在聚焦 `App/AppFrame/AppHost/run_app + UiRuntime` 闭环，不再持有平台 session descriptor 的真相源。
+- `ResolvedSession` 已统一收敛到 `zeno-platform`，作为平台 host/session 层的单一 descriptor；具体桌面/移动端 `RenderSession` 创建也继续保留在 `zeno-platform`。
 - 当前剩余工作主要是把移动端已成型的 presenter builder 继续推进到真实 GPU 生命周期，而不是拆成多个平台专用 crate。
 
 ### 4. Scene 已完成第一阶段结构化，第二阶段仍待推进
 - 当前 `Scene` 已具备 `SceneBlock`、`ScenePatch`、`SceneSubmit`，不再只是单纯扁平命令流。
 - 当前剩余差距主要是 layer、clip、transform、更强的资源句柄化与更缓存友好的结构。
 
-### 5. 文本系统仍偏占位
-- 当前 `zeno-text` 仍以 fallback 测量为主。
-- 上层布局、下层真实绘制与未来 shaping/cache 之间尚未统一。
+### 5. 文本系统主路径已打通，仍待继续做强
+- `zeno-text` 已具备 fallback/system 双路径、paragraph cache、共享 glyph raster cache 与真实 shaping 主干。
+- 上层布局、Skia glyph-run 提交与 Impeller glyph 栅格缓存已经对齐，剩余工作主要是更完整的 shaping 覆盖、更多缓存统计与更强的字体/脚本支持。
 
 ## 目标架构
 
 ### Retained UI Tree
-- 为 `zeno-compose` 引入稳定 `NodeId`。
+- 为 `zeno-ui` 引入稳定 `NodeId`。
 - 让 UI 树保留上一帧结构、测量结果和局部 dirty 信息。
 - 把“全量重建”演进为“dirty subtree 更新”。
 
@@ -62,7 +62,7 @@
 
 ### P0：收敛抽象边界
 - 状态：已完成
-- 已完成 `ResolvedSession -> RenderSession` 链路，runtime 保持解析与调度职责，shell 作为单一平台集成层负责具体会话创建。
+- 已完成 `ResolvedSession -> RenderSession` 链路，runtime 保持 app/runtime 调度职责，platform 作为单一平台集成层负责 descriptor 与具体会话创建。
 - 已移除 shell 内“按 backend 二次分发再决定谁负责”的旧模式，统一入口现在是 `ResolvedSession` + 平台集成工厂。
 - 移动端已进一步收敛为 `binding -> attachment -> presenter interface -> platform presenter builder -> render session` 单链路。
 
@@ -81,22 +81,24 @@
 - 已完成 block 统计、patch upserts/removes 统计与 session 侧 patch 消费入口。
 
 ### P2：升级文本系统
-- 统一布局、绘制与缓存的文本数据模型。
-- 为 Skia 与 Impeller 分别接入真实缓存能力。
+- 状态：已完成（主路径）
+- 已统一布局、绘制与缓存的文本数据模型。
+- 已为 Skia 与 Impeller 接入真实缓存能力：Skia glyph-run 分段提交、Impeller 共享 glyph raster cache、system shaping 与 paragraph cache 已接通。
 
 ### P2：补工程化体验
 - 提供 bench gallery、layout dump、scene dump、frame stats。
-- 状态：部分完成
+- 状态：已完成（当前阶段目标）
 - 已提供根 crate 级平台 preset feature：`macos`、`linux`、`windows`、`android`、`ios`。
-- 剩余工作聚焦在 bench gallery、layout dump、scene dump 等工程化工具。
+- 已提供 `examples/text_probe`、`examples/bench_gallery`、bench suite 脚本与 `perf-regression` workflow。
+- 剩余工作聚焦在 golden image、性能基线管理与更多场景覆盖。
 
 ## 对各 crate 的具体建议
 
-### zeno-compose
+### zeno-ui
 - 引入 `NodeId`、diff、dirty propagation、布局缓存。
 - 把 `ComposeRenderer` 从“单次函数式翻译器”演进为“可保留上下文的 compose engine”。
 
-### zeno-graphics
+### zeno-scene
 - 保持 `DrawCommand` 的简单性，但逐步补充资源句柄和更适合后端缓存的数据结构。
 - 给 renderer/session 层预留统一 frame report 入口。
 
@@ -104,7 +106,7 @@
 - 继续保留 backend probe/fallback 逻辑。
 - 让 `ResolvedSession` 继续承担统一 descriptor 角色，并把平台、attempts 与调试元数据稳定沉淀在这一层。
 
-### zeno-shell
+### zeno-platform
 - 保持 shell 只负责窗口、surface、事件循环和宿主对象。
 - 不让后端渲染逻辑重新回流到 shell 内部。
 
@@ -151,11 +153,12 @@
 - 移动端已固定 `MobilePresenterInterface`，并为 Android/iOS 建立 platform presenter builder 与 renderer-backed session 适配层。
 - `Scene` 已进入 layer/block 结构化阶段，并补上 blend / effect / offscreen 等高阶抽象。
 - `zeno-text` 已拆出 `TextShaper / TextCache` 抽象，fallback 路径具备 paragraph cache 与命中统计。
-- 已补 `examples/text_probe`，可输出 scene dump / layout dump 与文本缓存统计。
+- `zeno-text` 已补 `SystemTextShaper / SystemTextSystem`、共享 glyph raster cache、Skia glyph-run 分段提交与后端共享缓存入口。
+- 已补 `examples/text_probe`、`examples/bench_gallery`、bench suite 脚本与 `perf-regression` workflow，可输出机读指标并在阈值回归失败时阻断。
 
 ## 当前未完成项
-- layout dirty 已开始收紧到更小祖先集合与更精确的兄弟影响范围，但更复杂 structure edit 仍需继续细化。
-- `Scene` 虽已具备 layer/clip/transform/blend/effect/offscreen 抽象，且 macOS Impeller 已支持根 pass 与 offscreen pass 的双层 scissor，但更细粒度 compositor 与后端 effect 合成仍待继续推进。
-- Skia 已具备 dirty bounds 局部提交路径，Impeller 仍以全量为主，真局部 GPU 提交尚未完全落地。
-- 文本主路径虽已具备 `TextSystem / TextShaper / TextCache` 主干、glyph 级布局数据与 Impeller glyph cache，但更完整的真实 shaping 覆盖 / Skia glyph-run 优化 / 后端共享缓存仍未接入。
-- scene dump、layout dump、text probe 已就位，但更系统的 bench gallery 与自动化工程化工具仍未完成。
+- layout dirty 已收敛到更小祖先集合，并新增同父结构/顺序脏根合并与最小容器根策略；后续重点转向更复杂 layer/effect tree 下的 patch 类型扩展，而不是继续放大祖先影响面。
+- `Scene` 已具备 layer/clip/transform/blend/effect/offscreen 抽象，macOS Impeller 也已支持根 pass / offscreen pass 的双层 scissor 与祖先 clip 链约束下的 partial scene 重放；下一阶段重点是更细粒度 compositor 与后端 effect 合成。
+- Skia 与 macOS Impeller 都已具备 dirty bounds 局部提交路径；当前待补齐的是非 macOS Impeller presenter、更多 effect/filter 组合以及更稳定的缓存与统计体系。
+- 文本主路径已具备 `TextSystem / TextShaper / TextCache` 主干、glyph 级布局数据、Skia glyph-run 分段提交与后端共享缓存；后续重点是更完整的 shaping 覆盖、字体 fallback 策略与更细粒度缓存统计。
+- scene dump、layout dump、text probe、bench gallery 与自动化 bench suite 已就位；后续重点是 golden image、基线管理与更多 DX 工具。

@@ -6,23 +6,22 @@ mod scissor;
 mod shaders;
 mod text;
 
-use std::collections::HashMap;
-
 use fontdue::Font;
 use metal::{
     CommandQueue, CompileOptions, Device, MTLLoadAction, MTLStoreAction, MetalDrawableRef,
     RenderPassDescriptor, RenderPipelineState,
 };
 use shaders::SHADERS;
+use zeno_core::zeno_session_log;
 use zeno_core::{Rect, Transform2D, ZenoError, ZenoErrorCode};
-use zeno_graphics::{Scene, SceneBlendMode};
+use zeno_scene::{Scene, SceneBlendMode};
+use zeno_text::{GlyphRasterCache, load_system_font};
 
 use self::{
     draw::{clear_color_for_scene, draw_commands},
     layer_renderer::render_scene_layers,
     pipeline::{create_color_pipeline, create_composite_pipeline, create_text_pipeline},
     scissor::effective_root_scissor,
-    text::{CachedGlyph, GlyphCacheKey, load_system_font},
 };
 
 // 对外只暴露渲染器入口，具体的绘制、裁剪、离屏与管线初始化细节下沉到子模块。
@@ -35,7 +34,7 @@ pub struct MetalSceneRenderer {
     composite_multiply_pipeline: RenderPipelineState,
     composite_screen_pipeline: RenderPipelineState,
     font: Option<Font>,
-    glyph_cache: HashMap<GlyphCacheKey, CachedGlyph>,
+    glyph_cache: GlyphRasterCache,
 }
 
 impl MetalSceneRenderer {
@@ -70,7 +69,7 @@ impl MetalSceneRenderer {
                 SceneBlendMode::Screen,
             )?,
             font: load_system_font(),
-            glyph_cache: HashMap::new(),
+            glyph_cache: GlyphRasterCache::default(),
             device,
             queue,
         })
@@ -124,6 +123,14 @@ impl MetalSceneRenderer {
         }
 
         let command_buffer = self.queue.new_command_buffer();
+        zeno_session_log!(
+            trace,
+            op = "impeller_encoder_root_begin",
+            preserve_contents,
+            ?dirty_bounds,
+            blocks = scene.blocks.len(),
+            "impeller root encoder begin"
+        );
         let encoder = command_buffer.new_render_command_encoder(&render_pass);
         let viewport_width = scene.size.width.max(1.0);
         let viewport_height = scene.size.height.max(1.0);
@@ -147,13 +154,13 @@ impl MetalSceneRenderer {
         } else {
             render_scene_layers(
                 &self.device,
+                &self.queue,
                 &self.color_pipeline,
                 &self.text_pipeline,
                 &self.composite_pipeline,
                 &self.composite_multiply_pipeline,
                 &self.composite_screen_pipeline,
                 self.font.as_ref(),
-                &command_buffer,
                 &encoder,
                 scene,
                 root_scissor,
@@ -163,6 +170,11 @@ impl MetalSceneRenderer {
             );
         }
 
+        zeno_session_log!(
+            trace,
+            op = "impeller_encoder_root_end",
+            "impeller root encoder end"
+        );
         encoder.end_encoding();
         command_buffer.present_drawable(drawable);
         command_buffer.commit();
@@ -173,11 +185,14 @@ impl MetalSceneRenderer {
 #[cfg(test)]
 mod tests {
     use super::{
-        offscreen::{composite_params, local_effect_bounds, should_render_offscreen},
+        offscreen::{
+            composite_params, local_effect_bounds, offscreen_sampling_padding,
+            should_render_offscreen,
+        },
         scissor::{effective_root_scissor, inverse_map_rect, rect_from_scissor},
     };
     use zeno_core::{Color, Rect, Size, Transform2D};
-    use zeno_graphics::{Scene, SceneBlendMode, SceneEffect, SceneLayer};
+    use zeno_scene::{Scene, SceneBlendMode, SceneEffect, SceneLayer};
 
     #[test]
     fn offscreen_layer_policy_skips_root_and_keeps_explicit_offscreen_layers() {
@@ -237,6 +252,7 @@ mod tests {
             params.shadow_color,
             [10.0 / 255.0, 20.0 / 255.0, 30.0 / 255.0, 128.0 / 255.0]
         );
+        assert_eq!(offscreen_sampling_padding(&layer), 15.0);
     }
 
     #[test]
