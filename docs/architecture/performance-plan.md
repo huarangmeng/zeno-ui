@@ -13,7 +13,7 @@
 ## 当前瓶颈
 
 ### 1. 局部更新能力已具备 MVP，仍待继续细化
-- `zeno-ui` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径。
+- `zeno-ui` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径；当前 runtime 数据面已进一步收敛为 `NodeIndexTable + LayoutArena + DenseNodeStore + FragmentStore`，dirty/fragment/patch 主路径改为 index-first。
 - `Scene` 已从单纯扁平命令流升级到 block/patch 提交模型，session 可消费 `SceneSubmit`。
 - 当前剩余差距主要在更细粒度的 dirty root 归并、更复杂结构编辑下的 patch 收敛，以及后端更深层级的局部 GPU 提交能力。
 
@@ -37,7 +37,7 @@
 ## 目标架构
 
 ### Retained UI Tree
-- 为 `zeno-ui` 引入稳定 `NodeId`。
+- 为 `zeno-ui` 引入稳定 `NodeId`，并在 runtime 内部收敛到统一 `NodeIndexTable`。
 - 让 UI 树保留上一帧结构、测量结果和局部 dirty 信息。
 - 把“全量重建”演进为“dirty subtree 更新”。
 
@@ -145,7 +145,7 @@
 - `ResolvedSession` 已成为统一 session descriptor，平台集成层可基于它创建具体桌面/移动端 `RenderSession`。
 - `UiRuntime` 已成为内部重绘决策与 frame 准备入口，对上层隐藏 `ComposeEngine`。
 - `FrameScheduler` 已将桌面空闲态持续 redraw 改为按需重绘。
-- `RetainedComposeTree` 已具备 `NodeId`、dirty propagation、layout dirty roots 与局部 relayout 主链路。
+- `RetainedComposeTree` 已具备稳定 `NodeId` identity、index-first dirty propagation、index-first layout dirty roots 与局部 relayout 主链路。
 - `Scene` 已具备 `SceneBlock` / `ScenePatch` / `SceneSubmit`，桌面 session 已按结构化提交模型消费场景。
 - `SkiaTextCache` 已具备 typeface/font 缓存与命中统计。
 - 帧统计已输出 `block_count`、`patch_upserts`、`patch_removes`，可直接观察增量提交行为。

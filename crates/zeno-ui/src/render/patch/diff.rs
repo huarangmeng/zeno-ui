@@ -42,16 +42,26 @@ pub(super) fn push_block_patch(
     }
 }
 
-pub(super) fn subtree_contains_updates(node: &Node, update_ids: &HashSet<NodeId>) -> bool {
-    if update_ids.contains(&node.id()) {
+pub(super) fn subtree_contains_updates(
+    node: &Node,
+    index: usize,
+    layout: &crate::layout::LayoutArena,
+    update_ids: &HashSet<usize>,
+) -> bool {
+    if update_ids.contains(&index) {
         return true;
     }
     match &node.kind {
-        NodeKind::Container(child) => subtree_contains_updates(child, update_ids),
+        NodeKind::Container(child) => subtree_contains_updates(
+            child,
+            layout.index_table().child_indices(index)[0],
+            layout,
+            update_ids,
+        ),
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            children
-                .iter()
-                .any(|child| subtree_contains_updates(child, update_ids))
+            children.iter().zip(layout.index_table().child_indices(index)).any(
+                |(child, child_index)| subtree_contains_updates(child, *child_index, layout, update_ids),
+            )
         }
         _ => false,
     }

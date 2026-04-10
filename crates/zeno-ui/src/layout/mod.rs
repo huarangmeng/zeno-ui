@@ -632,7 +632,7 @@ pub(crate) fn relayout_layout(
     available: Size,
     text_system: &dyn TextSystem,
     retained: &RetainedComposeTree,
-    layout_dirty_roots: &[NodeId],
+    layout_dirty_roots: &[usize],
 ) -> LayoutArena {
     let _ = retained;
     let _ = layout_dirty_roots;

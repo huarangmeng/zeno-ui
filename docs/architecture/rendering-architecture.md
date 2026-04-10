@@ -25,7 +25,7 @@
 2. Platform session 层读取 `RendererConfig` 并生成后端尝试顺序。
 3. 各 backend 根据平台执行 probe，返回可用性与失败原因。
 4. Platform session 层基于 probe 结果生成统一 `ResolvedSession` descriptor。
-5. Foundation/UI 层构建声明式节点树，`UiRuntime` 驱动 retained tree、布局与 patch/full 生成，输出后端无关的 `SceneSubmit`。
+5. Foundation/UI 层构建声明式节点树，`UiRuntime` 驱动 retained tree、布局与 patch/full 生成，输出后端无关的 `SceneSubmit`。当前 retained runtime 的核心数据面已经收敛为 `NodeIndexTable + LayoutArena + DenseNodeStore + FragmentStore`：节点身份仍由 `NodeId` 提供稳定 key，但运行时热路径主要通过稠密 `usize` index 驱动。
 6. Runtime 的 `AppHost/run_app` 驱动 `App -> AppView -> UiRuntime -> SceneSubmit` 闭环，再调用 platform host 创建桌面或移动端 render session，并把 `SceneSubmit` 提交给具体 GPU 或 Canvas 路径。
 7. 移动端在进入 render session 前，还会经过 `MobileAttachContext -> MobilePresenterInterface -> platform presenter builder` 的宿主绑定与 presenter 规划过程。
 
@@ -33,6 +33,7 @@
 - Workspace 已按 `core / graphics / runtime / shell / compose / foundation / text / backend-*` 垂直拆分。
 - Runtime 已支持 Impeller 优先、Skia 兜底，并能记录每次解析尝试。
 - `zeno-ui` 已具备 retained tree、dirty propagation、layout dirty roots 与局部 relayout 路径；keyed reorder 可下沉为 order patch，结构 dirty 会尽量归并到最小容器根，结构 patch 也不再因简单增删退化为整树 rebuild。
+- retained runtime 已完成统一索引重构：`NodeIndexTable` 成为 `LayoutArena`、`DenseNodeStore` 与 `FragmentStore` 的唯一索引真相源；`available` 已收敛为 index-aligned `Vec<Size>`，fragment / dirty / patch 主路径均改为 index-first。
 - `zeno-scene` 已具备 `SceneLayer`、`SceneBlock`、`ScenePatch`、`SceneSubmit` 数据结构，并支持 subtree clip / 2D affine transform / opacity / effect stack 状态。
 - Skia 已能消费结构化 scene，具备 dirty bounds 局部提交路径，并已执行 layer 级 blend / blur / drop-shadow MVP。
 - macOS 已具备 Impeller Metal presenter，可走桌面窗口渲染路径，并已支持 layer 级 offscreen compositing、blend、blur 与 drop-shadow 执行链；patch 脏区已从根 pass 继续透传到 offscreen pass 的局部 scissor，partial scene 也会结合祖先 clip / offscreen / effect 链裁剪实际重放范围。
@@ -41,7 +42,7 @@
 - Android/iOS 已分别具备 native-window / view / metal-layer presenter builder，session 不再直接持有通用 renderer。
 
 ## 当前仍待补齐
-- `Scene` 已进入 retained compositor 的 layer/block 分层阶段；Skia 与 Impeller 都已落地 blend / blur / drop-shadow 执行链，当前主要待补的是更复杂 filter graph、多级 effect 优化与更细粒度 GPU patch。
+- `Scene` 已进入 retained compositor 的 layer/block 分层阶段；Skia 与 Impeller 都已落地 blend / blur / drop-shadow 执行链，当前主要待补的是更复杂 filter graph、多级 effect 优化与更细粒度 GPU patch。当前跨 crate 的 scene 协议仍保留 `node_id` 字段，后续若继续激进收缩 runtime identity，将需要同时重构 `zeno-scene`、`zeno-platform` 与 backend 层协议。
 - 非 macOS 桌面 Impeller 路径仍未完成；macOS 上已具备 dirty-bounds 驱动的局部 GPU 提交闭环，剩余重点转向更复杂 filter graph、多级 effect 合成与进一步的缓存优化。
 - 桌面按需调度目前已覆盖 pointer 输入与下一帧协商，但更高层的 lifecycle / visibility / gesture / keyboard 仍未与 `App/AppFrame + UiRuntime` 完整打通。
 - 移动端 presenter 虽已成型，但 `ANativeWindow / UIView / CAMetalLayer` 到真实 swapchain、drawable、command buffer 生命周期的最后一跳仍未完全原生化。

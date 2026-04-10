@@ -153,11 +153,6 @@ impl DenseNodeStore {
     }
 
     #[must_use]
-    pub fn node_id_at(&self, index: usize) -> NodeId {
-        self.index_table.node_id_at(index)
-    }
-
-    #[must_use]
     pub fn index_of(&self, node_id: NodeId) -> Option<usize> {
         self.index_table.index_of(node_id)
     }

@@ -16,3 +16,4 @@ pub use shell::{
     MinimalShell, NativeSurface, NativeSurfaceHostAttachment, NativeSurfaceHostRequirement,
     PlatformDescriptor, Shell, current_platform_descriptor,
 };
+pub use session::{BackendResolver, ResolvedSession};

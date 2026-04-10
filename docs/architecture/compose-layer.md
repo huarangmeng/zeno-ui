@@ -18,10 +18,10 @@
 
 ## Flow
 1. 上层通过声明式节点 API 构建组件树。
-2. retained tree 基于 `NodeId`、dirty flags 与 cached layout 决定是否走局部 relayout 或 paint-only 快路径。
+2. retained tree 基于稳定 `NodeId` 做 identity，对运行时热路径则通过统一 `NodeIndexTable`、index-based dirty flags、layout dirty roots 与 cached layout 决定是否走局部 relayout 或 paint-only 快路径。
 3. 组件树进入布局系统，基于 viewport 和文本测量得到 frame。
 4. `ComposeRenderer` 把测量结果翻译为带 `SceneLayer + SceneBlock` 的结构化 `SceneSubmit`，其中 layer 承载 subtree clip / transform / opacity / blend / effect / offscreen 语义，必要时生成 `ScenePatch`。
-5. keyed rebuild 会先按 `NodeId` 做局部 reconcile，再决定走 cache hit、局部 relayout 或 patch 提交。
+5. keyed rebuild 会先做 keyed identity 对照，再决定走 cache hit、局部 relayout 或 patch 提交；当前 reconcile 的递归命中、fragment 更新、scene patch 与 repaint 已经切到 index-first，`NodeId` 主要收敛在 keyed identity 与跨索引表 remap 边界。
 6. `UiRuntime` 与 runtime/shell 闭环会决定何时重组、何时提交；外部 app 只声明 `AppView`，不直接感知 `SceneSubmit`。
 
 ## 当前限制
@@ -30,6 +30,7 @@
 - dirty root 归并已从单纯祖先去重推进到“最小容器根 + 同父结构/顺序脏根合并”策略：layout/text 兄弟节点仍可作为独立脏根，结构变更与顺序变更会尽量收敛到最小共同容器根，并避免无意义升级到更高祖先；当前剩余问题主要集中在更复杂 effect tree 与更高阶结构 patch 类型。
 - `Scene` 已支持 `SceneLayer + SceneBlock + ScenePatch`，并具备 subtree clip / opacity / transform origin / effect stack 驱动的 retained compositor 基础；当前主要待补的是 filter graph、effect fusion 与更复杂 effect tree。
 - 文本布局结果在 `Scene` 发射阶段仍会复制，缺少缓存与共享引用结构。
+- `SceneLayer/SceneBlock` 等跨 crate 协议层仍保留 `node_id` 字段；若要彻底去掉 `NodeId`，需要同步重构 `zeno-scene`、platform session 与 backend 侧消费协议。
 
 ## Next Steps
 - 继续把当前“最小容器根 + 结构 patch”策略扩展到更复杂的 layer/effect tree，进一步减少高阶结构编辑时的 patch 面积。

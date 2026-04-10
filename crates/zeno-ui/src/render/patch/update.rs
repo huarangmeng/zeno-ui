@@ -6,16 +6,19 @@ use crate::render::fragments::{child_axis, main_axis_extent, node_fragment};
 
 pub(super) fn update_fragments_for_nodes(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     available: Size,
-    update_ids: &HashSet<NodeId>,
+    update_ids: &HashSet<usize>,
     retained: &mut RetainedComposeTree,
 ) -> bool {
-    let mut touched = update_ids.contains(&node.id());
+    let mut touched = update_ids.contains(&index);
     match &node.kind {
         NodeKind::Container(child) => {
+            let child_index = layout.index_table().child_indices(index)[0];
             touched |= update_fragments_for_nodes(
                 child,
+                child_index,
                 layout,
                 crate::layout::content_available(node, available),
                 update_ids,
@@ -24,9 +27,13 @@ pub(super) fn update_fragments_for_nodes(
         }
         NodeKind::Box { children } => {
             let child_available = crate::layout::content_available(node, available);
-            for child in children {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
                 touched |= update_fragments_for_nodes(
                     child,
+                    child_index,
                     layout,
                     child_available,
                     update_ids,
@@ -38,11 +45,16 @@ pub(super) fn update_fragments_for_nodes(
             let content_available = crate::layout::content_available(node, available);
             let mut used_main = 0.0f32;
             let axis = child_axis(node);
-            for (index, child) in children.iter().enumerate() {
+            for (position, (child, child_index)) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+                .enumerate()
+            {
                 let child_available =
                     crate::layout::remaining_available_for_axis(content_available, used_main, axis);
                 touched |= update_fragments_for_nodes(
                     child,
+                    child_index,
                     layout,
                     child_available,
                     update_ids,
@@ -52,14 +64,14 @@ pub(super) fn update_fragments_for_nodes(
                     .frame(child.id())
                     .expect("layout frame should exist for child");
                 used_main += main_axis_extent(child_frame.size, axis);
-                if index + 1 != children.len() {
+                if position + 1 != children.len() {
                     used_main += node.resolved_style().spacing;
                 }
             }
         }
         _ => {}
     }
-    if touched && update_ids.contains(&node.id()) {
+    if touched && update_ids.contains(&index) {
         let slot = layout
             .slot(node.id())
             .expect("layout slot should exist for node fragment");
@@ -70,13 +82,15 @@ pub(super) fn update_fragments_for_nodes(
 
 pub(super) fn scene_update_ids_for_relayout(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     retained: &RetainedComposeTree,
-    fragment_update_ids: &HashSet<NodeId>,
-) -> HashSet<NodeId> {
+    fragment_update_ids: &HashSet<usize>,
+) -> HashSet<usize> {
     let mut update_ids = HashSet::new();
     collect_scene_update_ids_for_relayout(
         node,
+        index,
         layout,
         retained,
         fragment_update_ids,
@@ -87,22 +101,23 @@ pub(super) fn scene_update_ids_for_relayout(
 
 fn collect_scene_update_ids_for_relayout(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     retained: &RetainedComposeTree,
-    fragment_update_ids: &HashSet<NodeId>,
-    update_ids: &mut HashSet<NodeId>,
+    fragment_update_ids: &HashSet<usize>,
+    update_ids: &mut HashSet<usize>,
 ) -> bool {
-    let current_frame = layout
-        .frame(node.id())
-        .expect("layout frame should exist for scene update");
-    let mut changed = fragment_update_ids.contains(&node.id())
+    let current_frame = layout.slot_at(index).frame;
+    let mut changed = fragment_update_ids.contains(&index)
         || retained
             .layout_for(node.id())
             .map_or(true, |previous| previous.frame != current_frame);
     match &node.kind {
         NodeKind::Container(child) => {
+            let child_index = layout.index_table().child_indices(index)[0];
             changed |= collect_scene_update_ids_for_relayout(
                 child,
+                child_index,
                 layout,
                 retained,
                 fragment_update_ids,
@@ -110,9 +125,13 @@ fn collect_scene_update_ids_for_relayout(
             );
         }
         NodeKind::Box { children } => {
-            for child in children {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
                 changed |= collect_scene_update_ids_for_relayout(
                     child,
+                    child_index,
                     layout,
                     retained,
                     fragment_update_ids,
@@ -121,9 +140,13 @@ fn collect_scene_update_ids_for_relayout(
             }
         }
         NodeKind::Stack { children, .. } => {
-            for child in children {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
                 changed |= collect_scene_update_ids_for_relayout(
                     child,
+                    child_index,
                     layout,
                     retained,
                     fragment_update_ids,
@@ -134,7 +157,7 @@ fn collect_scene_update_ids_for_relayout(
         _ => {}
     }
     if changed {
-        update_ids.insert(node.id());
+        update_ids.insert(index);
     }
     changed
 }

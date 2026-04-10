@@ -95,10 +95,10 @@ impl<'a> ComposeEngine<'a> {
         if let Some(retained) = self.retained.as_mut() {
             if retained.dirty().requires_paint_only() && retained.scene().size == viewport {
                 self.stats.compose_passes += 1;
-                let dirty_node_ids: HashSet<NodeId> =
-                    retained.dirty_node_ids().into_iter().collect();
+                let dirty_indices: HashSet<usize> =
+                    retained.dirty_indices().into_iter().collect();
                 patch::repaint_dirty_nodes(root, retained);
-                let patch = patch::patch_scene_for_nodes(root, retained, &dirty_node_ids);
+                let patch = patch::patch_scene_for_nodes(root, retained, &dirty_indices);
                 let scene = retained.scene().clone();
                 retained.sync_root(root.clone());
                 return if patch.is_empty() {
@@ -116,11 +116,11 @@ impl<'a> ComposeEngine<'a> {
             if retained.dirty().requires_layout() && retained.scene().size == viewport {
                 self.stats.compose_passes += 1;
                 self.stats.layout_passes += 1;
-                let dirty_node_ids: HashSet<NodeId> =
-                    retained.dirty_node_ids().into_iter().collect();
+                let dirty_indices: HashSet<usize> =
+                    retained.dirty_indices().into_iter().collect();
                 let previous_node_ids: HashSet<NodeId> =
                     retained.node_ids().iter().copied().collect();
-                let layout_dirty_roots = retained.layout_dirty_roots();
+                let layout_dirty_roots = retained.layout_dirty_root_indices();
                 let layout = relayout::relayout_layout(
                     root,
                     Point::new(0.0, 0.0),
@@ -132,12 +132,12 @@ impl<'a> ComposeEngine<'a> {
                 let available = fragments::available_slots_from_layout(root, viewport, &layout);
                 let current_node_ids: HashSet<NodeId> =
                     layout.index_table().node_ids().iter().copied().collect();
-                let new_node_ids: HashSet<NodeId> = current_node_ids
+                let new_indices: HashSet<usize> = current_node_ids
                     .difference(&previous_node_ids)
-                    .copied()
+                    .filter_map(|id| layout.index_table().index_of(*id))
                     .collect();
-                let fragment_update_ids: HashSet<NodeId> =
-                    dirty_node_ids.union(&new_node_ids).copied().collect();
+                let fragment_update_ids: HashSet<usize> =
+                    dirty_indices.union(&new_indices).copied().collect();
                 let patch_update_ids = patch::scene_update_ids_for_relayout(
                     root,
                     &layout,

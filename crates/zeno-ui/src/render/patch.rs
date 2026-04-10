@@ -5,21 +5,49 @@ mod diff;
 mod update;
 
 use super::*;
-use crate::render::fragments::find_node;
 use crate::layout::LayoutArena;
 
 pub(super) fn repaint_dirty_nodes(root: &Node, retained: &mut RetainedComposeTree) {
-    let dirty_node_ids = retained.dirty_node_ids();
-    for node_id in dirty_node_ids {
-        if let (Some(node), Some(slot)) = (
-            find_node(root, node_id),
-            retained.layout_for(node_id).cloned(),
-        ) {
+    let dirty_indices = retained.dirty_indices();
+    for index in dirty_indices {
+        if let Some(node) = node_at_index(root, 0, index, retained.layout()) {
+            let slot = retained.layout().slot_at(index).clone();
             retained.update_fragment(
-                node_id,
+                retained.layout().index_table().node_id_at(index),
                 crate::render::fragments::node_fragment(node, &slot, retained.layout()),
             );
         }
+    }
+}
+
+fn node_at_index<'a>(
+    node: &'a Node,
+    current_index: usize,
+    target_index: usize,
+    layout: &LayoutArena,
+) -> Option<&'a Node> {
+    if current_index == target_index {
+        return Some(node);
+    }
+    match &node.kind {
+        NodeKind::Container(child) => node_at_index(
+            child,
+            layout.index_table().child_indices(current_index)[0],
+            target_index,
+            layout,
+        ),
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(current_index).iter().copied())
+            {
+                if let Some(found) = node_at_index(child, child_index, target_index, layout) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        _ => None,
     }
 }
 
@@ -27,25 +55,25 @@ pub(super) fn update_fragments_for_nodes(
     node: &Node,
     layout: &LayoutArena,
     available: Size,
-    update_ids: &HashSet<NodeId>,
+    update_ids: &HashSet<usize>,
     retained: &mut RetainedComposeTree,
 ) -> bool {
-    update::update_fragments_for_nodes(node, layout, available, update_ids, retained)
+    update::update_fragments_for_nodes(node, 0, layout, available, update_ids, retained)
 }
 
 pub(super) fn scene_update_ids_for_relayout(
     node: &Node,
     layout: &LayoutArena,
     retained: &RetainedComposeTree,
-    fragment_update_ids: &HashSet<NodeId>,
-) -> HashSet<NodeId> {
-    update::scene_update_ids_for_relayout(node, layout, retained, fragment_update_ids)
+    fragment_update_ids: &HashSet<usize>,
+) -> HashSet<usize> {
+    update::scene_update_ids_for_relayout(node, 0, layout, retained, fragment_update_ids)
 }
 
 pub(super) fn patch_scene_for_nodes(
     root: &Node,
     retained: &mut RetainedComposeTree,
-    update_ids: &HashSet<NodeId>,
+    update_ids: &HashSet<usize>,
 ) -> ScenePatch {
     let previous_scene = retained.scene().clone();
     let previous_layers_by_id: HashMap<u64, &zeno_scene::SceneLayer> = previous_scene

@@ -19,7 +19,7 @@ pub(super) fn collect_scene_patch_items(
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
     force_update: bool,
-    update_ids: &HashSet<NodeId>,
+    update_ids: &HashSet<usize>,
     next_order: &mut u32,
     previous_layers_by_id: &HashMap<u64, &zeno_scene::SceneLayer>,
     previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
@@ -31,8 +31,8 @@ pub(super) fn collect_scene_patch_items(
     reorders: &mut Vec<SceneBlockOrder>,
 ) {
     if !force_update
-        && !update_ids.contains(&node.id())
-        && !subtree_contains_updates(node, update_ids)
+        && !update_ids.contains(&index)
+        && !subtree_contains_updates(node, index, layout, update_ids)
     {
         collect_unchanged_scene_items(
             node,
@@ -197,7 +197,7 @@ fn collect_scene_patch_children(
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
     force_update: bool,
-    update_ids: &HashSet<NodeId>,
+    update_ids: &HashSet<usize>,
     next_order: &mut u32,
     previous_layers_by_id: &HashMap<u64, &zeno_scene::SceneLayer>,
     previous_blocks_by_id: &HashMap<u64, &SceneBlock>,

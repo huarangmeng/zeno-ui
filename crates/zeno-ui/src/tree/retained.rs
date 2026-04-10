@@ -125,23 +125,16 @@ impl RetainedComposeTree {
     }
 
     #[must_use]
-    pub fn dirty_node_ids(&self) -> Vec<NodeId> {
-        self.dense_nodes
-            .dirty_indices()
-            .into_iter()
-            .map(|index| self.dense_nodes.node_id_at(index))
-            .collect()
+    pub fn dirty_indices(&self) -> Vec<usize> {
+        self.dense_nodes.dirty_indices()
     }
 
     #[must_use]
-    pub fn layout_dirty_roots(&self) -> Vec<NodeId> {
+    pub fn layout_dirty_root_indices(&self) -> Vec<usize> {
         if self.layout_dirty_roots.is_empty() && self.dirty.requires_layout() {
-            vec![self.root.id()]
+            self.dense_nodes.index_of(self.root.id()).into_iter().collect()
         } else {
-            self.layout_dirty_roots
-                .iter()
-                .map(|index| self.dense_nodes.node_id_at(*index))
-                .collect()
+            self.layout_dirty_roots.clone()
         }
     }
 

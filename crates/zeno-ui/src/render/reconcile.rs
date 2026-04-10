@@ -12,31 +12,45 @@ pub(super) fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &N
     index_nodes(&previous_root, &mut previous_by_id);
     let mut current_by_id = HashMap::new();
     index_nodes(root, &mut current_by_id);
-    mark_removed_nodes_dirty(retained, &previous_root, &current_by_id);
-    reconcile_node(retained, &previous_by_id, root);
+    mark_removed_nodes_dirty(retained, &previous_root, 0, &current_by_id);
+    reconcile_node(retained, &previous_by_id, root, 0);
 }
 
 fn reconcile_node<'a>(
     retained: &mut RetainedComposeTree,
     previous_by_id: &HashMap<NodeId, &'a Node>,
     current: &Node,
+    index: usize,
 ) {
     match previous_by_id.get(&current.id()).copied() {
         Some(previous) => {
             if let Some(reason) = local_change_reason(previous, current) {
-                retained.mark_node_dirty(current.id(), reason);
+                mark_index_dirty(retained, index, reason);
             }
         }
         None => {
-            retained.mark_node_dirty(current.id(), DirtyReason::Structure);
+            mark_index_dirty(retained, index, DirtyReason::Structure);
         }
     }
 
     match &current.kind {
-        NodeKind::Container(child) => reconcile_node(retained, previous_by_id, child),
+        NodeKind::Container(child) => reconcile_node(
+            retained,
+            previous_by_id,
+            child,
+            retained.layout().index_table().child_indices(index)[0],
+        ),
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for child in children {
-                reconcile_node(retained, previous_by_id, child);
+            let child_indices = retained
+                .layout()
+                .index_table()
+                .child_indices(index)
+                .to_vec();
+            for (child, child_index) in children
+                .iter()
+                .zip(child_indices.into_iter())
+            {
+                reconcile_node(retained, previous_by_id, child, child_index);
             }
         }
         _ => {}
@@ -46,21 +60,40 @@ fn reconcile_node<'a>(
 fn mark_removed_nodes_dirty(
     retained: &mut RetainedComposeTree,
     previous: &Node,
+    index: usize,
     current_by_id: &HashMap<NodeId, &Node>,
 ) {
     if !current_by_id.contains_key(&previous.id()) {
-        retained.mark_node_dirty(previous.id(), DirtyReason::Structure);
+        mark_index_dirty(retained, index, DirtyReason::Structure);
         return;
     }
     match &previous.kind {
-        NodeKind::Container(child) => mark_removed_nodes_dirty(retained, child, current_by_id),
+        NodeKind::Container(child) => mark_removed_nodes_dirty(
+            retained,
+            child,
+            retained.layout().index_table().child_indices(index)[0],
+            current_by_id,
+        ),
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for child in children {
-                mark_removed_nodes_dirty(retained, child, current_by_id);
+            let child_indices = retained
+                .layout()
+                .index_table()
+                .child_indices(index)
+                .to_vec();
+            for (child, child_index) in children
+                .iter()
+                .zip(child_indices.into_iter())
+            {
+                mark_removed_nodes_dirty(retained, child, child_index, current_by_id);
             }
         }
         _ => {}
     }
+}
+
+fn mark_index_dirty(retained: &mut RetainedComposeTree, index: usize, reason: DirtyReason) {
+    let node_id = retained.layout().index_table().node_id_at(index);
+    retained.mark_node_dirty(node_id, reason);
 }
 
 fn index_nodes<'a>(node: &'a Node, indexed: &mut HashMap<NodeId, &'a Node>) {

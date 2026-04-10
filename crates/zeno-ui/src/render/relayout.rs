@@ -8,7 +8,7 @@ pub(super) fn relayout_layout(
     available: Size,
     text_system: &dyn TextSystem,
     retained: &RetainedComposeTree,
-    layout_dirty_roots: &[NodeId],
+    layout_dirty_roots: &[usize],
 ) -> crate::layout::LayoutArena {
     crate::layout::relayout_layout(
         node,

@@ -291,20 +291,6 @@ pub(super) fn node_fragment(
     fragment
 }
 
-pub(super) fn find_node(node: &Node, node_id: NodeId) -> Option<&Node> {
-    if node.id() == node_id {
-        return Some(node);
-    }
-
-    match &node.kind {
-        NodeKind::Container(child) => find_node(child, node_id),
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            children.iter().find_map(|child| find_node(child, node_id))
-        }
-        _ => None,
-    }
-}
-
 fn collect_stack_fragments(
     node: &Node,
     children: &[Node],

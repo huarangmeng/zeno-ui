@@ -222,7 +222,8 @@ mod tests {
         );
         let prepared = ensure_clear_command(&scene, Color::rgba(10, 20, 30, 255));
         assert_eq!(prepared.clear_color, Some(Color::rgba(10, 20, 30, 255)));
-        assert_eq!(prepared.command_count(), scene.command_count());
+        assert_eq!(prepared.commands, scene.commands);
+        assert_eq!(prepared.command_count(), scene.command_count() + 1);
         assert_eq!(prepared.blocks, scene.blocks);
         let prepared_again = ensure_clear_command(&prepared, Color::WHITE);
         assert_eq!(prepared_again, prepared);
