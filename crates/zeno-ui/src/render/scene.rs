@@ -1,6 +1,7 @@
 //! scene 构建相关逻辑集中在这里，便于继续演进 retained scene 结构。
 
 use super::*;
+use crate::frontend::{FrontendObject, FrontendObjectTable, compile_object_table};
 use crate::layout::LayoutArena;
 
 pub(super) fn build_scene(
@@ -9,50 +10,98 @@ pub(super) fn build_scene(
     viewport: Size,
     fragments: &crate::render::fragments::FragmentStore,
 ) -> Scene {
-    let (layers, blocks) = build_layers_and_blocks(root, layout, fragments, viewport);
-    Scene::from_layers_and_blocks(viewport, None, layers, blocks)
+    let frontend = compile_object_table(root);
+    let (layers, objects) = build_layers_and_objects(&frontend, layout, fragments, viewport);
+    Scene::from_layers_and_objects(viewport, None, layers, objects)
 }
 
-pub(super) fn build_layers_and_blocks(
-    root: &Node,
+pub(super) fn build_layers_and_objects(
+    frontend: &FrontendObjectTable,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
     viewport: Size,
-) -> (Vec<zeno_scene::SceneLayer>, Vec<SceneBlock>) {
-    let mut layers = vec![zeno_scene::SceneLayer::root(viewport)];
-    let mut blocks = Vec::new();
+) -> (Vec<LayerObject>, Vec<RenderObject>) {
+    let mut layers = vec![LayerObject::root(viewport)];
+    let mut objects = Vec::new();
     let mut next_order = 1u32;
-    collect_scene_items(
-        root,
-        0,
-        layout,
-        fragments,
-        Scene::ROOT_LAYER_ID,
-        Point::new(0.0, 0.0),
-        Transform2D::identity(),
-        &mut next_order,
-        &mut layers,
-        &mut blocks,
-    );
-    (layers, blocks)
+    let mut stack = vec![SceneVisit {
+        index: 0,
+        current_layer_id: Scene::ROOT_LAYER_ID,
+        current_layer_origin: Point::new(0.0, 0.0),
+        current_layer_world_transform: Transform2D::identity(),
+    }];
+    while let Some(visit) = stack.pop() {
+        let scene_node = scene_item_from_object(
+            frontend.object(visit.index),
+            visit.index,
+            layout,
+            fragments,
+            visit.current_layer_id,
+            visit.current_layer_origin,
+            visit.current_layer_world_transform,
+            next_order,
+        );
+        next_order = scene_node.next_order;
+        if let Some(layer) = scene_node.layer {
+            let next_layer_id = layer.layer_id;
+            let next_origin = layout.slot_at(visit.index).frame.origin;
+            let next_transform = scene_node.next_world_transform;
+            layers.push(layer);
+            if let Some(object) = scene_node.object {
+                objects.push(object);
+            }
+            for &child_index in frontend.child_indices(visit.index).iter().rev() {
+                stack.push(SceneVisit {
+                    index: child_index,
+                    current_layer_id: next_layer_id,
+                    current_layer_origin: next_origin,
+                    current_layer_world_transform: next_transform,
+                });
+            }
+        } else {
+            if let Some(object) = scene_node.object {
+                objects.push(object);
+            }
+            for &child_index in frontend.child_indices(visit.index).iter().rev() {
+                stack.push(SceneVisit {
+                    index: child_index,
+                    current_layer_id: visit.current_layer_id,
+                    current_layer_origin: visit.current_layer_origin,
+                    current_layer_world_transform: visit.current_layer_world_transform,
+                });
+            }
+        }
+    }
+    (layers, objects)
 }
 
-pub(super) fn collect_scene_items(
-    node: &Node,
+#[derive(Clone, Copy)]
+struct SceneVisit {
+    index: usize,
+    current_layer_id: u64,
+    current_layer_origin: Point,
+    current_layer_world_transform: Transform2D,
+}
+
+struct SceneItemResult {
+    layer: Option<LayerObject>,
+    object: Option<RenderObject>,
+    next_world_transform: Transform2D,
+    next_order: u32,
+}
+
+fn scene_item_from_object(
+    object: &FrontendObject,
     index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
-    next_order: &mut u32,
-    layers: &mut Vec<zeno_scene::SceneLayer>,
-    blocks: &mut Vec<SceneBlock>,
-) {
-    let slot = layout
-        .slot(node.id())
-        .expect("layout slot should exist for scene item");
-    let style = node.resolved_style();
+    next_order: u32,
+) -> SceneItemResult {
+    let slot = layout.slot_at(index);
+    let style = &object.style;
     let local_bounds = Rect::new(
         0.0,
         0.0,
@@ -69,12 +118,11 @@ pub(super) fn collect_scene_items(
         );
         let world_transform = current_layer_world_transform.then(layer_transform);
         let effect_bounds = scene_effect_bounds(local_bounds, &style);
-        let layer_id = node.id().0;
-        let order = *next_order;
-        *next_order += 1;
-        layers.push(zeno_scene::SceneLayer::new(
+        let layer_id = object.node_id.0;
+        let order = next_order;
+        let layer = LayerObject::new(
             layer_id,
-            node.id().0,
+            object.node_id.0,
             Some(current_layer_id),
             order,
             local_bounds,
@@ -89,113 +137,51 @@ pub(super) fn collect_scene_items(
                 || style.blend_mode != BlendMode::Normal
                 || style.blur.is_some()
                 || style.drop_shadow.is_some(),
-        ));
-        if let Some(fragment) = fragments.clone_fragment_at(index) {
-            blocks.push(SceneBlock::new(
-                node.id().0,
+        );
+        let mut next = order + 1;
+        let scene_object = fragments.clone_fragment_at(index).map(|fragment| {
+            let object = RenderObject::new(
+                object.node_id.0,
                 layer_id,
-                *next_order,
+                next,
                 world_transform.map_rect(local_bounds),
                 Transform2D::identity(),
                 None,
                 fragment,
-            ));
-            *next_order += 1;
-        }
-        collect_scene_children(
-            node,
-            index,
-            layout,
-            fragments,
-            layer_id,
-            slot.frame.origin,
-            world_transform,
-            next_order,
-            layers,
-            blocks,
-        );
-        return;
+            );
+            next += 1;
+            object
+        });
+        return SceneItemResult {
+            layer: Some(layer),
+            object: scene_object,
+            next_world_transform: world_transform,
+            next_order: next,
+        };
     }
 
-    if let Some(fragment) = fragments.clone_fragment_at(index) {
+    let scene_object = fragments.clone_fragment_at(index).map(|fragment| {
         let block_transform = Transform2D::translation(
             slot.frame.origin.x - current_layer_origin.x,
             slot.frame.origin.y - current_layer_origin.y,
         );
         let world_transform = current_layer_world_transform.then(block_transform);
-        blocks.push(SceneBlock::new(
-            node.id().0,
+        RenderObject::new(
+            object.node_id.0,
             current_layer_id,
-            *next_order,
+            next_order,
             world_transform.map_rect(local_bounds),
             block_transform,
             None,
             fragment,
-        ));
-        *next_order += 1;
-    }
-    collect_scene_children(
-        node,
-        index,
-        layout,
-        fragments,
-        current_layer_id,
-        current_layer_origin,
-        current_layer_world_transform,
-        next_order,
-        layers,
-        blocks,
-    );
-}
-
-pub(super) fn collect_scene_children(
-    node: &Node,
-    index: usize,
-    layout: &LayoutArena,
-    fragments: &crate::render::fragments::FragmentStore,
-    current_layer_id: u64,
-    current_layer_origin: Point,
-    current_layer_world_transform: Transform2D,
-    next_order: &mut u32,
-    layers: &mut Vec<zeno_scene::SceneLayer>,
-    blocks: &mut Vec<SceneBlock>,
-) {
-    match &node.kind {
-        NodeKind::Container(child) => {
-            let child_index = layout.index_table().child_indices(index)[0];
-            collect_scene_items(
-                child,
-                child_index,
-                layout,
-                fragments,
-                current_layer_id,
-                current_layer_origin,
-                current_layer_world_transform,
-                next_order,
-                layers,
-                blocks,
-            );
-        }
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for (child, child_index) in children
-                .iter()
-                .zip(layout.index_table().child_indices(index).iter().copied())
-            {
-                collect_scene_items(
-                    child,
-                    child_index,
-                    layout,
-                    fragments,
-                    current_layer_id,
-                    current_layer_origin,
-                    current_layer_world_transform,
-                    next_order,
-                    layers,
-                    blocks,
-                );
-            }
-        }
-        _ => {}
+        )
+    });
+    let advanced_order = next_order + usize::from(scene_object.is_some()) as u32;
+    SceneItemResult {
+        layer: None,
+        object: scene_object,
+        next_world_transform: current_layer_world_transform,
+        next_order: advanced_order,
     }
 }
 

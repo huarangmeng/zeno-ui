@@ -3,18 +3,19 @@ use std::collections::{HashMap, HashSet};
 
 use zeno_core::{Color, Rect};
 use zeno_scene::{
-    Brush, DrawCommand, Scene, SceneBlock, SceneLayer, SceneSubmit, SceneTransform, Shape,
+    Brush, DrawCommand, DrawPacketRange, LayerObject, RenderObject, RenderSceneUpdate, Scene,
+    SceneBlendMode, SceneTransform, Shape,
 };
 
-pub(super) fn patch_stats(submit: &SceneSubmit) -> (usize, usize) {
-    match submit {
-        SceneSubmit::Full(scene) => (scene.blocks.len(), 0),
-        SceneSubmit::Patch { patch, .. } => (
-            patch.upserts.len()
-                + patch.reorders.len()
-                + patch.layer_upserts.len()
-                + patch.layer_reorders.len(),
-            patch.removes.len() + patch.layer_removes.len(),
+pub(super) fn patch_stats(update: &RenderSceneUpdate) -> (usize, usize) {
+    match update {
+        RenderSceneUpdate::Full(scene) => (scene.objects.len(), 0),
+        RenderSceneUpdate::Delta { delta, .. } => (
+            delta.object_upserts.len()
+                + delta.object_reorders.len()
+                + delta.layer_upserts.len()
+                + delta.layer_reorders.len(),
+            delta.object_removes.len() + delta.layer_removes.len(),
         ),
     }
 }
@@ -28,15 +29,15 @@ pub(super) fn default_clear_color(transparent: bool) -> Color {
 }
 
 pub(super) fn ensure_clear_command(scene: &Scene, fallback: Color) -> Scene {
-    if scene.clear_color.is_some() || scene.clear_command().is_some() {
+    if scene.clear_color.is_some() || scene.clear_packet().is_some() {
         return scene.clone();
     }
     Scene {
         size: scene.size,
         clear_color: Some(fallback),
-        commands: scene.commands.clone(),
-        layers: scene.layers.clone(),
-        blocks: scene.blocks.clone(),
+        packets: scene.packets.clone(),
+        layer_graph: scene.layer_graph.clone(),
+        objects: scene.objects.clone(),
     }
 }
 
@@ -44,53 +45,53 @@ pub(super) fn ensure_clear_command(scene: &Scene, fallback: Color) -> Scene {
 pub(super) fn partial_scene_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) -> Scene {
     let layers = partial_layers_for_dirty_bounds(scene, dirty_bounds);
     let included_layer_ids: HashSet<u64> = layers.iter().map(|layer| layer.layer_id).collect();
-    let mut commands = scene.commands.clone();
-    let clear_commands = vec![DrawCommand::Fill {
+    let mut packets = scene.packets.clone();
+    let clear_packets = vec![DrawCommand::Fill {
         shape: Shape::Rect(dirty_bounds),
         brush: Brush::Solid(clear_color_for_scene(scene)),
     }];
-    let clear_start = commands.len();
-    commands.extend_from_slice(&clear_commands);
-    let mut blocks = vec![SceneBlock::from_commands(
+    let clear_start = packets.len();
+    packets.extend_from_slice(&clear_packets);
+    let mut objects = vec![RenderObject::from_packets(
         u64::MAX,
         Scene::ROOT_LAYER_ID,
         0,
         dirty_bounds,
         SceneTransform::identity(),
         None,
-        clear_commands.clone(),
+        clear_packets,
     )
-    .with_normalized_commands(zeno_scene::CommandRange {
+    .with_normalized_packets(DrawPacketRange {
         start: clear_start,
-        len: clear_commands.len(),
+        len: 1,
     })];
-    blocks.extend(
+    objects.extend(
         scene
-            .blocks
+            .objects
             .iter()
-            .filter(|block| {
-                partial_scene_should_include_block(scene, block, &included_layer_ids, dirty_bounds)
+            .filter(|object| {
+                partial_scene_should_include_object(scene, object, &included_layer_ids, dirty_bounds)
             })
             .cloned()
             .enumerate()
-            .map(|(index, mut block)| {
-                block.order = index as u32 + 1;
-                block
+            .map(|(index, mut object)| {
+                object.order = index as u32 + 1;
+                object
             }),
     );
-    Scene::from_layers_and_blocks_with_commands(scene.size, None, layers, commands, blocks)
+    Scene::from_layers_and_objects_with_packets(scene.size, None, layers, packets, objects)
 }
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
-fn partial_layers_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) -> Vec<SceneLayer> {
+fn partial_layers_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) -> Vec<LayerObject> {
     let parents: HashMap<u64, Option<u64>> = scene
-        .layers
+        .layer_graph
         .iter()
         .map(|layer| (layer.layer_id, layer.parent_layer_id))
         .collect();
     let mut included = HashSet::from([Scene::ROOT_LAYER_ID]);
     for layer_id in scene
-        .layers
+        .layer_graph
         .iter()
         .filter_map(|layer| {
             scene
@@ -98,17 +99,17 @@ fn partial_layers_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) -> Vec<Sce
                 .filter(|bounds| bounds.intersects(&dirty_bounds))
                 .map(|_| layer.layer_id)
         })
-        .chain(scene.blocks.iter().filter_map(|block| {
+        .chain(scene.objects.iter().filter_map(|object| {
             scene
-                .effective_bounds_for_block(block)
+                .effective_bounds_for_object(object)
                 .filter(|bounds| bounds.intersects(&dirty_bounds))
-                .map(|_| block.layer_id)
+                .map(|_| object.layer_id)
         }))
     {
         include_layer_ancestors(layer_id, &parents, &mut included);
     }
     scene
-        .layers
+        .layer_graph
         .iter()
         .filter(|layer| included.contains(&layer.layer_id))
         .cloned()
@@ -116,34 +117,34 @@ fn partial_layers_for_dirty_bounds(scene: &Scene, dirty_bounds: Rect) -> Vec<Sce
 }
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
-fn partial_scene_should_include_block(
+fn partial_scene_should_include_object(
     scene: &Scene,
-    block: &SceneBlock,
+    object: &RenderObject,
     included_layer_ids: &HashSet<u64>,
     dirty_bounds: Rect,
 ) -> bool {
-    if !included_layer_ids.contains(&block.layer_id) {
+    if !included_layer_ids.contains(&object.layer_id) {
         return false;
     }
-    let block_intersects = matches!(
-        scene.effective_bounds_for_block(block),
+    let object_intersects = matches!(
+        scene.effective_bounds_for_object(object),
         Some(bounds) if bounds.intersects(&dirty_bounds)
     );
     let layer_intersects = matches!(
-        scene.effective_bounds_for_layer(block.layer_id),
+        scene.effective_bounds_for_layer(object.layer_id),
         Some(bounds) if bounds.intersects(&dirty_bounds)
     );
-    block_intersects
-        || (layer_intersects && layer_chain_requires_full_block_replay(scene, block.layer_id))
+    object_intersects
+        || (layer_intersects && layer_chain_requires_full_object_replay(scene, object.layer_id))
 }
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
-fn layer_chain_requires_full_block_replay(scene: &Scene, mut layer_id: u64) -> bool {
+fn layer_chain_requires_full_object_replay(scene: &Scene, mut layer_id: u64) -> bool {
     loop {
-        let Some(layer) = scene.layers.iter().find(|layer| layer.layer_id == layer_id) else {
+        let Some(layer) = scene.layer_graph.iter().find(|layer| layer.layer_id == layer_id) else {
             return false;
         };
-        if layer_requires_full_block_replay(layer) {
+        if layer_requires_full_object_replay(layer) {
             return true;
         }
         let Some(parent_id) = layer.parent_layer_id else {
@@ -154,11 +155,11 @@ fn layer_chain_requires_full_block_replay(scene: &Scene, mut layer_id: u64) -> b
 }
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
-fn layer_requires_full_block_replay(layer: &SceneLayer) -> bool {
+fn layer_requires_full_object_replay(layer: &LayerObject) -> bool {
     layer.offscreen
         || layer.clip.is_some()
         || layer.opacity < 1.0
-        || layer.blend_mode != zeno_scene::SceneBlendMode::Normal
+        || layer.blend_mode != SceneBlendMode::Normal
         || !layer.effects.is_empty()
 }
 
@@ -183,7 +184,7 @@ fn include_layer_ancestors(
 fn clear_color_for_scene(scene: &Scene) -> Color {
     scene
         .clear_color
-        .or_else(|| scene.clear_command())
+        .or_else(|| scene.clear_packet())
         .unwrap_or(Color::TRANSPARENT)
 }
 

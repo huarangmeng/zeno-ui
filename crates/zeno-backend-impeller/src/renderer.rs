@@ -21,9 +21,9 @@ impl Renderer for ImpellerRenderer {
     fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
         Ok(FrameReport {
             backend: self.kind(),
-            command_count: scene.command_count(),
+            command_count: scene.packet_count(),
             resource_count: scene.resource_keys().len(),
-            block_count: scene.blocks.len(),
+            block_count: scene.objects.len(),
             patch_upserts: 0,
             patch_removes: 0,
             surface_id: surface.id.clone(),

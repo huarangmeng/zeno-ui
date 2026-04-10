@@ -6,7 +6,7 @@ use metal::{
     MTLStoreAction, RenderPassDescriptor, RenderPipelineState, Texture,
 };
 use zeno_core::{Rect, Transform2D, zeno_session_log};
-use zeno_scene::{Scene, SceneBlendMode, SceneBlock, SceneEffect, SceneLayer};
+use zeno_scene::{LayerObject, RenderObject, Scene, SceneBlendMode, SceneEffect};
 use zeno_text::GlyphRasterCache;
 
 use super::{
@@ -44,13 +44,13 @@ pub(super) fn render_offscreen_layer(
     font: Option<&Font>,
     parent_encoder: &metal::RenderCommandEncoderRef,
     scene: &Scene,
-    layer: &SceneLayer,
+    layer: &LayerObject,
     combined_transform: Transform2D,
     combined_opacity: f32,
     parent_scissor: MTLScissorRect,
-    layers_by_id: &HashMap<u64, &SceneLayer>,
-    child_layers_by_parent: &HashMap<u64, Vec<&SceneLayer>>,
-    blocks_by_layer: &HashMap<u64, Vec<&SceneBlock>>,
+    layers_by_id: &HashMap<u64, &LayerObject>,
+    child_layers_by_parent: &HashMap<u64, Vec<&LayerObject>>,
+    objects_by_layer: &HashMap<u64, Vec<&RenderObject>>,
     parent_viewport_width: f32,
     parent_viewport_height: f32,
     glyph_cache: &GlyphRasterCache,
@@ -114,7 +114,7 @@ pub(super) fn render_offscreen_layer(
         offscreen_scissor,
         layers_by_id,
         child_layers_by_parent,
-        blocks_by_layer,
+        objects_by_layer,
         offscreen_width,
         offscreen_height,
         glyph_cache,
@@ -157,7 +157,7 @@ pub(super) fn render_offscreen_layer(
     );
 }
 
-pub(super) fn should_render_offscreen(layer: &SceneLayer) -> bool {
+pub(super) fn should_render_offscreen(layer: &LayerObject) -> bool {
     layer.layer_id != Scene::ROOT_LAYER_ID
         && (layer.offscreen
             || layer.blend_mode != SceneBlendMode::Normal
@@ -203,7 +203,7 @@ pub(super) fn composite_pipeline_for_blend<'a>(
 }
 
 pub(super) fn composite_params(
-    layer: &SceneLayer,
+    layer: &LayerObject,
     texture_width: f32,
     texture_height: f32,
 ) -> CompositeParams {
@@ -242,7 +242,7 @@ pub(super) fn composite_params(
     }
 }
 
-pub(super) fn local_effect_bounds(layer: &SceneLayer) -> Rect {
+pub(super) fn local_effect_bounds(layer: &LayerObject) -> Rect {
     let mut bounds = layer.local_bounds;
     for effect in &layer.effects {
         match effect {
@@ -266,7 +266,7 @@ pub(super) fn local_effect_bounds(layer: &SceneLayer) -> Rect {
     bounds
 }
 
-pub(super) fn offscreen_sampling_padding(layer: &SceneLayer) -> f32 {
+pub(super) fn offscreen_sampling_padding(layer: &LayerObject) -> f32 {
     layer
         .effects
         .iter()

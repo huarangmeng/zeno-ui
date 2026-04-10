@@ -6,5 +6,4 @@ mod retained;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use indexing::NodeIndexTable;
 pub use retained::RetainedComposeTree;

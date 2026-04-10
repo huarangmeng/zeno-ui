@@ -6,9 +6,8 @@ mod surface;
 pub use capabilities::{BackendProbe, RenderCapabilities};
 pub use renderer::{GraphicsBackend, RenderSession, Renderer};
 pub use scene::{
-    Brush, CanvasOp, CommandRange, DrawCommand, Scene, SceneBlendMode, SceneBlock,
-    SceneBlockOrder, SceneClip, SceneEffect, SceneLayer, SceneLayerOrder, ScenePatch,
-    SceneResourceKey, SceneSubmit,
-    SceneTransform, Shape, Stroke,
+    Brush, CanvasOp, DrawCommand, DrawPacketRange, LayerObject, LayerOrder, RenderObject,
+    RenderObjectDelta, RenderObjectOrder, RenderSceneUpdate, Scene, SceneBlendMode, SceneClip,
+    SceneEffect, SceneResourceKey, SceneTransform, Shape, Stroke,
 };
 pub use surface::{FrameReport, RenderSurface};

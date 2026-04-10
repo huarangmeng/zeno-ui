@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use skia_safe as sk;
-use zeno_scene::{Scene, SceneBlock, SceneLayer};
+use zeno_scene::{LayerObject, RenderObject, Scene};
 
 use crate::canvas::{
     draw::draw_command,
@@ -15,15 +15,15 @@ pub(crate) fn render_scene_layers(
     scene: &Scene,
     text_cache: &mut SkiaTextCache,
 ) {
-    let layers_by_id: HashMap<u64, &SceneLayer> = scene
-        .layers
+    let layers_by_id: HashMap<u64, &LayerObject> = scene
+        .layer_graph
         .iter()
         .map(|layer| (layer.layer_id, layer))
         .collect();
-    let mut child_layers_by_parent: HashMap<u64, Vec<&SceneLayer>> = HashMap::new();
-    let mut blocks_by_layer: HashMap<u64, Vec<&SceneBlock>> = HashMap::new();
+    let mut child_layers_by_parent: HashMap<u64, Vec<&LayerObject>> = HashMap::new();
+    let mut objects_by_layer: HashMap<u64, Vec<&RenderObject>> = HashMap::new();
 
-    for layer in &scene.layers {
+    for layer in &scene.layer_graph {
         if let Some(parent_id) = layer.parent_layer_id {
             child_layers_by_parent
                 .entry(parent_id)
@@ -31,11 +31,11 @@ pub(crate) fn render_scene_layers(
                 .push(layer);
         }
     }
-    for block in &scene.blocks {
-        blocks_by_layer
-            .entry(block.layer_id)
+    for object in &scene.objects {
+        objects_by_layer
+            .entry(object.layer_id)
             .or_default()
-            .push(block);
+            .push(object);
     }
 
     render_layer(
@@ -44,7 +44,7 @@ pub(crate) fn render_scene_layers(
         Scene::ROOT_LAYER_ID,
         &layers_by_id,
         &child_layers_by_parent,
-        &blocks_by_layer,
+        &objects_by_layer,
         text_cache,
     );
 }
@@ -53,9 +53,9 @@ fn render_layer(
     canvas: &sk::Canvas,
     scene: &Scene,
     layer_id: u64,
-    layers_by_id: &HashMap<u64, &SceneLayer>,
-    child_layers_by_parent: &HashMap<u64, Vec<&SceneLayer>>,
-    blocks_by_layer: &HashMap<u64, Vec<&SceneBlock>>,
+    layers_by_id: &HashMap<u64, &LayerObject>,
+    child_layers_by_parent: &HashMap<u64, Vec<&LayerObject>>,
+    objects_by_layer: &HashMap<u64, Vec<&RenderObject>>,
     text_cache: &mut SkiaTextCache,
 ) {
     let Some(layer) = layers_by_id.get(&layer_id).copied() else {
@@ -84,9 +84,9 @@ fn render_layer(
     }
 
     let mut items = Vec::new();
-    if let Some(blocks) = blocks_by_layer.get(&layer_id) {
-        for block in blocks {
-            items.push((block.order, LayerItem::Block(*block)));
+    if let Some(objects) = objects_by_layer.get(&layer_id) {
+        for object in objects {
+            items.push((object.order, LayerItem::Object(*object)));
         }
     }
     if let Some(children) = child_layers_by_parent.get(&layer_id) {
@@ -99,14 +99,14 @@ fn render_layer(
     items.sort_by_key(|(order, _)| *order);
     for (_, item) in items {
         match item {
-            LayerItem::Block(block) => draw_block(canvas, scene, block, text_cache),
+            LayerItem::Object(object) => draw_object(canvas, scene, object, text_cache),
             LayerItem::Layer(child_layer_id) => render_layer(
                 canvas,
                 scene,
                 child_layer_id,
                 layers_by_id,
                 child_layers_by_parent,
-                blocks_by_layer,
+                &objects_by_layer,
                 text_cache,
             ),
         }
@@ -117,18 +117,23 @@ fn render_layer(
     }
 }
 
-fn draw_block(canvas: &sk::Canvas, scene: &Scene, block: &SceneBlock, text_cache: &mut SkiaTextCache) {
-    let needs_save = !block.transform.is_identity() || block.clip.is_some();
+fn draw_object(
+    canvas: &sk::Canvas,
+    scene: &Scene,
+    object: &RenderObject,
+    text_cache: &mut SkiaTextCache,
+) {
+    let needs_save = !object.transform.is_identity() || object.clip.is_some();
     if needs_save {
         canvas.save();
     }
-    if !block.transform.is_identity() {
-        apply_transform(canvas, block.transform);
+    if !object.transform.is_identity() {
+        apply_transform(canvas, object.transform);
     }
-    if let Some(clip) = block.clip {
+    if let Some(clip) = object.clip {
         apply_clip(canvas, clip);
     }
-    for cmd in scene.commands_for_block(block) {
+    for cmd in scene.packets_for_object(object) {
         draw_command(canvas, cmd, text_cache);
     }
     if needs_save {
@@ -137,6 +142,6 @@ fn draw_block(canvas: &sk::Canvas, scene: &Scene, block: &SceneBlock, text_cache
 }
 
 enum LayerItem<'a> {
-    Block(&'a SceneBlock),
+    Object(&'a RenderObject),
     Layer(u64),
 }

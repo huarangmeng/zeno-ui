@@ -1,6 +1,6 @@
 use zeno_ui::{ComposeEngine, ComposeStats, DirtyReason, Node, NodeId};
 use zeno_core::{Size, ZenoError, ZenoErrorCode};
-use zeno_scene::{Scene, SceneSubmit};
+use zeno_scene::{RenderSceneUpdate, Scene};
 use zeno_text::TextSystem;
 
 use crate::{FramePhases, FrameScheduler};
@@ -8,7 +8,7 @@ use crate::{FramePhases, FrameScheduler};
 #[derive(Debug, Clone, PartialEq)]
 pub struct UiFrame {
     pub scene: Scene,
-    pub scene_submit: SceneSubmit,
+    pub scene_update: RenderSceneUpdate,
     pub phases: FramePhases,
     pub compose_stats: ComposeStats,
 }
@@ -93,14 +93,14 @@ impl<'a> UiRuntime<'a> {
             self.engine.invalidate(DirtyReason::Paint);
         }
 
-        let scene_submit = self.engine.compose_submit(root, viewport);
-        let scene = match &scene_submit {
-            SceneSubmit::Full(scene) => scene.clone(),
-            SceneSubmit::Patch { current, .. } => current.clone(),
+        let scene_update = self.engine.compose_submit(root, viewport);
+        let scene = match &scene_update {
+            RenderSceneUpdate::Full(scene) => scene.clone(),
+            RenderSceneUpdate::Delta { current, .. } => current.clone(),
         };
         let frame = UiFrame {
             scene,
-            scene_submit,
+            scene_update,
             phases,
             compose_stats: self.engine.stats(),
         };

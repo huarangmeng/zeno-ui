@@ -1,6 +1,7 @@
 mod invalidation;
 pub mod gesture;
 mod layout;
+mod frontend;
 mod modifier;
 mod node;
 mod render;

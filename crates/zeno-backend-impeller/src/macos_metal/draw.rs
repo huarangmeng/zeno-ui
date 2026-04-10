@@ -275,7 +275,7 @@ pub(super) fn make_offscreen_texture(device: &Device, width: u64, height: u64) -
 pub(super) fn clear_color_for_scene(scene: &Scene) -> metal::MTLClearColor {
     let clear = scene
         .clear_color
-        .or_else(|| scene.clear_command())
+        .or_else(|| scene.clear_packet())
         .unwrap_or(Color::WHITE);
     metal::MTLClearColor::new(
         f64::from(clear.red) / 255.0,

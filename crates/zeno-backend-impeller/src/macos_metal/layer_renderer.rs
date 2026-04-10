@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use fontdue::Font;
 use metal::{CommandQueue, Device, MTLScissorRect, RenderPipelineState};
 use zeno_core::Transform2D;
-use zeno_scene::{Scene, SceneBlock, SceneLayer};
+use zeno_scene::{LayerObject, RenderObject, Scene};
 use zeno_text::GlyphRasterCache;
 
 use super::{
@@ -13,7 +13,7 @@ use super::{
 };
 
 enum LayerItem<'a> {
-    Block(&'a SceneBlock),
+    Object(&'a RenderObject),
     Layer(u64),
 }
 
@@ -35,14 +35,14 @@ pub(super) fn render_scene_layers(
     viewport_height: f32,
     glyph_cache: &GlyphRasterCache,
 ) {
-    let layers_by_id: HashMap<u64, &SceneLayer> = scene
-        .layers
+    let layers_by_id: HashMap<u64, &LayerObject> = scene
+        .layer_graph
         .iter()
         .map(|layer| (layer.layer_id, layer))
         .collect();
-    let mut child_layers_by_parent: HashMap<u64, Vec<&SceneLayer>> = HashMap::new();
-    let mut blocks_by_layer: HashMap<u64, Vec<&SceneBlock>> = HashMap::new();
-    for layer in &scene.layers {
+    let mut child_layers_by_parent: HashMap<u64, Vec<&LayerObject>> = HashMap::new();
+    let mut objects_by_layer: HashMap<u64, Vec<&RenderObject>> = HashMap::new();
+    for layer in &scene.layer_graph {
         if let Some(parent_id) = layer.parent_layer_id {
             child_layers_by_parent
                 .entry(parent_id)
@@ -50,11 +50,11 @@ pub(super) fn render_scene_layers(
                 .push(layer);
         }
     }
-    for block in &scene.blocks {
-        blocks_by_layer
-            .entry(block.layer_id)
+    for object in &scene.objects {
+        objects_by_layer
+            .entry(object.layer_id)
             .or_default()
-            .push(block);
+            .push(object);
     }
     let Some(root_layer) = layers_by_id.get(&Scene::ROOT_LAYER_ID).copied() else {
         return;
@@ -76,7 +76,7 @@ pub(super) fn render_scene_layers(
         root_scissor,
         &layers_by_id,
         &child_layers_by_parent,
-        &blocks_by_layer,
+        &objects_by_layer,
         viewport_width,
         viewport_height,
         glyph_cache,
@@ -96,13 +96,13 @@ pub(super) fn render_layer(
     font: Option<&Font>,
     encoder: &metal::RenderCommandEncoderRef,
     scene: &Scene,
-    layer: &SceneLayer,
+    layer: &LayerObject,
     combined_transform: Transform2D,
     combined_opacity: f32,
     parent_scissor: MTLScissorRect,
-    layers_by_id: &HashMap<u64, &SceneLayer>,
-    child_layers_by_parent: &HashMap<u64, Vec<&SceneLayer>>,
-    blocks_by_layer: &HashMap<u64, Vec<&SceneBlock>>,
+    layers_by_id: &HashMap<u64, &LayerObject>,
+    child_layers_by_parent: &HashMap<u64, Vec<&LayerObject>>,
+    objects_by_layer: &HashMap<u64, Vec<&RenderObject>>,
     viewport_width: f32,
     viewport_height: f32,
     glyph_cache: &GlyphRasterCache,
@@ -119,9 +119,9 @@ pub(super) fn render_layer(
     });
     encoder.set_scissor_rect(layer_scissor);
     let mut items = Vec::new();
-    if let Some(blocks) = blocks_by_layer.get(&layer.layer_id) {
-        for block in blocks {
-            items.push((block.order, LayerItem::Block(*block)));
+    if let Some(objects) = objects_by_layer.get(&layer.layer_id) {
+        for object in objects {
+            items.push((object.order, LayerItem::Object(*object)));
         }
     }
     if let Some(children) = child_layers_by_parent.get(&layer.layer_id) {
@@ -132,29 +132,29 @@ pub(super) fn render_layer(
     items.sort_by_key(|(order, _)| *order);
     for (_, item) in items {
         match item {
-            LayerItem::Block(block) => {
-                let block_transform = combined_transform.then(block.transform);
-                let block_scissor = block.clip.map_or(layer_scissor, |clip| {
+            LayerItem::Object(object) => {
+                let object_transform = combined_transform.then(object.transform);
+                let object_scissor = object.clip.map_or(layer_scissor, |clip| {
                     intersect_scissor(
                         layer_scissor,
                         scissor_for_rect(
-                            clip_rect(clip, block_transform),
+                            clip_rect(clip, object_transform),
                             viewport_width,
                             viewport_height,
                         ),
                     )
                 });
-                encoder.set_scissor_rect(block_scissor);
+                encoder.set_scissor_rect(object_scissor);
                 draw_commands(
                     device,
                     color_pipeline,
                     text_pipeline,
                     font,
                     encoder,
-                    scene.commands_for_block(block),
+                    scene.packets_for_object(object),
                     viewport_width,
                     viewport_height,
-                    block_transform,
+                    object_transform,
                     combined_opacity,
                     glyph_cache,
                 );
@@ -184,7 +184,7 @@ pub(super) fn render_layer(
                         layer_scissor,
                         layers_by_id,
                         child_layers_by_parent,
-                        blocks_by_layer,
+                        objects_by_layer,
                         viewport_width,
                         viewport_height,
                         glyph_cache,
@@ -208,7 +208,7 @@ pub(super) fn render_layer(
                         layer_scissor,
                         layers_by_id,
                         child_layers_by_parent,
-                        blocks_by_layer,
+                        objects_by_layer,
                         viewport_width,
                         viewport_height,
                         glyph_cache,

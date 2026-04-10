@@ -18,8 +18,8 @@ pub fn render_scene_to_canvas(canvas: &sk::Canvas, scene: &Scene, text_cache: &m
     if let Some(clear_color) = scene.clear_color {
         canvas.clear(sk_color(clear_color));
     }
-    if scene.blocks.is_empty() {
-        for cmd in scene.iter_commands() {
+    if scene.objects.is_empty() {
+        for cmd in scene.iter_packets() {
             draw_command(canvas, cmd, text_cache);
         }
         return;
@@ -54,7 +54,7 @@ fn clear_paint(scene: &Scene) -> sk::Paint {
     paint.set_anti_alias(true);
     let clear = scene
         .clear_color
-        .or_else(|| scene.clear_command())
+        .or_else(|| scene.clear_packet())
         .unwrap_or(Color::TRANSPARENT);
     paint.set_color(sk_color(clear));
     paint

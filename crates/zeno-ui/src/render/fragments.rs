@@ -2,8 +2,8 @@
 
 use super::scene::build_scene;
 use super::*;
+use crate::frontend::{FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table};
 use crate::layout::LayoutArena;
-use crate::tree::NodeIndexTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandRange {
@@ -52,16 +52,16 @@ impl FragmentStore {
 
     pub fn remap(
         &mut self,
-        old_index_table: &NodeIndexTable,
-        new_index_table: &NodeIndexTable,
+        old_object_table: &FrontendObjectTable,
+        new_object_table: &FrontendObjectTable,
     ) {
-        let mut remapped = vec![None; new_index_table.len()];
+        let mut remapped = vec![None; new_object_table.len()];
         for (old_index, maybe_range) in self.ranges_by_index.iter().copied().enumerate() {
             let Some(range) = maybe_range else {
                 continue;
             };
-            let node_id = old_index_table.node_ids()[old_index];
-            if let Some(new_index) = new_index_table.index_of(node_id) {
+            let node_id = old_object_table.node_ids()[old_index];
+            if let Some(new_index) = new_object_table.index_of(node_id) {
                 remapped[new_index] = Some(range);
             }
         }
@@ -115,16 +115,13 @@ pub(super) fn structured_scene_from_layout(
     FragmentStore,
     Scene,
 ) {
-    let mut fragments = FragmentStore::new_with_len(layout.index_table().len());
-    let mut available = vec![Size::new(0.0, 0.0); layout.index_table().len()];
-    collect_fragments(
-        root,
-        0,
-        layout,
-        viewport,
-        &mut available,
-        &mut fragments,
-    );
+    let objects = compile_object_table(root);
+    let mut fragments = FragmentStore::new_with_len(objects.len());
+    let available = available_slots_from_objects(&objects, viewport, layout);
+    for index in 0..objects.len() {
+        let slot = layout.slot_at(index);
+        fragments.insert_at(index, node_fragment(objects.object(index), slot));
+    }
     let scene = build_scene(root, layout, viewport, &fragments);
     (available, fragments, scene)
 }
@@ -134,126 +131,15 @@ pub(super) fn available_slots_from_layout(
     viewport: Size,
     layout: &LayoutArena,
 ) -> Vec<Size> {
-    let mut available = vec![Size::new(0.0, 0.0); layout.index_table().len()];
-    collect_available(root, 0, layout, viewport, &mut available);
-    available
-}
-
-pub(super) fn collect_fragments(
-    node: &Node,
-    index: usize,
-    layout: &LayoutArena,
-    available: Size,
-    available_by_index: &mut [Size],
-    fragments: &mut FragmentStore,
-) {
-    available_by_index[index] = available;
-    if let Some(slot) = layout.slot(node.id()) {
-        fragments.insert_at(index, node_fragment(node, slot, layout));
-    }
-
-    match &node.kind {
-        NodeKind::Container(child) => {
-            let child_index = layout.index_table().child_indices(index)[0];
-            collect_fragments(
-                child,
-                child_index,
-                layout,
-                crate::layout::content_available(node, available),
-                available_by_index,
-                fragments,
-            );
-        }
-        NodeKind::Box { children } => {
-            let child_available = crate::layout::content_available(node, available);
-            for (child, child_index) in children
-                .iter()
-                .zip(layout.index_table().child_indices(index).iter().copied())
-            {
-                collect_fragments(
-                    child,
-                    child_index,
-                    layout,
-                    child_available,
-                    available_by_index,
-                    fragments,
-                );
-            }
-        }
-        NodeKind::Stack { children, .. } => {
-            collect_stack_fragments(
-                node,
-                children,
-                index,
-                layout,
-                available,
-                available_by_index,
-                fragments,
-            );
-        }
-        _ => {}
-    }
-}
-
-fn collect_available(
-    node: &Node,
-    index: usize,
-    layout: &LayoutArena,
-    available: Size,
-    available_by_index: &mut [Size],
-) {
-    available_by_index[index] = available;
-    match &node.kind {
-        NodeKind::Container(child) => {
-            let child_index = layout.index_table().child_indices(index)[0];
-            collect_available(
-                child,
-                child_index,
-                layout,
-                crate::layout::content_available(node, available),
-                available_by_index,
-            );
-        }
-        NodeKind::Box { children } => {
-            let child_available = crate::layout::content_available(node, available);
-            for (child, child_index) in children
-                .iter()
-                .zip(layout.index_table().child_indices(index).iter().copied())
-            {
-                collect_available(child, child_index, layout, child_available, available_by_index);
-            }
-        }
-        NodeKind::Stack { children, .. } => {
-            let content_available = crate::layout::content_available(node, available);
-            let axis = child_axis(node);
-            let mut used_main = 0.0f32;
-            for (position, (child, child_index)) in children
-                .iter()
-                .zip(layout.index_table().child_indices(index).iter().copied())
-                .enumerate()
-            {
-                let child_available =
-                    crate::layout::remaining_available_for_axis(content_available, used_main, axis);
-                collect_available(child, child_index, layout, child_available, available_by_index);
-                let child_frame = layout
-                    .frame(child.id())
-                    .expect("layout frame should exist for stack child");
-                used_main += main_axis_extent(child_frame.size, axis);
-                if position + 1 != children.len() {
-                    used_main += node.resolved_style().spacing;
-                }
-            }
-        }
-        _ => {}
-    }
+    let objects = compile_object_table(root);
+    available_slots_from_objects(&objects, viewport, layout)
 }
 
 pub(super) fn node_fragment(
-    node: &Node,
+    object: &FrontendObject,
     slot: &crate::layout::LayoutSlot,
-    layout: &LayoutArena,
 ) -> Vec<DrawCommand> {
-    let style = node.resolved_style();
+    let style = &object.style;
     let mut fragment = Vec::new();
     let local_bounds = Rect::new(
         0.0,
@@ -276,7 +162,7 @@ pub(super) fn node_fragment(
         });
     }
 
-    if let (NodeKind::Text(_), Some(text_layout)) = (&node.kind, layout.text_layout(node.id())) {
+    if let (FrontendObjectKind::Text(_), Some(text_layout)) = (&object.kind, slot.text_layout.as_ref()) {
         let position = Point::new(
             style.padding.left,
             style.padding.top + text_layout.metrics.ascent,
@@ -291,46 +177,10 @@ pub(super) fn node_fragment(
     fragment
 }
 
-fn collect_stack_fragments(
-    node: &Node,
-    children: &[Node],
-    index: usize,
-    layout: &LayoutArena,
-    available: Size,
-    available_by_index: &mut [Size],
-    fragments: &mut FragmentStore,
-) {
-    let content_available = crate::layout::content_available(node, available);
-    let mut used_main = 0.0f32;
-    let axis = child_axis(node);
-    for (position, (child, child_index)) in children
-        .iter()
-        .zip(layout.index_table().child_indices(index).iter().copied())
-        .enumerate()
-    {
-        let child_available =
-            crate::layout::remaining_available_for_axis(content_available, used_main, axis);
-        collect_fragments(
-            child,
-            child_index,
-            layout,
-            child_available,
-            available_by_index,
-            fragments,
-        );
-        let child_frame = layout
-            .frame(child.id())
-            .expect("layout frame should exist for stack child");
-        used_main += main_axis_extent(child_frame.size, axis);
-        if position + 1 != children.len() {
-            used_main += node.resolved_style().spacing;
-        }
-    }
-}
-
-pub(super) fn child_axis(node: &Node) -> crate::Axis {
-    match &node.kind {
-        NodeKind::Stack { axis, .. } => *axis,
+#[allow(dead_code)]
+pub(super) fn child_axis(object: &FrontendObject) -> crate::Axis {
+    match object.kind {
+        FrontendObjectKind::Stack { axis } => axis,
         _ => crate::Axis::Vertical,
     }
 }
@@ -340,6 +190,58 @@ pub(super) fn main_axis_extent(size: Size, axis: crate::Axis) -> f32 {
         crate::Axis::Horizontal => size.width,
         crate::Axis::Vertical => size.height,
     }
+}
+
+fn available_slots_from_objects(
+    objects: &crate::frontend::FrontendObjectTable,
+    viewport: Size,
+    layout: &LayoutArena,
+) -> Vec<Size> {
+    let mut available = vec![Size::new(0.0, 0.0); objects.len()];
+    if objects.len() == 0 {
+        return available;
+    }
+    available[0] = viewport;
+    for index in 0..objects.len() {
+        let object = objects.object(index);
+        let current = available[index];
+        match &object.kind {
+            FrontendObjectKind::Container => {
+                if let Some(child_index) = object.first_child {
+                    available[child_index] = content_available_for_style(&object.style, current);
+                }
+            }
+            FrontendObjectKind::Box => {
+                let child_available = content_available_for_style(&object.style, current);
+                for &child_index in objects.child_indices(index) {
+                    available[child_index] = child_available;
+                }
+            }
+            FrontendObjectKind::Stack { axis } => {
+                let content_available = content_available_for_style(&object.style, current);
+                let mut used_main = 0.0f32;
+                let children = objects.child_indices(index);
+                for (position, &child_index) in children.iter().enumerate() {
+                    available[child_index] =
+                        crate::layout::remaining_available_for_axis(content_available, used_main, *axis);
+                    let child_frame = layout.slot_at(child_index).frame;
+                    used_main += main_axis_extent(child_frame.size, *axis);
+                    if position + 1 != children.len() {
+                        used_main += object.style.spacing;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    available
+}
+
+fn content_available_for_style(style: &crate::Style, available: Size) -> Size {
+    Size::new(
+        (available.width - style.padding.horizontal()).max(0.0),
+        (available.height - style.padding.vertical()).max(0.0),
+    )
 }
 
 #[cfg(test)]
@@ -387,7 +289,7 @@ mod tests {
             crate::layout::measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
         let layout = crate::layout::LayoutArena::from_measured(&root, &measured);
         let available = available_slots_from_layout(&root, viewport, &layout);
-        let table = layout.index_table();
+        let table = layout.object_table();
 
         assert_eq!(available[table.index_of(root.id()).unwrap()], viewport);
         assert_eq!(available[table.index_of(first_id).unwrap()], Size::new(60.0, 30.0));

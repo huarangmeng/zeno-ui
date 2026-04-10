@@ -1,6 +1,6 @@
 use zeno_core::{Backend, Size, ZenoError, ZenoErrorCode};
 use zeno_scene::{
-    FrameReport, RenderCapabilities, RenderSession, RenderSurface, Scene, SceneSubmit,
+    FrameReport, RenderCapabilities, RenderSceneUpdate, RenderSession, RenderSurface, Scene,
 };
 
 use crate::platform;
@@ -70,11 +70,11 @@ impl RenderSession for MobileRenderSession {
         }
     }
 
-    fn submit_scene(&mut self, submit: &SceneSubmit) -> Result<FrameReport, ZenoError> {
+    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::Android(session) => session.submit_scene(submit),
-            Self::IosView(session) => session.submit_scene(submit),
-            Self::IosMetalLayer(session) => session.submit_scene(submit),
+            Self::Android(session) => session.submit_scene(update),
+            Self::IosView(session) => session.submit_scene(update),
+            Self::IosMetalLayer(session) => session.submit_scene(update),
         }
     }
 }
@@ -135,7 +135,7 @@ impl AndroidNativeWindowSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_scene(&mut self, submit: &SceneSubmit) -> Result<FrameReport, ZenoError> {
+    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
         let backend = self.presenter.kind();
         let capabilities = self.presenter.capabilities();
         submit_mobile_scene(
@@ -144,7 +144,7 @@ impl AndroidNativeWindowSession {
             |surface, scene| self.presenter.render(surface, scene),
             &self.surface,
             &mut self.last_scene,
-            submit,
+            update,
         )
     }
 }
@@ -196,7 +196,7 @@ impl IosViewSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_scene(&mut self, submit: &SceneSubmit) -> Result<FrameReport, ZenoError> {
+    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
         let backend = self.presenter.kind();
         let capabilities = self.presenter.capabilities();
         submit_mobile_scene(
@@ -205,7 +205,7 @@ impl IosViewSession {
             |surface, scene| self.presenter.render(surface, scene),
             &self.surface,
             &mut self.last_scene,
-            submit,
+            update,
         )
     }
 }
@@ -268,7 +268,7 @@ impl IosMetalLayerSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_scene(&mut self, submit: &SceneSubmit) -> Result<FrameReport, ZenoError> {
+    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
         let backend = self.presenter.kind();
         let capabilities = self.presenter.capabilities();
         submit_mobile_scene(
@@ -277,7 +277,7 @@ impl IosMetalLayerSession {
             |surface, scene| self.presenter.render(surface, scene),
             &self.surface,
             &mut self.last_scene,
-            submit,
+            update,
         )
     }
 }
@@ -311,16 +311,16 @@ fn submit_mobile_scene(
     render_scene: impl FnOnce(&RenderSurface, &Scene) -> Result<FrameReport, ZenoError>,
     surface: &RenderSurface,
     last_scene: &mut Option<Scene>,
-    submit: &SceneSubmit,
+    update: &RenderSceneUpdate,
 ) -> Result<FrameReport, ZenoError> {
-    let scene = submit.snapshot(last_scene.as_ref()).ok_or_else(|| {
+    let scene = update.snapshot(last_scene.as_ref()).ok_or_else(|| {
         mobile_session_error(
             ZenoErrorCode::GraphicsScenePatchWithoutBase,
             "submit_scene",
             "scene patch requires a previous snapshot",
         )
     })?;
-    let (patch_upserts, patch_removes) = patch_stats(submit);
+    let (patch_upserts, patch_removes) = patch_stats(update);
     let mut report = render_scene(surface, &scene)?;
     report.backend = backend;
     report.command_count = scene.command_count();
@@ -334,15 +334,15 @@ fn submit_mobile_scene(
     Ok(report)
 }
 
-fn patch_stats(submit: &SceneSubmit) -> (usize, usize) {
-    match submit {
-        SceneSubmit::Full(scene) => (scene.blocks.len(), 0),
-        SceneSubmit::Patch { patch, .. } => (
-            patch.upserts.len()
-                + patch.reorders.len()
-                + patch.layer_upserts.len()
-                + patch.layer_reorders.len(),
-            patch.removes.len() + patch.layer_removes.len(),
+fn patch_stats(update: &RenderSceneUpdate) -> (usize, usize) {
+    match update {
+        RenderSceneUpdate::Full(scene) => (scene.objects.len(), 0),
+        RenderSceneUpdate::Delta { delta, .. } => (
+            delta.object_upserts.len()
+                + delta.object_reorders.len()
+                + delta.layer_upserts.len()
+                + delta.layer_reorders.len(),
+            delta.object_removes.len() + delta.layer_removes.len(),
         ),
     }
 }

@@ -1,6 +1,7 @@
 //! patch scene 遍历独立拆分，方便继续优化局部提交粒度。
 
 use super::*;
+use crate::frontend::FrontendObjectTable;
 use crate::layout::LayoutArena;
 use crate::render::patch::diff::{
     layer_context_changed, push_block_patch, push_layer_patch, subtree_contains_updates,
@@ -11,7 +12,7 @@ use crate::render::scene::{
 };
 
 pub(super) fn collect_scene_patch_items(
-    node: &Node,
+    objects: &FrontendObjectTable,
     index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
@@ -21,21 +22,20 @@ pub(super) fn collect_scene_patch_items(
     force_update: bool,
     update_ids: &HashSet<usize>,
     next_order: &mut u32,
-    previous_layers_by_id: &HashMap<u64, &zeno_scene::SceneLayer>,
-    previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
+    previous_layers_by_id: &HashMap<u64, &LayerObject>,
+    previous_blocks_by_id: &HashMap<u64, &RenderObject>,
     seen_layers: &mut HashSet<u64>,
     seen_blocks: &mut HashSet<u64>,
-    layer_upserts: &mut Vec<zeno_scene::SceneLayer>,
-    layer_reorders: &mut Vec<SceneLayerOrder>,
-    upserts: &mut Vec<SceneBlock>,
-    reorders: &mut Vec<SceneBlockOrder>,
+    layer_upserts: &mut Vec<LayerObject>,
+    layer_reorders: &mut Vec<LayerOrder>,
+    upserts: &mut Vec<RenderObject>,
+    reorders: &mut Vec<RenderObjectOrder>,
 ) {
-    if !force_update
-        && !update_ids.contains(&index)
-        && !subtree_contains_updates(node, index, layout, update_ids)
-    {
+    let object = objects.object(index);
+    let has_subtree_updates = subtree_contains_updates(objects, index, update_ids);
+    if !force_update && !update_ids.contains(&index) && !has_subtree_updates {
         collect_unchanged_scene_items(
-            node,
+            objects,
             index,
             layout,
             fragments,
@@ -53,13 +53,11 @@ pub(super) fn collect_scene_patch_items(
         return;
     }
 
-    let slot = layout
-        .slot(node.id())
-        .expect("layout slot should exist for patch item");
-    let style = node.resolved_style();
+    let slot = layout.slot_at(index);
+    let style = &object.style;
     let local_bounds = Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height);
 
-    if node_creates_layer(&style) {
+    if node_creates_layer(style) {
         let layer_transform = layer_local_transform(
             slot.frame.origin,
             current_layer_origin,
@@ -68,13 +66,13 @@ pub(super) fn collect_scene_patch_items(
             style.transform_origin,
         );
         let world_transform = current_layer_world_transform.then(layer_transform);
-        let effect_bounds = scene_effect_bounds(local_bounds, &style);
-        let layer_id = node.id().0;
+        let effect_bounds = scene_effect_bounds(local_bounds, style);
+        let layer_id = object.node_id.0;
         let order = *next_order;
         *next_order += 1;
-        let current_layer = zeno_scene::SceneLayer::new(
+        let current_layer = LayerObject::new(
             layer_id,
-            node.id().0,
+            object.node_id.0,
             Some(current_layer_id),
             order,
             local_bounds,
@@ -83,7 +81,7 @@ pub(super) fn collect_scene_patch_items(
             scene_clip(slot.frame.size, style.clip),
             style.opacity,
             scene_blend_mode(style.blend_mode),
-            scene_effects(&style),
+            scene_effects(style),
             style.layer
                 || style.opacity < 1.0
                 || style.blend_mode != BlendMode::Normal
@@ -91,10 +89,7 @@ pub(super) fn collect_scene_patch_items(
                 || style.drop_shadow.is_some(),
         );
         let force_descendant_update = force_update
-            || layer_context_changed(
-                previous_layers_by_id.get(&layer_id).copied(),
-                &current_layer,
-            );
+            || layer_context_changed(previous_layers_by_id.get(&layer_id).copied(), &current_layer);
         seen_layers.insert(layer_id);
         if let Some(previous) = previous_layers_by_id.get(&layer_id) {
             push_layer_patch(previous, &current_layer, layer_upserts, layer_reorders);
@@ -102,8 +97,8 @@ pub(super) fn collect_scene_patch_items(
             layer_upserts.push(current_layer.clone());
         }
         if let Some(fragment) = fragments.clone_fragment_at(index) {
-            let current_block = SceneBlock::new(
-                node.id().0,
+            let current_block = RenderObject::new(
+                object.node_id.0,
                 layer_id,
                 *next_order,
                 world_transform.map_rect(local_bounds),
@@ -111,115 +106,24 @@ pub(super) fn collect_scene_patch_items(
                 None,
                 fragment,
             );
-            seen_blocks.insert(current_block.node_id);
-            if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
+            seen_blocks.insert(current_block.object_id);
+            if let Some(previous) = previous_blocks_by_id.get(&current_block.object_id) {
                 push_block_patch(previous, &current_block, upserts, reorders);
             } else {
                 upserts.push(current_block.clone());
             }
             *next_order += 1;
         }
-        collect_scene_patch_children(
-            node,
-            index,
-            layout,
-            fragments,
-            layer_id,
-            slot.frame.origin,
-            world_transform,
-            force_descendant_update,
-            update_ids,
-            next_order,
-            previous_layers_by_id,
-            previous_blocks_by_id,
-            seen_layers,
-            seen_blocks,
-            layer_upserts,
-            layer_reorders,
-            upserts,
-            reorders,
-        );
-        return;
-    }
-
-    let force_descendant_update = force_update || previous_layers_by_id.contains_key(&node.id().0);
-    if let Some(fragment) = fragments.clone_fragment_at(index) {
-        let block_transform = Transform2D::translation(
-            slot.frame.origin.x - current_layer_origin.x,
-            slot.frame.origin.y - current_layer_origin.y,
-        );
-        let world_transform = current_layer_world_transform.then(block_transform);
-        let current_block = SceneBlock::new(
-            node.id().0,
-            current_layer_id,
-            *next_order,
-            world_transform.map_rect(local_bounds),
-            block_transform,
-            None,
-            fragment,
-        );
-        seen_blocks.insert(current_block.node_id);
-        if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
-            push_block_patch(previous, &current_block, upserts, reorders);
-        } else {
-            upserts.push(current_block.clone());
-        }
-        *next_order += 1;
-    }
-    collect_scene_patch_children(
-        node,
-        index,
-        layout,
-        fragments,
-        current_layer_id,
-        current_layer_origin,
-        current_layer_world_transform,
-        force_descendant_update,
-        update_ids,
-        next_order,
-        previous_layers_by_id,
-        previous_blocks_by_id,
-        seen_layers,
-        seen_blocks,
-        layer_upserts,
-        layer_reorders,
-        upserts,
-        reorders,
-    );
-}
-
-fn collect_scene_patch_children(
-    node: &Node,
-    index: usize,
-    layout: &LayoutArena,
-    fragments: &crate::render::fragments::FragmentStore,
-    current_layer_id: u64,
-    current_layer_origin: Point,
-    current_layer_world_transform: Transform2D,
-    force_update: bool,
-    update_ids: &HashSet<usize>,
-    next_order: &mut u32,
-    previous_layers_by_id: &HashMap<u64, &zeno_scene::SceneLayer>,
-    previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
-    seen_layers: &mut HashSet<u64>,
-    seen_blocks: &mut HashSet<u64>,
-    layer_upserts: &mut Vec<zeno_scene::SceneLayer>,
-    layer_reorders: &mut Vec<SceneLayerOrder>,
-    upserts: &mut Vec<SceneBlock>,
-    reorders: &mut Vec<SceneBlockOrder>,
-) {
-    match &node.kind {
-        NodeKind::Container(child) => {
-            let child_index = layout.index_table().child_indices(index)[0];
+        for &child_index in objects.child_indices(index) {
             collect_scene_patch_items(
-                child,
+                objects,
                 child_index,
                 layout,
                 fragments,
-                current_layer_id,
-                current_layer_origin,
-                current_layer_world_transform,
-                force_update,
+                layer_id,
+                slot.frame.origin,
+                world_transform,
+                force_descendant_update,
                 update_ids,
                 next_order,
                 previous_layers_by_id,
@@ -232,39 +136,59 @@ fn collect_scene_patch_children(
                 reorders,
             );
         }
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for (child, child_index) in children
-                .iter()
-                .zip(layout.index_table().child_indices(index).iter().copied())
-            {
-                collect_scene_patch_items(
-                    child,
-                    child_index,
-                    layout,
-                    fragments,
-                    current_layer_id,
-                    current_layer_origin,
-                    current_layer_world_transform,
-                    force_update,
-                    update_ids,
-                    next_order,
-                    previous_layers_by_id,
-                    previous_blocks_by_id,
-                    seen_layers,
-                    seen_blocks,
-                    layer_upserts,
-                    layer_reorders,
-                    upserts,
-                    reorders,
-                );
-            }
+        return;
+    }
+
+    let force_descendant_update = force_update || previous_layers_by_id.contains_key(&object.node_id.0);
+    if let Some(fragment) = fragments.clone_fragment_at(index) {
+        let block_transform = Transform2D::translation(
+            slot.frame.origin.x - current_layer_origin.x,
+            slot.frame.origin.y - current_layer_origin.y,
+        );
+        let world_transform = current_layer_world_transform.then(block_transform);
+        let current_block = RenderObject::new(
+            object.node_id.0,
+            current_layer_id,
+            *next_order,
+            world_transform.map_rect(local_bounds),
+            block_transform,
+            None,
+            fragment,
+        );
+        seen_blocks.insert(current_block.object_id);
+        if let Some(previous) = previous_blocks_by_id.get(&current_block.object_id) {
+            push_block_patch(previous, &current_block, upserts, reorders);
+        } else {
+            upserts.push(current_block.clone());
         }
-        _ => {}
+        *next_order += 1;
+    }
+    for &child_index in objects.child_indices(index) {
+        collect_scene_patch_items(
+            objects,
+            child_index,
+            layout,
+            fragments,
+            current_layer_id,
+            current_layer_origin,
+            current_layer_world_transform,
+            force_descendant_update,
+            update_ids,
+            next_order,
+            previous_layers_by_id,
+            previous_blocks_by_id,
+            seen_layers,
+            seen_blocks,
+            layer_upserts,
+            layer_reorders,
+            upserts,
+            reorders,
+        );
     }
 }
 
 fn collect_unchanged_scene_items(
-    node: &Node,
+    objects: &FrontendObjectTable,
     index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
@@ -272,20 +196,19 @@ fn collect_unchanged_scene_items(
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
     next_order: &mut u32,
-    previous_layers_by_id: &HashMap<u64, &zeno_scene::SceneLayer>,
-    previous_blocks_by_id: &HashMap<u64, &SceneBlock>,
+    previous_layers_by_id: &HashMap<u64, &LayerObject>,
+    previous_blocks_by_id: &HashMap<u64, &RenderObject>,
     seen_layers: &mut HashSet<u64>,
     seen_blocks: &mut HashSet<u64>,
-    layer_reorders: &mut Vec<SceneLayerOrder>,
-    reorders: &mut Vec<SceneBlockOrder>,
+    layer_reorders: &mut Vec<LayerOrder>,
+    reorders: &mut Vec<RenderObjectOrder>,
 ) {
-    let slot = layout
-        .slot(node.id())
-        .expect("layout slot should exist for unchanged patch item");
-    let style = node.resolved_style();
+    let object = objects.object(index);
+    let slot = layout.slot_at(index);
+    let style = &object.style;
     let local_bounds = Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height);
 
-    if node_creates_layer(&style) {
+    if node_creates_layer(style) {
         let layer_transform = layer_local_transform(
             slot.frame.origin,
             current_layer_origin,
@@ -294,10 +217,10 @@ fn collect_unchanged_scene_items(
             style.transform_origin,
         );
         let world_transform = current_layer_world_transform.then(layer_transform);
-        let effect_bounds = scene_effect_bounds(local_bounds, &style);
-        let current_layer = zeno_scene::SceneLayer::new(
-            node.id().0,
-            node.id().0,
+        let effect_bounds = scene_effect_bounds(local_bounds, style);
+        let current_layer = LayerObject::new(
+            object.node_id.0,
+            object.node_id.0,
             Some(current_layer_id),
             *next_order,
             local_bounds,
@@ -306,7 +229,7 @@ fn collect_unchanged_scene_items(
             scene_clip(slot.frame.size, style.clip),
             style.opacity,
             scene_blend_mode(style.blend_mode),
-            scene_effects(&style),
+            scene_effects(style),
             style.layer
                 || style.opacity < 1.0
                 || style.blend_mode != BlendMode::Normal
@@ -319,8 +242,8 @@ fn collect_unchanged_scene_items(
         }
         *next_order += 1;
         if let Some(fragment) = fragments.clone_fragment_at(index) {
-            let current_block = SceneBlock::new(
-                node.id().0,
+            let current_block = RenderObject::new(
+                object.node_id.0,
                 current_layer.layer_id,
                 *next_order,
                 world_transform.map_rect(local_bounds),
@@ -328,56 +251,29 @@ fn collect_unchanged_scene_items(
                 None,
                 fragment,
             );
-            seen_blocks.insert(current_block.node_id);
-            if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
+            seen_blocks.insert(current_block.object_id);
+            if let Some(previous) = previous_blocks_by_id.get(&current_block.object_id) {
                 push_block_patch(previous, &current_block, &mut Vec::new(), reorders);
             }
             *next_order += 1;
         }
-        match &node.kind {
-            NodeKind::Container(child) => {
-                let child_index = layout.index_table().child_indices(index)[0];
-                collect_unchanged_scene_items(
-                    child,
-                    child_index,
-                    layout,
-                    fragments,
-                    current_layer.layer_id,
-                    slot.frame.origin,
-                    world_transform,
-                    next_order,
-                    previous_layers_by_id,
-                    previous_blocks_by_id,
-                    seen_layers,
-                    seen_blocks,
-                    layer_reorders,
-                    reorders,
-                );
-            }
-            NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-                for (child, child_index) in children
-                    .iter()
-                    .zip(layout.index_table().child_indices(index).iter().copied())
-                {
-                    collect_unchanged_scene_items(
-                        child,
-                        child_index,
-                        layout,
-                        fragments,
-                        current_layer.layer_id,
-                        slot.frame.origin,
-                        world_transform,
-                        next_order,
-                        previous_layers_by_id,
-                        previous_blocks_by_id,
-                        seen_layers,
-                        seen_blocks,
-                        layer_reorders,
-                        reorders,
-                    );
-                }
-            }
-            _ => {}
+        for &child_index in objects.child_indices(index) {
+            collect_unchanged_scene_items(
+                objects,
+                child_index,
+                layout,
+                fragments,
+                current_layer.layer_id,
+                slot.frame.origin,
+                world_transform,
+                next_order,
+                previous_layers_by_id,
+                previous_blocks_by_id,
+                seen_layers,
+                seen_blocks,
+                layer_reorders,
+                reorders,
+            );
         }
         return;
     }
@@ -388,8 +284,8 @@ fn collect_unchanged_scene_items(
             slot.frame.origin.y - current_layer_origin.y,
         );
         let world_transform = current_layer_world_transform.then(block_transform);
-        let current_block = SceneBlock::new(
-            node.id().0,
+        let current_block = RenderObject::new(
+            object.node_id.0,
             current_layer_id,
             *next_order,
             world_transform.map_rect(local_bounds),
@@ -397,55 +293,28 @@ fn collect_unchanged_scene_items(
             None,
             fragment,
         );
-        seen_blocks.insert(current_block.node_id);
-        if let Some(previous) = previous_blocks_by_id.get(&current_block.node_id) {
+        seen_blocks.insert(current_block.object_id);
+        if let Some(previous) = previous_blocks_by_id.get(&current_block.object_id) {
             push_block_patch(previous, &current_block, &mut Vec::new(), reorders);
         }
         *next_order += 1;
     }
-    match &node.kind {
-        NodeKind::Container(child) => {
-            let child_index = layout.index_table().child_indices(index)[0];
-            collect_unchanged_scene_items(
-                child,
-                child_index,
-                layout,
-                fragments,
-                current_layer_id,
-                current_layer_origin,
-                current_layer_world_transform,
-                next_order,
-                previous_layers_by_id,
-                previous_blocks_by_id,
-                seen_layers,
-                seen_blocks,
-                layer_reorders,
-                reorders,
-            );
-        }
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for (child, child_index) in children
-                .iter()
-                .zip(layout.index_table().child_indices(index).iter().copied())
-            {
-                collect_unchanged_scene_items(
-                    child,
-                    child_index,
-                    layout,
-                    fragments,
-                    current_layer_id,
-                    current_layer_origin,
-                    current_layer_world_transform,
-                    next_order,
-                    previous_layers_by_id,
-                    previous_blocks_by_id,
-                    seen_layers,
-                    seen_blocks,
-                    layer_reorders,
-                    reorders,
-                );
-            }
-        }
-        _ => {}
+    for &child_index in objects.child_indices(index) {
+        collect_unchanged_scene_items(
+            objects,
+            child_index,
+            layout,
+            fragments,
+            current_layer_id,
+            current_layer_origin,
+            current_layer_world_transform,
+            next_order,
+            previous_layers_by_id,
+            previous_blocks_by_id,
+            seen_layers,
+            seen_blocks,
+            layer_reorders,
+            reorders,
+        );
     }
 }

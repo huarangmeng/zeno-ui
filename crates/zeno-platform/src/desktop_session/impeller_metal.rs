@@ -10,7 +10,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_impeller::MetalSceneRenderer;
 use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
-use zeno_scene::{FrameReport, RenderSurface, Scene, SceneSubmit};
+use zeno_scene::{FrameReport, RenderSceneUpdate, RenderSurface, Scene};
 
 use super::desktop_session_error;
 use super::scene::{
@@ -89,23 +89,27 @@ impl ImpellerMetalSession {
         Ok(())
     }
 
-    pub(super) fn submit_scene(&mut self, submit: &SceneSubmit) -> Result<FrameReport, ZenoError> {
-        let scene = submit.snapshot(self.last_scene.as_ref()).ok_or_else(|| {
+    pub(super) fn submit_scene(
+        &mut self,
+        update: &RenderSceneUpdate,
+    ) -> Result<FrameReport, ZenoError> {
+        let scene = update.snapshot(self.last_scene.as_ref()).ok_or_else(|| {
             desktop_session_error(
                 ZenoErrorCode::GraphicsScenePatchWithoutBase,
                 "submit_scene",
                 "scene patch requires a previous snapshot",
             )
         })?;
-        let patch_is_empty = matches!(submit, SceneSubmit::Patch { patch, .. } if patch.is_empty());
+        let patch_is_empty =
+            matches!(update, RenderSceneUpdate::Delta { delta, .. } if delta.is_empty());
         let scene = ensure_clear_command(&scene, self.clear_color);
         if patch_is_empty {
             self.last_scene = Some(scene.clone());
             return Ok(FrameReport {
                 backend: Backend::Impeller,
-                command_count: scene.command_count(),
+                command_count: scene.packet_count(),
                 resource_count: scene.resource_keys().len(),
-                block_count: scene.blocks.len(),
+                block_count: scene.objects.len(),
                 patch_upserts: 0,
                 patch_removes: 0,
                 surface_id: self.surface.id.clone(),
@@ -118,12 +122,12 @@ impl ImpellerMetalSession {
                 "metal layer did not provide a drawable",
             )
         })?;
-        let dirty_bounds = match submit {
-            SceneSubmit::Full(_) => None,
-            SceneSubmit::Patch { patch, .. } if self.last_scene.is_some() => {
-                patch.dirty_bounds(self.last_scene.as_ref())
+        let dirty_bounds = match update {
+            RenderSceneUpdate::Full(_) => None,
+            RenderSceneUpdate::Delta { delta, .. } if self.last_scene.is_some() => {
+                delta.dirty_bounds(self.last_scene.as_ref())
             }
-            SceneSubmit::Patch { .. } => None,
+            RenderSceneUpdate::Delta { .. } => None,
         };
         zeno_session_log!(
             trace,
@@ -147,12 +151,12 @@ impl ImpellerMetalSession {
         } else {
             self.renderer.render_to_drawable(drawable, &scene)?;
         }
-        let (patch_upserts, patch_removes) = patch_stats(submit);
+        let (patch_upserts, patch_removes) = patch_stats(update);
         Ok(FrameReport {
             backend: Backend::Impeller,
-            command_count: scene.command_count(),
+            command_count: scene.packet_count(),
             resource_count: scene.resource_keys().len(),
-            block_count: scene.blocks.len(),
+            block_count: scene.objects.len(),
             patch_upserts,
             patch_removes,
             surface_id: self.surface.id.clone(),

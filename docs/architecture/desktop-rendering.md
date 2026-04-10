@@ -9,14 +9,14 @@
 - `ResolvedSession` 作为统一的桌面 session descriptor，显式携带 `platform / backend / attempts / frame_stats`。
 - `zeno-platform::DesktopShell::run_pending_scene_window` 负责事件循环、窗口创建、surface 生命周期与 presenter 启动。
 - `DesktopSessionPlan` 统一桌面后端分发点，目前包含 Skia GL session 和 macOS Impeller Metal session。
-- `zeno-ui` / `UiRuntime` 输出的 `SceneSubmit` 最终由具体 presenter 交给对应 backend 路径执行。
+- `zeno-ui` / `UiRuntime` 输出的 `RenderSceneUpdate` 最终由具体 presenter 交给对应 backend 路径执行。
 
 ## 已完成
 
 ### Skia
 - `zeno-backend-skia` 已提供真实 `Scene -> Skia Canvas` 翻译路径，支持 `Clear / Fill / Stroke / Text`。
 - 桌面 Skia 路径通过 GL-backed Skia surface 呈现，`minimal_app` 可以直接验证。
-- Skia session 已支持按 `SceneBlock` / `ScenePatch` 计算 dirty bounds，并在 patch 路径上执行局部提交（局部清屏 + 区域绘制）。
+- Skia session 已支持按 `RenderObject` / `RenderObjectDelta` 计算 dirty bounds，并在 patch 路径上执行局部提交（局部清屏 + 区域绘制）。
 
 ### Impeller
 - macOS 已具备 `ImpellerMetalSession`，可创建 `MetalLayer` 并提交 drawable。
@@ -27,7 +27,7 @@
 - Skia 的桌面 GPU 呈现主要在 shell 中完成，backend 自身更偏 Scene 翻译层，而不是完整 session。
 - Impeller 的 `Renderer` trait 实现仍偏占位，真正的桌面绘制能力集中在 macOS presenter 与 `MetalSceneRenderer`。
 - 非 macOS 平台的 Impeller presenter 仍未实现；当前桌面 session plan 也已与 runtime probe 对齐，避免 Linux/Windows 上再出现“描述符可建但 presenter 不可用”的假阳性路径。
-- `Scene` 已结构化为 `SceneLayer/SceneBlock/ScenePatch` 并支持 clip/transform/opacity/blend/effect/offscreen；仍需继续细化 compositor 粒度与更复杂 effect graph 的增量合成。
+- `Scene` 已结构化为 `LayerObject/RenderObject/RenderObjectDelta` 并支持 clip/transform/opacity/blend/effect/offscreen；仍需继续细化 compositor 粒度与更复杂 effect graph 的增量合成。
 
 ## 文档合并说明
 - 原 `impeller-desktop.md` 的内容已并入本文件，不再单独维护桌面 Impeller 状态文档。

@@ -137,7 +137,7 @@ fn sorted_roots(retained: &RetainedComposeTree) -> Vec<NodeId> {
     let mut roots: Vec<NodeId> = retained
         .layout_dirty_root_indices()
         .into_iter()
-        .map(|index| retained.layout().index_table().node_id_at(index))
+        .map(|index| retained.layout().object_table().node_id_at(index))
         .collect();
     roots.sort_by_key(|id| id.0);
     roots

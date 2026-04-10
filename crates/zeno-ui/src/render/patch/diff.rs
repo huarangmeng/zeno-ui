@@ -3,16 +3,16 @@
 use super::*;
 
 pub(super) fn push_layer_patch(
-    previous: &zeno_scene::SceneLayer,
-    current: &zeno_scene::SceneLayer,
-    layer_upserts: &mut Vec<zeno_scene::SceneLayer>,
-    layer_reorders: &mut Vec<SceneLayerOrder>,
+    previous: &LayerObject,
+    current: &LayerObject,
+    layer_upserts: &mut Vec<LayerObject>,
+    layer_reorders: &mut Vec<LayerOrder>,
 ) {
     if previous == current {
         return;
     }
     if previous.order != current.order {
-        layer_reorders.push(SceneLayerOrder {
+        layer_reorders.push(LayerOrder {
             layer_id: current.layer_id,
             order: current.order,
         });
@@ -23,17 +23,17 @@ pub(super) fn push_layer_patch(
 }
 
 pub(super) fn push_block_patch(
-    previous: &SceneBlock,
-    current: &SceneBlock,
-    upserts: &mut Vec<SceneBlock>,
-    reorders: &mut Vec<SceneBlockOrder>,
+    previous: &RenderObject,
+    current: &RenderObject,
+    upserts: &mut Vec<RenderObject>,
+    reorders: &mut Vec<RenderObjectOrder>,
 ) {
     if previous == current {
         return;
     }
     if previous.order != current.order {
-        reorders.push(SceneBlockOrder {
-            node_id: current.node_id,
+        reorders.push(RenderObjectOrder {
+            object_id: current.object_id,
             order: current.order,
         });
     }
@@ -42,34 +42,31 @@ pub(super) fn push_block_patch(
     }
 }
 
+use crate::frontend::FrontendObjectTable;
+
 pub(super) fn subtree_contains_updates(
-    node: &Node,
+    objects: &FrontendObjectTable,
     index: usize,
-    layout: &crate::layout::LayoutArena,
     update_ids: &HashSet<usize>,
 ) -> bool {
     if update_ids.contains(&index) {
         return true;
     }
-    match &node.kind {
-        NodeKind::Container(child) => subtree_contains_updates(
-            child,
-            layout.index_table().child_indices(index)[0],
-            layout,
-            update_ids,
-        ),
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            children.iter().zip(layout.index_table().child_indices(index)).any(
-                |(child, child_index)| subtree_contains_updates(child, *child_index, layout, update_ids),
-            )
+    let mut stack = objects.child_indices(index).to_vec();
+    while let Some(child_index) = stack.pop() {
+        if update_ids.contains(&child_index) {
+            return true;
         }
-        _ => false,
+        for &nested in objects.child_indices(child_index) {
+            stack.push(nested);
+        }
     }
+    false
 }
 
 pub(super) fn layer_context_changed(
-    previous: Option<&zeno_scene::SceneLayer>,
-    current: &zeno_scene::SceneLayer,
+    previous: Option<&LayerObject>,
+    current: &LayerObject,
 ) -> bool {
     previous.map_or(true, |previous| {
         previous.parent_layer_id != current.parent_layer_id
@@ -78,11 +75,11 @@ pub(super) fn layer_context_changed(
 }
 
 fn layer_equal_except_order(
-    previous: &zeno_scene::SceneLayer,
-    current: &zeno_scene::SceneLayer,
+    previous: &LayerObject,
+    current: &LayerObject,
 ) -> bool {
     previous.layer_id == current.layer_id
-        && previous.node_id == current.node_id
+        && previous.owner_object_id == current.owner_object_id
         && previous.parent_layer_id == current.parent_layer_id
         && previous.local_bounds == current.local_bounds
         && previous.bounds == current.bounds
@@ -94,13 +91,13 @@ fn layer_equal_except_order(
         && previous.offscreen == current.offscreen
 }
 
-fn block_equal_except_order(previous: &SceneBlock, current: &SceneBlock) -> bool {
-    previous.node_id == current.node_id
+fn block_equal_except_order(previous: &RenderObject, current: &RenderObject) -> bool {
+    previous.object_id == current.object_id
         && previous.layer_id == current.layer_id
         && previous.bounds == current.bounds
         && previous.transform == current.transform
         && previous.clip == current.clip
-        && previous.command_count == current.command_count
-        && previous.command_signature == current.command_signature
+        && previous.packet_count == current.packet_count
+        && previous.packet_signature == current.packet_signature
         && previous.resource_keys == current.resource_keys
 }

@@ -5,8 +5,9 @@ use std::fmt::Write;
 
 use zeno_core::{Point, Rect, Size, Transform2D};
 use zeno_scene::{
-    Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneBlockOrder, SceneClip, SceneEffect,
-    SceneLayerOrder, ScenePatch, SceneSubmit, SceneTransform, Shape,
+    Brush, DrawCommand, LayerOrder, LayerObject, RenderObject, RenderObjectDelta,
+    RenderObjectOrder, RenderSceneUpdate, Scene, SceneBlendMode, SceneClip, SceneEffect,
+    SceneTransform, Shape,
 };
 use zeno_text::TextSystem;
 
@@ -69,13 +70,13 @@ impl<'a> ComposeEngine<'a> {
     #[must_use]
     pub fn compose(&mut self, root: &Node, viewport: Size) -> Scene {
         match self.compose_submit(root, viewport) {
-            SceneSubmit::Full(scene) => scene,
-            SceneSubmit::Patch { current, .. } => current,
+            RenderSceneUpdate::Full(scene) => scene,
+            RenderSceneUpdate::Delta { current, .. } => current,
         }
     }
 
     #[must_use]
-    pub fn compose_submit(&mut self, root: &Node, viewport: Size) -> SceneSubmit {
+    pub fn compose_submit(&mut self, root: &Node, viewport: Size) -> RenderSceneUpdate {
         if let Some(retained) = self.retained.as_mut() {
             if retained.scene().size == viewport && retained.root() != root {
                 reconcile::reconcile_root_change(retained, root);
@@ -88,7 +89,7 @@ impl<'a> ComposeEngine<'a> {
                     retained.sync_root(root.clone());
                 }
                 self.stats.cache_hits += 1;
-                return SceneSubmit::Full(retained.scene().clone());
+                return RenderSceneUpdate::Full(retained.scene().clone());
             }
         }
 
@@ -102,10 +103,10 @@ impl<'a> ComposeEngine<'a> {
                 let scene = retained.scene().clone();
                 retained.sync_root(root.clone());
                 return if patch.is_empty() {
-                    SceneSubmit::Full(scene)
+                    RenderSceneUpdate::Full(scene)
                 } else {
-                    SceneSubmit::Patch {
-                        patch,
+                    RenderSceneUpdate::Delta {
+                        delta: patch,
                         current: scene,
                     }
                 };
@@ -131,10 +132,10 @@ impl<'a> ComposeEngine<'a> {
                 );
                 let available = fragments::available_slots_from_layout(root, viewport, &layout);
                 let current_node_ids: HashSet<NodeId> =
-                    layout.index_table().node_ids().iter().copied().collect();
+                    layout.object_table().node_ids().iter().copied().collect();
                 let new_indices: HashSet<usize> = current_node_ids
                     .difference(&previous_node_ids)
-                    .filter_map(|id| layout.index_table().index_of(*id))
+                    .filter_map(|id| layout.object_table().index_of(*id))
                     .collect();
                 let fragment_update_ids: HashSet<usize> =
                     dirty_indices.union(&new_indices).copied().collect();
@@ -160,10 +161,10 @@ impl<'a> ComposeEngine<'a> {
                 let patch = patch::patch_scene_for_nodes(root, retained, &patch_update_ids);
                 let scene = retained.scene().clone();
                 return if patch.is_empty() {
-                    SceneSubmit::Full(scene)
+                    RenderSceneUpdate::Full(scene)
                 } else {
-                    SceneSubmit::Patch {
-                        patch,
+                    RenderSceneUpdate::Delta {
+                        delta: patch,
                         current: scene,
                     }
                 };
@@ -195,7 +196,7 @@ impl<'a> ComposeEngine<'a> {
                 ));
             }
         }
-        SceneSubmit::Full(scene)
+        RenderSceneUpdate::Full(scene)
     }
 
     pub fn invalidate(&mut self, reason: DirtyReason) {

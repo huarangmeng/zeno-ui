@@ -8,46 +8,15 @@ use super::*;
 use crate::layout::LayoutArena;
 
 pub(super) fn repaint_dirty_nodes(root: &Node, retained: &mut RetainedComposeTree) {
+    let _ = root;
     let dirty_indices = retained.dirty_indices();
     for index in dirty_indices {
-        if let Some(node) = node_at_index(root, 0, index, retained.layout()) {
-            let slot = retained.layout().slot_at(index).clone();
-            retained.update_fragment(
-                retained.layout().index_table().node_id_at(index),
-                crate::render::fragments::node_fragment(node, &slot, retained.layout()),
-            );
-        }
-    }
-}
-
-fn node_at_index<'a>(
-    node: &'a Node,
-    current_index: usize,
-    target_index: usize,
-    layout: &LayoutArena,
-) -> Option<&'a Node> {
-    if current_index == target_index {
-        return Some(node);
-    }
-    match &node.kind {
-        NodeKind::Container(child) => node_at_index(
-            child,
-            layout.index_table().child_indices(current_index)[0],
-            target_index,
-            layout,
-        ),
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for (child, child_index) in children
-                .iter()
-                .zip(layout.index_table().child_indices(current_index).iter().copied())
-            {
-                if let Some(found) = node_at_index(child, child_index, target_index, layout) {
-                    return Some(found);
-                }
-            }
-            None
-        }
-        _ => None,
+        let object = retained.objects().object(index).clone();
+        let slot = retained.layout().slot_at(index).clone();
+        retained.update_fragment(
+            object.node_id,
+            crate::render::fragments::node_fragment(&object, &slot),
+        );
     }
 }
 
@@ -74,27 +43,28 @@ pub(super) fn patch_scene_for_nodes(
     root: &Node,
     retained: &mut RetainedComposeTree,
     update_ids: &HashSet<usize>,
-) -> ScenePatch {
+) -> RenderObjectDelta {
+    let _ = root;
     let previous_scene = retained.scene().clone();
-    let previous_layers_by_id: HashMap<u64, &zeno_scene::SceneLayer> = previous_scene
-        .layers
+    let previous_layers_by_id: HashMap<u64, &LayerObject> = previous_scene
+        .layer_graph
         .iter()
         .map(|layer| (layer.layer_id, layer))
         .collect();
-    let previous_blocks_by_id: HashMap<u64, &SceneBlock> = previous_scene
-        .blocks
+    let previous_objects_by_id: HashMap<u64, &RenderObject> = previous_scene
+        .objects
         .iter()
-        .map(|block| (block.node_id, block))
+        .map(|object| (object.object_id, object))
         .collect();
     let mut layer_upserts = Vec::new();
     let mut layer_reorders = Vec::new();
     let mut upserts = Vec::new();
     let mut reorders = Vec::new();
     let mut seen_layers = HashSet::from([Scene::ROOT_LAYER_ID]);
-    let mut seen_blocks = HashSet::new();
+    let mut seen_objects = HashSet::new();
     let mut next_order = 1u32;
     collect::collect_scene_patch_items(
-        root,
+        retained.objects(),
         0,
         retained.layout(),
         retained.fragments(),
@@ -105,41 +75,41 @@ pub(super) fn patch_scene_for_nodes(
         update_ids,
         &mut next_order,
         &previous_layers_by_id,
-        &previous_blocks_by_id,
+        &previous_objects_by_id,
         &mut seen_layers,
-        &mut seen_blocks,
+        &mut seen_objects,
         &mut layer_upserts,
         &mut layer_reorders,
         &mut upserts,
         &mut reorders,
     );
     let layer_removes = previous_scene
-        .layers
+        .layer_graph
         .iter()
         .filter(|layer| layer.layer_id != Scene::ROOT_LAYER_ID)
         .filter(|layer| !seen_layers.contains(&layer.layer_id))
         .map(|layer| layer.layer_id)
         .collect();
     let removes = previous_scene
-        .blocks
+        .objects
         .iter()
-        .filter(|block| !seen_blocks.contains(&block.node_id))
-        .map(|block| block.node_id)
+        .filter(|object| !seen_objects.contains(&object.object_id))
+        .map(|object| object.object_id)
         .collect();
-    let (commands, upserts) = Scene::compact_blocks(upserts);
-    let patch = ScenePatch {
+    let (packets, upserts) = Scene::compact_objects(upserts);
+    let patch = RenderObjectDelta {
         size: previous_scene.size,
-        commands,
-        base_layer_count: previous_scene.layers.len(),
-        base_block_count: previous_scene.blocks.len(),
+        packets,
+        base_layer_count: previous_scene.layer_graph.len(),
+        base_object_count: previous_scene.objects.len(),
         layer_upserts,
         layer_reorders,
         layer_removes,
-        upserts,
-        reorders,
-        removes,
+        object_upserts: upserts,
+        object_reorders: reorders,
+        object_removes: removes,
     };
-    let scene = previous_scene.apply_patch(&patch);
+    let scene = previous_scene.apply_delta(&patch);
     retained.replace_scene(scene);
     patch
 }

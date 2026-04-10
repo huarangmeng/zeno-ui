@@ -17,7 +17,7 @@
 ## 当前共识
 
 - 代码已经从“纯骨架期”进入“统一 session + retained/patch MVP”阶段。
-- `zeno-ui -> SceneSubmit -> runtime -> shell -> backend` 主链路已经打通。
+- `zeno-ui -> RenderSceneUpdate -> runtime -> shell -> backend` 主链路已经打通。
 - 桌面 Skia 路径稳定可用，macOS 上 Impeller 已具备 Metal presenter。
 - 移动端 shell 已具备 `session binding / attachment / presenter interface / render session` 主链路，Android/iOS 的 presenter 创建接口已经固定。
 - 下一阶段的重点不再是补主链路，而是继续细化 dirty root、局部 GPU 提交、文本主路径与工程化验证工具。
@@ -28,7 +28,7 @@
 - Runtime 已实现 Impeller 优先、Skia 兜底的后端选择策略。
 - `zeno-backend-skia` 已提供真实 Scene 到 Skia Canvas 的翻译路径。
 - `zeno-platform` 已收敛出统一平台集成层，支持桌面 presenter 路径与移动端 `binding / attachment / presenter builder / render session` 链路。
-- `zeno-ui` 已具备 retained tree、dirty propagation、layout dirty roots、paint-only patch 与 `SceneSubmit` 提交模型。
+- `zeno-ui` 已具备 retained tree、dirty propagation、layout dirty roots、paint-only patch 与 `RenderSceneUpdate` 提交模型。
 - 根 crate 已提供 `macos`、`linux`、`windows`、`android`、`ios` 平台 preset feature。
 
 ## 进行中
@@ -45,3 +45,4 @@
 - 桌面后端相关内容集中到 `desktop-rendering.md`。
 - 路线图只记录真正还未完成的工作，不重复已经完成的架构拆分。
 - `performance-plan.md` 负责记录“下一阶段先做什么、为什么做、按什么顺序做”。
+- V2 对象表架构已在当前代码线上原地落地（`FrontendObjectTable` / `DirtyTable` / `LayoutWorkQueue` / 对象 diff reconcile / index-first scene & patch），相关设计已融入 `rendering-architecture.md`、`compose-layer.md` 与 `performance-plan.md`。

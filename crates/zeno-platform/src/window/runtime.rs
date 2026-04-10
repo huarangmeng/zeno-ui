@@ -5,7 +5,7 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 use zeno_core::{ZenoError, ZenoErrorCode, zeno_frame_log, zeno_session_log, zeno_window_error};
-use zeno_scene::{FrameReport, SceneSubmit};
+use zeno_scene::{FrameReport, RenderSceneUpdate};
 
 use crate::NativeSurface;
 use crate::desktop_session::{BoxedDesktopRenderSession, create_desktop_render_session};
@@ -39,7 +39,7 @@ impl PendingFramePhases {
 }
 
 enum SceneDriver {
-    Static(SceneSubmit),
+    Static(RenderSceneUpdate),
     Animated {
         callback: BoxedAnimatedSceneCallback,
         started_at: Instant,
@@ -66,12 +66,12 @@ impl DesktopWindowApp {
     pub(super) fn new(
         resolved_session: ResolvedSession,
         native_surface: NativeSurface,
-        scene_submit: SceneSubmit,
+        scene_update: RenderSceneUpdate,
     ) -> Self {
         Self {
             resolved_session,
             native_surface,
-            scene_driver: SceneDriver::Static(scene_submit),
+            scene_driver: SceneDriver::Static(scene_update),
             session: None,
             phases: PendingFramePhases::default(),
             frame_index: 0,
@@ -188,7 +188,7 @@ impl DesktopWindowApp {
             )
         })?;
         let phases = self.phases;
-        let report = session.submit_scene(&output.scene_submit)?;
+        let report = session.submit_scene(&output.scene_update)?;
         self.frame_index += 1;
         self.last_report = Some(report.clone());
         self.pointer_state.just_pressed = false;

@@ -1,6 +1,6 @@
 use zeno_core::{Backend, Platform, ZenoError, ZenoErrorCode};
 
-use crate::{BackendProbe, FrameReport, RenderCapabilities, RenderSurface, Scene, SceneSubmit};
+use crate::{BackendProbe, FrameReport, RenderCapabilities, RenderSceneUpdate, RenderSurface, Scene};
 
 pub trait Renderer: Send + Sync {
     fn kind(&self) -> Backend;
@@ -12,7 +12,7 @@ pub trait Renderer: Send + Sync {
     fn submit(
         &self,
         surface: &RenderSurface,
-        submit: &SceneSubmit,
+        submit: &RenderSceneUpdate,
     ) -> Result<FrameReport, ZenoError> {
         let scene = submit.snapshot(None).ok_or_else(|| {
             ZenoError::invalid_configuration(
@@ -35,7 +35,7 @@ pub trait RenderSession {
 
     fn resize(&mut self, width: u32, height: u32) -> Result<(), ZenoError>;
 
-    fn submit_scene(&mut self, submit: &SceneSubmit) -> Result<FrameReport, ZenoError>;
+    fn submit_scene(&mut self, submit: &RenderSceneUpdate) -> Result<FrameReport, ZenoError>;
 }
 
 pub trait GraphicsBackend: Send + Sync {

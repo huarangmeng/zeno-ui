@@ -1,6 +1,9 @@
 //! keyed reconcile 独立成模块，方便后续继续细化 dirty reason 判断。
 
 use super::*;
+use crate::frontend::{
+    FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table,
+};
 
 pub(super) fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &Node) {
     let previous_root = retained.root().clone();
@@ -8,172 +11,136 @@ pub(super) fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &N
         retained.mark_dirty(DirtyReason::Structure);
         return;
     }
-    let mut previous_by_id = HashMap::new();
-    index_nodes(&previous_root, &mut previous_by_id);
-    let mut current_by_id = HashMap::new();
-    index_nodes(root, &mut current_by_id);
-    mark_removed_nodes_dirty(retained, &previous_root, 0, &current_by_id);
-    reconcile_node(retained, &previous_by_id, root, 0);
+
+    let current_objects = compile_object_table(root);
+    let previous_objects = retained.objects().clone();
+
+    let previous_by_id: HashMap<NodeId, (usize, &FrontendObject)> = previous_objects
+        .objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| (object.node_id, (index, object)))
+        .collect();
+    let current_by_id: HashMap<NodeId, (usize, &FrontendObject)> = current_objects
+        .objects
+        .iter()
+        .enumerate()
+        .map(|(index, object)| (object.node_id, (index, object)))
+        .collect();
+
+    for node_id in previous_by_id.keys() {
+        if !current_by_id.contains_key(node_id) {
+            retained.mark_node_dirty(*node_id, DirtyReason::Structure);
+        }
+    }
+
+    for (node_id, (current_index, current_object)) in &current_by_id {
+        match previous_by_id.get(node_id).copied() {
+            Some((previous_index, previous_object)) => {
+                if let Some(reason) = local_change_reason(
+                    &previous_objects,
+                    previous_index,
+                    previous_object,
+                    &current_objects,
+                    *current_index,
+                    current_object,
+                ) {
+                    retained.mark_node_dirty(*node_id, reason);
+                }
+            }
+            None => mark_inserted_object_dirty(retained, &current_objects, *current_index),
+        }
+    }
 }
 
-fn reconcile_node<'a>(
+fn mark_inserted_object_dirty(
     retained: &mut RetainedComposeTree,
-    previous_by_id: &HashMap<NodeId, &'a Node>,
-    current: &Node,
-    index: usize,
+    current_objects: &FrontendObjectTable,
+    current_index: usize,
 ) {
-    match previous_by_id.get(&current.id()).copied() {
-        Some(previous) => {
-            if let Some(reason) = local_change_reason(previous, current) {
-                mark_index_dirty(retained, index, reason);
-            }
+    let object = current_objects.object(current_index);
+    let mut current = object.parent;
+    while let Some(parent_index) = current {
+        let parent_id = current_objects.object(parent_index).node_id;
+        if retained.layout().object_table().index_of(parent_id).is_some() {
+            retained.mark_node_dirty(parent_id, DirtyReason::Structure);
+            return;
         }
-        None => {
-            mark_index_dirty(retained, index, DirtyReason::Structure);
-        }
+        current = current_objects.object(parent_index).parent;
     }
-
-    match &current.kind {
-        NodeKind::Container(child) => reconcile_node(
-            retained,
-            previous_by_id,
-            child,
-            retained.layout().index_table().child_indices(index)[0],
-        ),
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            let child_indices = retained
-                .layout()
-                .index_table()
-                .child_indices(index)
-                .to_vec();
-            for (child, child_index) in children
-                .iter()
-                .zip(child_indices.into_iter())
-            {
-                reconcile_node(retained, previous_by_id, child, child_index);
-            }
-        }
-        _ => {}
-    }
+    retained.mark_dirty(DirtyReason::Structure);
 }
 
-fn mark_removed_nodes_dirty(
-    retained: &mut RetainedComposeTree,
-    previous: &Node,
-    index: usize,
-    current_by_id: &HashMap<NodeId, &Node>,
-) {
-    if !current_by_id.contains_key(&previous.id()) {
-        mark_index_dirty(retained, index, DirtyReason::Structure);
-        return;
-    }
-    match &previous.kind {
-        NodeKind::Container(child) => mark_removed_nodes_dirty(
-            retained,
-            child,
-            retained.layout().index_table().child_indices(index)[0],
-            current_by_id,
-        ),
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            let child_indices = retained
-                .layout()
-                .index_table()
-                .child_indices(index)
-                .to_vec();
-            for (child, child_index) in children
-                .iter()
-                .zip(child_indices.into_iter())
-            {
-                mark_removed_nodes_dirty(retained, child, child_index, current_by_id);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn mark_index_dirty(retained: &mut RetainedComposeTree, index: usize, reason: DirtyReason) {
-    let node_id = retained.layout().index_table().node_id_at(index);
-    retained.mark_node_dirty(node_id, reason);
-}
-
-fn index_nodes<'a>(node: &'a Node, indexed: &mut HashMap<NodeId, &'a Node>) {
-    indexed.insert(node.id(), node);
-    match &node.kind {
-        NodeKind::Container(child) => index_nodes(child, indexed),
-        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for child in children {
-                index_nodes(child, indexed);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn local_change_reason(previous: &Node, current: &Node) -> Option<DirtyReason> {
-    if previous.id() != current.id() {
+fn local_change_reason(
+    previous_objects: &FrontendObjectTable,
+    previous_index: usize,
+    previous: &FrontendObject,
+    current_objects: &FrontendObjectTable,
+    current_index: usize,
+    current: &FrontendObject,
+) -> Option<DirtyReason> {
+    if previous.node_id != current.node_id {
         return Some(DirtyReason::Structure);
     }
 
     match (&previous.kind, &current.kind) {
-        (NodeKind::Text(previous_text), NodeKind::Text(current_text)) => {
+        (FrontendObjectKind::Text(previous_text), FrontendObjectKind::Text(current_text)) => {
             if previous_text != current_text {
                 Some(DirtyReason::Text)
             } else {
-                style_change_reason(previous, current, true, false)
+                style_change_reason(&previous.style, &current.style, true, false)
             }
         }
-        (NodeKind::Spacer(previous_spacer), NodeKind::Spacer(current_spacer)) => {
+        (FrontendObjectKind::Spacer(previous_spacer), FrontendObjectKind::Spacer(current_spacer)) => {
             if previous_spacer != current_spacer {
                 Some(DirtyReason::Layout)
             } else {
-                style_change_reason(previous, current, false, false)
+                style_change_reason(&previous.style, &current.style, false, false)
             }
         }
-        (NodeKind::Container(_), NodeKind::Container(_)) => {
-            style_change_reason(previous, current, false, true)
+        (FrontendObjectKind::Container, FrontendObjectKind::Container) => {
+            let previous_children = child_ids(previous_objects, previous_index);
+            let current_children = child_ids(current_objects, current_index);
+            if previous_children != current_children {
+                return Some(DirtyReason::Structure);
+            }
+            style_change_reason(&previous.style, &current.style, false, false)
         }
-        (NodeKind::Box { children: previous_children }, NodeKind::Box { children: current_children }) => {
-            if child_ids(previous_children) != child_ids(current_children) {
-                if same_child_members(previous_children, current_children) {
+        (FrontendObjectKind::Box, FrontendObjectKind::Box) => {
+            let previous_children = child_ids(previous_objects, previous_index);
+            let current_children = child_ids(current_objects, current_index);
+            if previous_children != current_children {
+                if same_child_members(&previous_children, &current_children) {
                     return Some(DirtyReason::Order);
                 }
                 return Some(DirtyReason::Structure);
             }
-            style_change_reason(previous, current, false, true)
+            style_change_reason(&previous.style, &current.style, false, true)
         }
-        (
-            NodeKind::Stack {
-                axis: previous_axis,
-                children: previous_children,
-            },
-            NodeKind::Stack {
-                axis: current_axis,
-                children: current_children,
-            },
-        ) => {
+        (FrontendObjectKind::Stack { axis: previous_axis }, FrontendObjectKind::Stack { axis: current_axis }) => {
             if previous_axis != current_axis {
                 return Some(DirtyReason::Structure);
             }
-            if child_ids(previous_children) != child_ids(current_children) {
-                if same_child_members(previous_children, current_children) {
+            let previous_children = child_ids(previous_objects, previous_index);
+            let current_children = child_ids(current_objects, current_index);
+            if previous_children != current_children {
+                if same_child_members(&previous_children, &current_children) {
                     return Some(DirtyReason::Order);
                 }
                 return Some(DirtyReason::Structure);
             }
-            style_change_reason(previous, current, false, true)
+            style_change_reason(&previous.style, &current.style, false, true)
         }
         _ => Some(DirtyReason::Structure),
     }
 }
 
 fn style_change_reason(
-    previous: &Node,
-    current: &Node,
+    previous_style: &crate::Style,
+    current_style: &crate::Style,
     text_node: bool,
     stack_node: bool,
 ) -> Option<DirtyReason> {
-    let previous_style = previous.resolved_style();
-    let current_style = current.resolved_style();
     if previous_style.padding != current_style.padding
         || previous_style.width != current_style.width
         || previous_style.height != current_style.height
@@ -207,15 +174,19 @@ fn style_change_reason(
     None
 }
 
-fn child_ids(children: &[Node]) -> Vec<NodeId> {
-    children.iter().map(Node::id).collect()
+fn child_ids(objects: &FrontendObjectTable, index: usize) -> Vec<NodeId> {
+    objects
+        .child_indices(index)
+        .iter()
+        .map(|child_index| objects.object(*child_index).node_id)
+        .collect()
 }
 
-fn same_child_members(previous: &[Node], current: &[Node]) -> bool {
+fn same_child_members(previous: &[NodeId], current: &[NodeId]) -> bool {
     if previous.len() != current.len() {
         return false;
     }
-    let previous_ids: HashSet<NodeId> = previous.iter().map(Node::id).collect();
-    let current_ids: HashSet<NodeId> = current.iter().map(Node::id).collect();
+    let previous_ids: HashSet<NodeId> = previous.iter().copied().collect();
+    let current_ids: HashSet<NodeId> = current.iter().copied().collect();
     previous_ids == current_ids
 }

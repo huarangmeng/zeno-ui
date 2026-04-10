@@ -22,7 +22,7 @@
 - `MinimalShell` 是跨平台 fallback，只生成 `NativeSurface`（用于配置与 backend 解析），不创建实际窗口。
 - `DesktopShell::create_surface` 当前复用 `MinimalShell`，因此不会在此阶段创建 winit 窗口。
 - `DesktopShell::run_pending_scene_window` 在启用 `desktop_winit` 时创建 winit 窗口与事件循环，并基于统一 `ResolvedSession` 规划桌面 presenter。
-- `DesktopShell::run_animated_scene_window` 现在是 runtime 持有的 `AppHost/run_app` 所消费的底层 host API：shell 只接收 `SceneSubmit + FrameRequest` 级别的内部协议，不再对 app 层直接暴露入口。
+- `DesktopShell::run_animated_scene_window` 现在是 runtime 持有的 `AppHost/run_app` 所消费的底层 host API：shell 只接收 `RenderSceneUpdate + FrameRequest` 级别的内部协议，不再对 app 层直接暴露入口。
 - 桌面输入当前已统一收敛为 `PointerState` 并写入 `AnimatedFrameContext`，窗口层负责采集鼠标位置/按压边沿并触发单次重绘，而不是依赖空转 redraw 驱动交互。
 - `MobileShell::prepare_app_session / bind_session` 已能基于统一 `ResolvedSession`、viewport 与 backend 规划移动端 session 绑定结果。
 - `MobileShell::attach_session / prepare_attached_app_session` 已引入 `MobileAttachContext`，把 Android `ANativeWindow`、iOS `UIView/CAMetalLayer` 的宿主交接抽象成统一 attach 骨架。

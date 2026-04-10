@@ -9,13 +9,15 @@
 - 当前主链路已经成立：`zeno-ui -> zeno-scene::Scene -> zeno-runtime -> zeno-platform -> backend-*`。
 - 当前最大的收益点不在继续堆更多组件或绘制命令，而在补齐 retained tree、帧调度、缓存与统一的渲染会话抽象。
 - 桌面是当前最成熟的验证面：Skia 可用，macOS Impeller 有 Metal presenter 原型。
+- V2 对象表架构已在当前代码线上原地落地：`FrontendObjectTable` 统一索引与对象属性、`DirtyTable`（bitset + generation）管理六种脏类型、`LayoutWorkQueue` 两阶段工作队列驱动布局、reconcile 基于对象 diff、scene/patch/fragment 全部 index-first 显式栈遍历。`Node` 声明树已退缩为 frontend compile 输入。
 
 ## 当前瓶颈
 
 ### 1. 局部更新能力已具备 MVP，仍待继续细化
-- `zeno-ui` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径；当前 runtime 数据面已进一步收敛为 `NodeIndexTable + LayoutArena + DenseNodeStore + FragmentStore`，dirty/fragment/patch 主路径改为 index-first。
-- `Scene` 已从单纯扁平命令流升级到 block/patch 提交模型，session 可消费 `SceneSubmit`。
+- `zeno-ui` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径；当前 runtime 数据面已收敛为 `FrontendObjectTable + DirtyTable + LayoutArena + FragmentStore`，dirty/fragment/patch 主路径全部 index-first。
+- `Scene` 已从单纯扁平命令流升级到 object/delta 提交模型，session 可消费 `RenderSceneUpdate`。
 - 当前剩余差距主要在更细粒度的 dirty root 归并、更复杂结构编辑下的 patch 收敛，以及后端更深层级的局部 GPU 提交能力。
+- V2 对象表架构已落地，当前热路径已为 index-only；后续优化方向聚焦于更细粒度 compositor、draw packet buffer 局部重写与 GPU 级局部提交。
 
 ### 2. 按需重绘主链路已完成，仍待继续细化动画与 invalidation 策略
 - 桌面事件循环已经从空闲态持续 redraw 切换为按需驱动。
@@ -27,7 +29,7 @@
 - 当前剩余工作主要是把移动端已成型的 presenter builder 继续推进到真实 GPU 生命周期，而不是拆成多个平台专用 crate。
 
 ### 4. Scene 已完成第一阶段结构化，第二阶段仍待推进
-- 当前 `Scene` 已具备 `SceneBlock`、`ScenePatch`、`SceneSubmit`，不再只是单纯扁平命令流。
+- 当前 `Scene` 已具备 `RenderObject`、`RenderObjectDelta`、`RenderSceneUpdate`，不再只是单纯扁平命令流。
 - 当前剩余差距主要是 layer、clip、transform、更强的资源句柄化与更缓存友好的结构。
 
 ### 5. 文本系统主路径已打通，仍待继续做强
@@ -37,7 +39,7 @@
 ## 目标架构
 
 ### Retained UI Tree
-- 为 `zeno-ui` 引入稳定 `NodeId`，并在 runtime 内部收敛到统一 `NodeIndexTable`。
+- 为 `zeno-ui` 引入稳定 `NodeId`，frontend compile 阶段收敛到 `FrontendObjectTable`。
 - 让 UI 树保留上一帧结构、测量结果和局部 dirty 信息。
 - 把“全量重建”演进为“dirty subtree 更新”。
 
@@ -77,7 +79,7 @@
 
 ### P1：升级 Scene 结构
 - 状态：已完成（MVP）
-- 已完成 `SceneBlock`、`ScenePatch`、`SceneSubmit` 主数据结构，并打通 compose/runtime/shell/session 提交流。
+- 已完成 `RenderObject`、`RenderObjectDelta`、`RenderSceneUpdate` 主数据结构，并打通 compose/runtime/shell/session 提交流。
 - 已完成 block 统计、patch upserts/removes 统计与 session 侧 patch 消费入口。
 
 ### P2：升级文本系统
@@ -128,6 +130,9 @@
 ### 更可重复的验证手段
 - 增加 benchmark 示例，而不是只依赖最小 demo。
 - 为深树布局、长文本、多次小更新建立基准场景。
+- 建议覆盖的基准场景：`PaintOnlySmall`、`PaintOnlyLarge`、`LayoutHeavyDeepTree`、`LayoutHeavyWideTree`、`TextHeavyParagraphs`、`StructureHeavyInsertRemove`、`StructureHeavyReorder`、`MixedDashboard`、`AnimationContinuous`。
+- 关键指标：frame total cpu time、compile time、layout time、text resolve time、scene compile time、backend submit time、allocations per frame、patch object count、packet rewrite count、layer graph rewrite count、full rebuild ratio。
+- 成功标准：`PaintOnly*` CPU 帧耗时降低 20% 以上；`LayoutHeavy*` 降低 15% 以上；`StructureHeavy*` full rebuild ratio 显著下降；`TextHeavy*` text resolve + scene compile 总耗时降低 15% 以上；`AnimationContinuous` 长时间帧耗时抖动更低、分配次数显著下降。
 
 ### 更可观测的调试工具
 - 输出 backend attempts。
@@ -145,8 +150,8 @@
 - `ResolvedSession` 已成为统一 session descriptor，平台集成层可基于它创建具体桌面/移动端 `RenderSession`。
 - `UiRuntime` 已成为内部重绘决策与 frame 准备入口，对上层隐藏 `ComposeEngine`。
 - `FrameScheduler` 已将桌面空闲态持续 redraw 改为按需重绘。
-- `RetainedComposeTree` 已具备稳定 `NodeId` identity、index-first dirty propagation、index-first layout dirty roots 与局部 relayout 主链路。
-- `Scene` 已具备 `SceneBlock` / `ScenePatch` / `SceneSubmit`，桌面 session 已按结构化提交模型消费场景。
+- `RetainedComposeTree` 已具备稳定 `NodeId` identity、index-first dirty propagation、index-first layout dirty roots 与局部 relayout 主链路。retained runtime 已完成 V2 对象表架构：`FrontendObjectTable` 为唯一真相源、`DirtyTable` 管理六种脏类型、`LayoutWorkQueue` 两阶段工作队列驱动布局、reconcile 基于对象 diff、scene/patch/fragment 全部基于对象表显式栈遍历。
+- `Scene` 已具备 `RenderObject` / `RenderObjectDelta` / `RenderSceneUpdate`，桌面 session 已按结构化提交模型消费场景。
 - `SkiaTextCache` 已具备 typeface/font 缓存与命中统计。
 - 帧统计已输出 `block_count`、`patch_upserts`、`patch_removes`，可直接观察增量提交行为。
 - 根 crate 已提供 `macos`、`linux`、`windows`、`android`、`ios` 平台 preset feature，降低首次接入成本。
@@ -160,5 +165,5 @@
 - layout dirty 已收敛到更小祖先集合，并新增同父结构/顺序脏根合并与最小容器根策略；后续重点转向更复杂 layer/effect tree 下的 patch 类型扩展，而不是继续放大祖先影响面。
 - `Scene` 已具备 layer/clip/transform/blend/effect/offscreen 抽象，macOS Impeller 也已支持根 pass / offscreen pass 的双层 scissor 与祖先 clip 链约束下的 partial scene 重放；下一阶段重点是更细粒度 compositor 与后端 effect 合成。
 - Skia 与 macOS Impeller 都已具备 dirty bounds 局部提交路径；当前待补齐的是非 macOS Impeller presenter、更多 effect/filter 组合以及更稳定的缓存与统计体系。
-- 文本主路径已具备 `TextSystem / TextShaper / TextCache` 主干、glyph 级布局数据、Skia glyph-run 分段提交与后端共享缓存；后续重点是更完整的 shaping 覆盖、字体 fallback 策略与更细粒度缓存统计。
+- 文本主路径已具备 `TextSystem / TextShaper / TextCache` 主干、glyph 级布局数据、Skia glyph-run 分段提交与后端共享缓存；后续重点是更完整的 shaping 覆盖、字体 fallback 策略与更细粒度缓存统计。后续可引入独立 `TextObjectTable`（paragraph input hash / shaping result handle / line break result handle / glyph run handle），让 layout 与 draw 都引用 text handle 而非各自复制文本中间态，以实现 paragraph cache、glyph cache 的跨阶段共享。
 - scene dump、layout dump、text probe、bench gallery 与自动化 bench suite 已就位；后续重点是 golden image、基线管理与更多 DX 工具。

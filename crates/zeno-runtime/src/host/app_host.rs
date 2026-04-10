@@ -3,7 +3,7 @@ use zeno_platform::desktop::DesktopShell;
 use zeno_platform::presenter::{
     AnimatedFrameContext, AnimatedFrameOutput, FrameRequest, ResolvedWindowRun,
 };
-use zeno_scene::SceneSubmit;
+use zeno_scene::RenderSceneUpdate;
 use zeno_text::{FallbackTextSystem, TextSystem};
 
 use crate::{App, AppFrame, AppView, PointerState, UiRuntime};
@@ -11,7 +11,7 @@ use crate::{App, AppFrame, AppView, PointerState, UiRuntime};
 pub struct AppHost<A> {
     app: A,
     runtime: UiRuntime<'static>,
-    last_compose_submit: Option<SceneSubmit>,
+    last_compose_update: Option<RenderSceneUpdate>,
     platform: Platform,
 }
 
@@ -24,7 +24,7 @@ where
         Self {
             app,
             runtime: UiRuntime::new(text_system),
-            last_compose_submit: None,
+            last_compose_update: None,
             platform,
         }
     }
@@ -46,20 +46,20 @@ where
             },
         };
         let view = self.app.render(&frame);
-        let scene_submit = match view {
+        let scene_update = match view {
             AppView::Compose(root) => {
                 self.runtime.resize(frame.size);
                 self.runtime.set_root(root);
                 if let Some(ui_frame) = self.runtime.prepare_frame().expect("app host frame") {
-                    self.last_compose_submit = Some(ui_frame.scene_submit.clone());
-                    ui_frame.scene_submit
+                    self.last_compose_update = Some(ui_frame.scene_update.clone());
+                    ui_frame.scene_update
                 } else {
-                    self.last_compose_submit
+                    self.last_compose_update
                         .clone()
-                        .expect("compose app view should have previous submit")
+                        .expect("compose app view should have previous update")
                 }
             }
-            AppView::Scene(scene) => SceneSubmit::Full(scene),
+            AppView::Scene(scene) => RenderSceneUpdate::Full(scene),
         };
         let frame_request = match self.app.animation_interval(&frame) {
             None => FrameRequest::Wait,
@@ -67,7 +67,7 @@ where
             Some(duration) => FrameRequest::After(duration),
         };
         AnimatedFrameOutput {
-            scene_submit,
+            scene_update,
             frame_request,
         }
     }
@@ -139,11 +139,7 @@ mod tests {
 
     impl App for StaticApp {
         fn render(&mut self, _frame: &AppFrame) -> AppView {
-            AppView::Scene(zeno_scene::Scene::from_blocks(
-                zeno_core::Size::new(1.0, 1.0),
-                None,
-                vec![],
-            ))
+            AppView::Scene(zeno_scene::Scene::new(zeno_core::Size::new(1.0, 1.0)))
         }
 
         fn animation_interval(&self, _frame: &AppFrame) -> Option<Duration> {

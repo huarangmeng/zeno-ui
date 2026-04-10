@@ -4,7 +4,7 @@ use winit::event_loop::ActiveEventLoop;
 #[cfg(feature = "desktop_winit")]
 use winit::window::Window;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
-use zeno_scene::{FrameReport, RenderCapabilities, RenderSession, RenderSurface, SceneSubmit};
+use zeno_scene::{FrameReport, RenderCapabilities, RenderSceneUpdate, RenderSession, RenderSurface};
 use crate::session::ResolvedSession;
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
@@ -117,11 +117,11 @@ impl RenderSession for DesktopRenderSession {
         }
     }
 
-    fn submit_scene(&mut self, submit: &SceneSubmit) -> Result<FrameReport, ZenoError> {
+    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::Skia(session) => session.submit_scene(submit),
+            Self::Skia(session) => session.submit_scene(update),
             #[cfg(target_os = "macos")]
-            Self::Impeller(session) => session.submit_scene(submit),
+            Self::Impeller(session) => session.submit_scene(update),
         }
     }
 }

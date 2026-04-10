@@ -7,8 +7,8 @@ use zeno_core::{
 use zeno_foundation::{column, container, row, spacer, text};
 use zeno_runtime::{App, AppFrame, AppView, run_app_with_text_system};
 use zeno_scene::{
-    Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneEffect, SceneLayer,
-    Shape,
+    Brush, DrawCommand, LayerObject, RenderObject, Scene, SceneBlendMode, SceneClip,
+    SceneEffect, Shape,
 };
 use zeno_text::{FontDescriptor, SystemTextSystem, TextParagraph, TextSystem};
 use zeno_ui::{EdgeInsets, Node};
@@ -345,10 +345,10 @@ fn build_physics_scene(
         &format!("{BALL_COUNT} balls  |  click tabs to switch demo"),
         420.0,
     );
-    Scene::from_blocks(
+    Scene::from_objects(
         viewport,
         Some(Color::rgba(9, 13, 21, 255)),
-        vec![SceneBlock::new(
+        vec![RenderObject::new(
             1,
             Scene::ROOT_LAYER_ID,
             1,
@@ -444,8 +444,8 @@ fn build_compositor_scene(
     let stream_bounds =
         stream_transform.map_rect(Rect::new(0.0, 0.0, stream_size.width, stream_size.height));
     let layers = vec![
-        SceneLayer::root(viewport),
-        SceneLayer::new(
+        LayerObject::root(viewport),
+        LayerObject::new(
             100,
             100,
             Some(Scene::ROOT_LAYER_ID),
@@ -467,7 +467,7 @@ fn build_compositor_scene(
             }],
             true,
         ),
-        SceneLayer::new(
+        LayerObject::new(
             200,
             200,
             Some(Scene::ROOT_LAYER_ID),
@@ -481,7 +481,7 @@ fn build_compositor_scene(
             vec![SceneEffect::Blur { sigma: 2.0 }],
             true,
         ),
-        SceneLayer::new(
+        LayerObject::new(
             300,
             300,
             Some(Scene::ROOT_LAYER_ID),
@@ -505,7 +505,7 @@ fn build_compositor_scene(
         ),
     ];
     let blocks = vec![
-        SceneBlock::new(
+        RenderObject::new(
             1,
             Scene::ROOT_LAYER_ID,
             1,
@@ -514,7 +514,7 @@ fn build_compositor_scene(
             None,
             background_commands(viewport),
         ),
-        SceneBlock::new(
+        RenderObject::new(
             2,
             Scene::ROOT_LAYER_ID,
             2,
@@ -537,7 +537,7 @@ fn build_compositor_scene(
                 "结构化 SceneLayer / SceneBlock、clip、blend、effect 与 transform",
             ),
         ),
-        SceneBlock::new(
+        RenderObject::new(
             3,
             100,
             3,
@@ -546,7 +546,7 @@ fn build_compositor_scene(
             None,
             glass_panel_commands(text_system, panel_size, backend, fps),
         ),
-        SceneBlock::new(
+        RenderObject::new(
             4,
             200,
             4,
@@ -555,7 +555,7 @@ fn build_compositor_scene(
             None,
             orbit_commands(text_system, orbit_size, elapsed),
         ),
-        SceneBlock::new(
+        RenderObject::new(
             5,
             300,
             5,
@@ -565,7 +565,7 @@ fn build_compositor_scene(
             stream_commands(text_system, stream_size, elapsed),
         ),
     ];
-    Scene::from_layers_and_blocks(viewport, Some(Color::rgba(7, 10, 18, 255)), layers, blocks)
+    Scene::from_layers_and_objects(viewport, Some(Color::rgba(7, 10, 18, 255)), layers, blocks)
 }
 
 fn chrome_commands(
@@ -1336,6 +1336,6 @@ mod tests {
             DemoKind::Compositor,
             None,
         );
-        assert!(scene.layers.len() >= 4);
+        assert!(scene.layer_graph.len() >= 4);
     }
 }

@@ -1,11 +1,17 @@
 use std::sync::Arc;
+mod work_queue;
+use work_queue::{
+    finalize_existing_node, measure_layout_with_objects, measure_layout_workqueue,
+    remeasure_subtree_with_objects,
+};
 
 use zeno_core::{Point, Rect, Size};
 use zeno_text::{TextLayout, TextParagraph, TextSystem, line_box};
 
+use crate::frontend::{compile_object_table, FrontendObjectTable};
 use crate::modifier::{CrossAxisAlignment, HorizontalAlignment, VerticalAlignment};
 use crate::{Axis, Node, NodeId, NodeKind, SpacerNode, TextNode};
-use crate::tree::{NodeIndexTable, RetainedComposeTree};
+use crate::tree::RetainedComposeTree;
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LayoutSlot {
@@ -15,22 +21,22 @@ pub(crate) struct LayoutSlot {
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LayoutArena {
-    index_table: Arc<NodeIndexTable>,
+    object_table: Arc<FrontendObjectTable>,
     slots: Vec<LayoutSlot>,
 }
 
 impl LayoutArena {
     #[must_use]
-    pub fn from_measured(root: &Node, measured: &MeasuredNode) -> Self {
-        let index_table = NodeIndexTable::build(root);
-        let mut arena = Self::new(index_table);
-        arena.collect(root, 0, measured);
+    pub fn from_measured(root: &Node, _measured: &MeasuredNode) -> Self {
+        let table = Arc::new(compile_object_table(root));
+        let mut arena = Self::new(table);
+        arena.collect(root, 0);
         arena
     }
 
     #[must_use]
     pub fn slot(&self, node_id: NodeId) -> Option<&LayoutSlot> {
-        self.index_table
+        self.object_table
             .index_of(node_id)
             .map(|index| &self.slots[index])
     }
@@ -41,30 +47,32 @@ impl LayoutArena {
     }
 
     #[must_use]
+    #[allow(dead_code)]
     pub fn frame(&self, node_id: NodeId) -> Option<Rect> {
         self.slot(node_id).map(|slot| slot.frame)
     }
 
     #[must_use]
+    #[allow(dead_code)]
     pub fn text_layout(&self, node_id: NodeId) -> Option<&TextLayout> {
         self.slot(node_id).and_then(|slot| slot.text_layout.as_ref())
     }
 
     #[must_use]
-    pub fn index_table(&self) -> &Arc<NodeIndexTable> {
-        &self.index_table
+    pub fn object_table(&self) -> &Arc<FrontendObjectTable> {
+        &self.object_table
     }
 
-    fn new(index_table: Arc<NodeIndexTable>) -> Self {
+    pub(crate) fn new(object_table: Arc<FrontendObjectTable>) -> Self {
         Self {
             slots: vec![
                 LayoutSlot {
                     frame: Rect::new(0.0, 0.0, 0.0, 0.0),
                     text_layout: None,
                 };
-                index_table.len()
+                object_table.len()
             ],
-            index_table,
+            object_table,
         }
     }
 
@@ -85,28 +93,20 @@ impl LayoutArena {
         );
     }
 
-    fn collect(&mut self, node: &Node, index: usize, measured: &MeasuredNode) {
+    fn collect(&mut self, node: &Node, index: usize) {
         self.slots[index] = LayoutSlot {
-            frame: measured.frame,
-            text_layout: match &measured.kind {
-                MeasuredKind::Text(layout) => Some(layout.clone()),
-                _ => None,
-            },
+            frame: Rect::new(0.0, 0.0, 0.0, 0.0),
+            text_layout: None,
         };
-        match (&node.kind, &measured.kind) {
-            (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
-                let child_index = self.index_table.child_indices(index)[0];
-                self.collect(child, child_index, measured_child);
+        match &node.kind {
+            NodeKind::Container(child) => {
+                let child_index = self.object_table.child_indices(index)[0];
+                self.collect(child, child_index);
             }
-            (NodeKind::Box { children }, MeasuredKind::Multiple(measured_children))
-            | (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
-                let child_indices = self.index_table.child_indices(index).to_vec();
-                for ((child, child_index), measured_child) in children
-                    .iter()
-                    .zip(child_indices.into_iter())
-                    .zip(measured_children.iter())
-                {
-                    self.collect(child, child_index, measured_child);
+            NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
+                let child_indices = self.object_table.child_indices(index).to_vec();
+                for (child, child_index) in children.iter().zip(child_indices.into_iter()) {
+                    self.collect(child, child_index);
                 }
             }
             _ => {}
@@ -121,10 +121,8 @@ pub(crate) fn measure_layout(
     available: Size,
     text_system: &dyn TextSystem,
 ) -> LayoutArena {
-    let index_table = NodeIndexTable::build(root);
-    let mut arena = LayoutArena::new(index_table);
-    let _ = measure_into_arena(root, 0, origin, available, text_system, &mut arena);
-    arena
+    // 切到 work queue 主入口；内部逐步替换递归实现为对象表批处理
+    measure_layout_workqueue(root, origin, available, text_system)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -156,6 +154,7 @@ pub(crate) fn measure_node(
     measured_from_layout(node, &arena)
 }
 
+#[allow(dead_code)]
 fn measure_into_arena(
     node: &Node,
     index: usize,
@@ -192,6 +191,7 @@ fn measure_into_arena(
     }
 }
 
+#[allow(dead_code)]
 fn measure_text_into_arena(
     node: &Node,
     index: usize,
@@ -217,6 +217,7 @@ fn measure_text_into_arena(
     NodeLayoutData { frame }
 }
 
+#[allow(dead_code)]
 fn measure_spacer_into_arena(
     node: &Node,
     index: usize,
@@ -233,6 +234,7 @@ fn measure_spacer_into_arena(
     NodeLayoutData { frame }
 }
 
+#[allow(dead_code)]
 fn measure_container_into_arena(
     node: &Node,
     index: usize,
@@ -246,7 +248,7 @@ fn measure_container_into_arena(
     let padding = style.padding;
     let child_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
     let child_available = content_available(node, available);
-    let child_index = arena.index_table.child_indices(index)[0];
+    let child_index = arena.object_table.child_indices(index)[0];
     let measured_child = measure_into_arena(
         child,
         child_index,
@@ -261,6 +263,7 @@ fn measure_container_into_arena(
     NodeLayoutData { frame }
 }
 
+#[allow(dead_code)]
 fn measure_box_into_arena(
     node: &Node,
     index: usize,
@@ -277,7 +280,7 @@ fn measure_box_into_arena(
     let mut child_layouts = Vec::with_capacity(children.len());
     let mut max_width = 0.0f32;
     let mut max_height = 0.0f32;
-    let child_indices = arena.index_table.child_indices(index).to_vec();
+    let child_indices = arena.object_table.child_indices(index).to_vec();
 
     for (child, child_index) in children
         .iter()
@@ -334,6 +337,7 @@ fn measure_box_into_arena(
     NodeLayoutData { frame }
 }
 
+#[allow(dead_code)]
 fn measure_stack_into_arena(
     node: &Node,
     index: usize,
@@ -352,7 +356,7 @@ fn measure_stack_into_arena(
     let mut max_width = 0.0f32;
     let mut max_height = 0.0f32;
     let mut child_layouts = Vec::with_capacity(children.len());
-    let child_indices = arena.index_table.child_indices(index).to_vec();
+    let child_indices = arena.object_table.child_indices(index).to_vec();
 
     for (child_position, (child, child_index)) in children
         .iter()
@@ -412,15 +416,16 @@ fn measure_stack_into_arena(
     NodeLayoutData { frame }
 }
 
+#[allow(dead_code)]
 fn shift_subtree_in_arena(node: &Node, index: usize, dx: f32, dy: f32, arena: &mut LayoutArena) {
     arena.shift(index, dx, dy);
     match &node.kind {
         NodeKind::Container(child) => {
-            let child_index = arena.index_table.child_indices(index)[0];
+            let child_index = arena.object_table.child_indices(index)[0];
             shift_subtree_in_arena(child, child_index, dx, dy, arena)
         }
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            let child_indices = arena.index_table.child_indices(index).to_vec();
+            let child_indices = arena.object_table.child_indices(index).to_vec();
             for (child, child_index) in children
                 .iter()
                 .zip(child_indices.into_iter())
@@ -447,14 +452,14 @@ fn measured_from_layout_at(node: &Node, index: usize, arena: &LayoutArena) -> Me
         NodeKind::Container(child) => {
             MeasuredKind::Single(Box::new(measured_from_layout_at(
                 child,
-                arena.index_table.child_indices(index)[0],
+                arena.object_table.child_indices(index)[0],
                 arena,
             )))
         }
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => MeasuredKind::Multiple(
             children
                 .iter()
-                .zip(arena.index_table.child_indices(index).iter().copied())
+                .zip(arena.object_table.child_indices(index).iter().copied())
                 .map(|(child, child_index)| measured_from_layout_at(child, child_index, arena))
                 .collect(),
         ),
@@ -466,6 +471,7 @@ fn measured_from_layout_at(node: &Node, index: usize, arena: &LayoutArena) -> Me
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn content_available(node: &Node, available: Size) -> Size {
     let style = node.resolved_style();
     Size::new(
@@ -481,6 +487,7 @@ pub(crate) fn remaining_available_for_axis(available: Size, used_main: f32, axis
     }
 }
 
+#[allow(dead_code)]
 pub(crate) fn finalize_size(node: &Node, available: Size, content: Size) -> Size {
     let style = node.resolved_style();
     let natural = Size::new(
@@ -515,6 +522,7 @@ pub(crate) fn aligned_offset_for_cross_axis(
     }
 }
 
+#[allow(dead_code)]
 fn stack_main_extent(children: &[NodeLayoutData], axis: Axis) -> f32 {
     children
         .iter()
@@ -573,6 +581,7 @@ pub(crate) fn arranged_gap_and_offset(
     }
 }
 
+#[allow(dead_code)]
 fn position_stack_children(
     content_origin: Point,
     content_size: Size,
@@ -634,9 +643,54 @@ pub(crate) fn relayout_layout(
     retained: &RetainedComposeTree,
     layout_dirty_roots: &[usize],
 ) -> LayoutArena {
-    let _ = retained;
-    let _ = layout_dirty_roots;
-    measure_layout(node, origin, available, text_system)
+    let objects = compile_object_table(node);
+    if retained.dirty().requires_structure_rebuild()
+        || !same_index_order(retained.layout().object_table().as_ref(), &objects)
+    {
+        return measure_layout_with_objects(&objects, origin, available, text_system);
+    }
+    let mut arena = retained.layout().clone();
+    let mut finalized = std::collections::HashSet::new();
+    let mut dirty_roots: Vec<usize> = layout_dirty_roots.to_vec();
+    dirty_roots.sort_unstable();
+    dirty_roots.dedup();
+
+    for root_index in dirty_roots {
+        let root_origin = retained.layout().slot_at(root_index).frame.origin;
+        let root_available = retained.available_at(root_index);
+        remeasure_subtree_with_objects(
+            &objects,
+            &mut arena,
+            root_index,
+            root_origin,
+            root_available,
+            text_system,
+        );
+        let mut current = Some(root_index);
+        while let Some(index) = current.and_then(|child| retained.parent_index_of(child)) {
+            if !finalized.insert(index) {
+                current = Some(index);
+                continue;
+            }
+            let slot = retained.layout().slot_at(index);
+            finalize_existing_node(
+                index,
+                slot.frame.origin,
+                retained.available_at(index),
+                &objects,
+                &mut arena,
+            );
+            current = Some(index);
+        }
+    }
+    arena
+}
+
+fn same_index_order(previous: &FrontendObjectTable, current: &FrontendObjectTable) -> bool {
+    if previous.len() != current.len() {
+        return false;
+    }
+    (0..previous.len()).all(|index| previous.node_id_at(index) == current.node_id_at(index))
 }
 
 impl IntoAlignmentAxis for HorizontalAlignment {

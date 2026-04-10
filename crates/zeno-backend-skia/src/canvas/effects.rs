@@ -1,17 +1,17 @@
 use skia_safe as sk;
 use zeno_core::Rect;
-use zeno_scene::{SceneBlendMode, SceneEffect, SceneLayer};
+use zeno_scene::{LayerObject, SceneBlendMode, SceneEffect};
 
 use crate::canvas::mapping::sk_color;
 
-pub(crate) fn needs_save_layer(layer: &SceneLayer) -> bool {
+pub(crate) fn needs_save_layer(layer: &LayerObject) -> bool {
     layer.offscreen
         || layer.opacity < 1.0
         || layer.blend_mode != SceneBlendMode::Normal
         || !layer.effects.is_empty()
 }
 
-pub(crate) fn layer_paint(layer: &SceneLayer) -> sk::Paint {
+pub(crate) fn layer_paint(layer: &LayerObject) -> sk::Paint {
     let mut paint = sk::Paint::default();
     paint.set_anti_alias(true);
     paint.set_alpha_f(layer.opacity.clamp(0.0, 1.0));
@@ -30,13 +30,11 @@ fn sk_blend_mode(mode: SceneBlendMode) -> sk::BlendMode {
     }
 }
 
-fn layer_image_filter(layer: &SceneLayer) -> Option<sk::ImageFilter> {
+fn layer_image_filter(layer: &LayerObject) -> Option<sk::ImageFilter> {
     let mut current = None;
     for effect in &layer.effects {
         current = match effect {
-            SceneEffect::Blur { sigma } => {
-                sk::image_filters::blur((*sigma, *sigma), None, current, None)
-            }
+            SceneEffect::Blur { sigma } => sk::image_filters::blur((*sigma, *sigma), None, current, None),
             SceneEffect::DropShadow {
                 dx,
                 dy,
@@ -55,7 +53,7 @@ fn layer_image_filter(layer: &SceneLayer) -> Option<sk::ImageFilter> {
     current
 }
 
-pub(crate) fn layer_effect_bounds(layer: &SceneLayer) -> sk::Rect {
+pub(crate) fn layer_effect_bounds(layer: &LayerObject) -> sk::Rect {
     let local_bounds = effect_bounds_for_scene_effects(layer.local_bounds, &layer.effects);
     sk::Rect::from_xywh(
         local_bounds.origin.x,

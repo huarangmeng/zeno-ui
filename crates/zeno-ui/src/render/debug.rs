@@ -18,19 +18,19 @@ pub(super) fn dump_scene(scene: &Scene) -> String {
     let mut output = String::new();
     let _ = writeln!(
         output,
-        "scene size=({:.1}, {:.1}) clear={:?} layers={} blocks={}",
+        "scene size=({:.1}, {:.1}) clear={:?} layers={} objects={}",
         scene.size.width,
         scene.size.height,
         scene.clear_color,
-        scene.layers.len(),
-        scene.blocks.len()
+        scene.layer_graph.len(),
+        scene.objects.len()
     );
-    for layer in &scene.layers {
+    for layer in &scene.layer_graph {
         let _ = writeln!(
             output,
-            "layer id={} node={} parent={:?} order={} opacity={:.2} blend={:?} effects={:?} offscreen={} bounds={:?}",
+            "layer id={} owner={} parent={:?} order={} opacity={:.2} blend={:?} effects={:?} offscreen={} bounds={:?}",
             layer.layer_id,
-            layer.node_id,
+            layer.owner_object_id,
             layer.parent_layer_id,
             layer.order,
             layer.opacity,
@@ -40,17 +40,17 @@ pub(super) fn dump_scene(scene: &Scene) -> String {
             layer.bounds
         );
     }
-    for block in &scene.blocks {
+    for object in &scene.objects {
         let _ = writeln!(
             output,
-            "block node={} layer={} order={} bounds={:?} clip={:?} commands={} resources={}",
-            block.node_id,
-            block.layer_id,
-            block.order,
-            block.bounds,
-            block.clip,
-            block.command_count,
-            block.resource_keys.len()
+            "object id={} layer={} order={} bounds={:?} clip={:?} packets={} resources={}",
+            object.object_id,
+            object.layer_id,
+            object.order,
+            object.bounds,
+            object.clip,
+            object.packet_count,
+            object.resource_keys.len()
         );
     }
     output

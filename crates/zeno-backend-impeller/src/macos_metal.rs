@@ -128,7 +128,7 @@ impl MetalSceneRenderer {
             op = "impeller_encoder_root_begin",
             preserve_contents,
             ?dirty_bounds,
-            blocks = scene.blocks.len(),
+            blocks = scene.objects.len(),
             "impeller root encoder begin"
         );
         let encoder = command_buffer.new_render_command_encoder(&render_pass);
@@ -137,14 +137,14 @@ impl MetalSceneRenderer {
         let root_scissor = effective_root_scissor(dirty_bounds, viewport_width, viewport_height);
         encoder.set_scissor_rect(root_scissor);
 
-        if scene.blocks.is_empty() {
+        if scene.objects.is_empty() {
             draw_commands(
                 &self.device,
                 &self.color_pipeline,
                 &self.text_pipeline,
                 self.font.as_ref(),
                 &encoder,
-                &scene.iter_commands().cloned().collect::<Vec<_>>(),
+                &scene.iter_packets().cloned().collect::<Vec<_>>(),
                 viewport_width,
                 viewport_height,
                 Transform2D::identity(),
