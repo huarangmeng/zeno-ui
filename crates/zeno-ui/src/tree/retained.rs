@@ -1,7 +1,5 @@
 //! RetainedComposeTree 持有增量合成所需的全部缓存快照。
 
-use std::collections::{HashMap, HashSet};
-
 use zeno_core::Size;
 use zeno_scene::Scene;
 
@@ -16,7 +14,7 @@ pub struct RetainedComposeTree {
     pub(super) viewport: Size,
     pub(super) layout: LayoutArena,
     pub(super) dense_nodes: DenseNodeStore,
-    pub(super) layout_dirty_roots: Vec<NodeId>,
+    pub(super) layout_dirty_roots: Vec<usize>,
     pub(super) fragments_by_node: FragmentStore,
     pub(super) scene: Scene,
     pub(super) dirty: DirtyFlags,
@@ -28,11 +26,11 @@ impl RetainedComposeTree {
         root: Node,
         viewport: Size,
         layout: LayoutArena,
-        available_by_node: HashMap<NodeId, Size>,
+        available: Vec<Size>,
         fragments_by_node: FragmentStore,
         scene: Scene,
     ) -> Self {
-        let dense_nodes = DenseNodeStore::build(&root, &layout, &available_by_node);
+        let dense_nodes = DenseNodeStore::build(layout.index_table().clone(), available);
         Self {
             root,
             viewport,
@@ -65,11 +63,11 @@ impl RetainedComposeTree {
         root: Node,
         viewport: Size,
         layout: LayoutArena,
-        available_by_node: HashMap<NodeId, Size>,
+        available: Vec<Size>,
         fragments_by_node: FragmentStore,
         scene: Scene,
     ) {
-        let dense_nodes = DenseNodeStore::build(&root, &layout, &available_by_node);
+        let dense_nodes = DenseNodeStore::build(layout.index_table().clone(), available);
         self.root = root;
         self.viewport = viewport;
         self.layout = layout;
@@ -82,46 +80,57 @@ impl RetainedComposeTree {
 
     pub fn mark_dirty(&mut self, reason: DirtyReason) {
         self.dirty.mark(reason);
-        self.dense_nodes.mark_dirty(self.root.id(), reason);
+        let root_index = self
+            .dense_nodes
+            .index_of(self.root.id())
+            .expect("root index should exist");
+        self.dense_nodes.mark_dirty_at(root_index, reason);
         if reason != DirtyReason::Paint {
             self.layout_dirty_roots.clear();
-            self.layout_dirty_roots.push(self.root.id());
+            self.layout_dirty_roots.push(root_index);
         }
     }
 
     pub fn mark_node_dirty(&mut self, node_id: NodeId, reason: DirtyReason) {
         self.dirty.mark(reason);
+        let Some(node_index) = self.dense_nodes.index_of(node_id) else {
+            return;
+        };
         if reason == DirtyReason::Paint {
-            self.dense_nodes.mark_dirty(node_id, reason);
+            self.dense_nodes.mark_dirty_at(node_index, reason);
             return;
         }
 
-        let mut current = Some(node_id);
-        while let Some(id) = current {
-            self.dense_nodes.mark_dirty(id, reason);
-            current = self.dense_nodes.parent_of(id);
+        let mut current = Some(node_index);
+        while let Some(index) = current {
+            self.dense_nodes.mark_dirty_at(index, reason);
+            current = self.dense_nodes.parent_index_of(index);
         }
-        let candidate = match reason {
-            DirtyReason::Layout | DirtyReason::Text => node_id,
+        let candidate_index = match reason {
+            DirtyReason::Layout | DirtyReason::Text => node_index,
             DirtyReason::Order => {
-                if self.dense_nodes.is_container_like(node_id) {
-                    node_id
+                if self.dense_nodes.is_container_like_index(node_index) {
+                    node_index
                 } else {
-                    self.layout_root_for(node_id)
+                    self.layout_root_index_for(node_index)
                 }
             }
-            DirtyReason::Structure => self.structure_root_for(node_id),
-            DirtyReason::Paint => node_id,
+            DirtyReason::Structure => self.structure_root_index_for(node_index),
+            DirtyReason::Paint => node_index,
         };
         self.insert_layout_dirty_root(
-            candidate,
+            candidate_index,
             matches!(reason, DirtyReason::Order | DirtyReason::Structure),
         );
     }
 
     #[must_use]
     pub fn dirty_node_ids(&self) -> Vec<NodeId> {
-        self.dense_nodes.dirty_node_ids()
+        self.dense_nodes
+            .dirty_indices()
+            .into_iter()
+            .map(|index| self.dense_nodes.node_id_at(index))
+            .collect()
     }
 
     #[must_use]
@@ -129,23 +138,16 @@ impl RetainedComposeTree {
         if self.layout_dirty_roots.is_empty() && self.dirty.requires_layout() {
             vec![self.root.id()]
         } else {
-            self.layout_dirty_roots.clone()
+            self.layout_dirty_roots
+                .iter()
+                .map(|index| self.dense_nodes.node_id_at(*index))
+                .collect()
         }
     }
 
     #[must_use]
     pub fn layout_for(&self, node_id: NodeId) -> Option<&crate::layout::LayoutSlot> {
-        self.dense_nodes.layout_for(node_id)
-    }
-
-    #[must_use]
-    pub fn dirty_flags_for(&self, node_id: NodeId) -> DirtyFlags {
-        self.dense_nodes.dirty_flags_for(node_id)
-    }
-
-    #[must_use]
-    pub fn available_for(&self, node_id: NodeId) -> Option<Size> {
-        self.dense_nodes.available_for(node_id)
+        self.layout.slot(node_id)
     }
 
     #[must_use]
@@ -164,8 +166,12 @@ impl RetainedComposeTree {
     }
 
     pub fn update_fragment(&mut self, node_id: NodeId, fragment: Vec<zeno_scene::DrawCommand>) {
-        self.fragments_by_node.insert(node_id, fragment);
-        self.dense_nodes.clear_dirty(node_id);
+        let index = self
+            .dense_nodes
+            .index_of(node_id)
+            .expect("layout index should exist for fragment update");
+        self.fragments_by_node.insert_at(index, fragment);
+        self.dense_nodes.clear_dirty_at(index);
     }
 
     pub fn apply_layout_state(
@@ -173,11 +179,13 @@ impl RetainedComposeTree {
         root: Node,
         viewport: Size,
         layout: LayoutArena,
-        available_by_node: HashMap<NodeId, Size>,
+        available: Vec<Size>,
     ) {
-        let dense_nodes = DenseNodeStore::build(&root, &layout, &available_by_node);
-        let valid_ids: HashSet<NodeId> = dense_nodes.node_ids().iter().copied().collect();
-        self.fragments_by_node.retain(&valid_ids);
+        let old_index_table = self.layout.index_table().clone();
+        let new_index_table = layout.index_table().clone();
+        let dense_nodes = DenseNodeStore::build(layout.index_table().clone(), available);
+        self.fragments_by_node
+            .remap(old_index_table.as_ref(), new_index_table.as_ref());
         self.root = root;
         self.viewport = viewport;
         self.layout = layout;

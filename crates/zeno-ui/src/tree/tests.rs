@@ -1,6 +1,5 @@
 //! retained tree 测试单独拆分，避免核心实现文件继续膨胀。
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use zeno_core::{Point, Size};
@@ -128,8 +127,8 @@ fn retained_tree_for(root: Node, viewport: Size) -> RetainedComposeTree {
         root,
         viewport,
         layout,
-        HashMap::new(),
-        FragmentStore::new(),
+        Vec::new(),
+        FragmentStore::new_with_len(0),
         Scene::new(viewport),
     )
 }

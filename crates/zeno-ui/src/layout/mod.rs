@@ -1,39 +1,43 @@
-use std::collections::HashMap;
+use std::sync::Arc;
 
 use zeno_core::{Point, Rect, Size};
 use zeno_text::{TextLayout, TextParagraph, TextSystem, line_box};
 
 use crate::modifier::{CrossAxisAlignment, HorizontalAlignment, VerticalAlignment};
 use crate::{Axis, Node, NodeId, NodeKind, SpacerNode, TextNode};
-use crate::tree::RetainedComposeTree;
+use crate::tree::{NodeIndexTable, RetainedComposeTree};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LayoutSlot {
-    pub(crate) node_id: NodeId,
     pub(crate) frame: Rect,
     pub(crate) text_layout: Option<TextLayout>,
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct LayoutArena {
-    index_by_id: HashMap<NodeId, usize>,
+    index_table: Arc<NodeIndexTable>,
     slots: Vec<LayoutSlot>,
 }
 
 impl LayoutArena {
     #[must_use]
     pub fn from_measured(root: &Node, measured: &MeasuredNode) -> Self {
-        let mut arena = Self::default();
-        arena.collect(root, measured);
+        let index_table = NodeIndexTable::build(root);
+        let mut arena = Self::new(index_table);
+        arena.collect(root, 0, measured);
         arena
     }
 
     #[must_use]
     pub fn slot(&self, node_id: NodeId) -> Option<&LayoutSlot> {
-        self.index_by_id
-            .get(&node_id)
-            .copied()
+        self.index_table
+            .index_of(node_id)
             .map(|index| &self.slots[index])
+    }
+
+    #[must_use]
+    pub fn slot_at(&self, index: usize) -> &LayoutSlot {
+        &self.slots[index]
     }
 
     #[must_use]
@@ -46,25 +50,63 @@ impl LayoutArena {
         self.slot(node_id).and_then(|slot| slot.text_layout.as_ref())
     }
 
-    fn collect(&mut self, node: &Node, measured: &MeasuredNode) {
-        let index = self.slots.len();
-        self.index_by_id.insert(node.id(), index);
-        self.slots.push(LayoutSlot {
-            node_id: node.id(),
+    #[must_use]
+    pub fn index_table(&self) -> &Arc<NodeIndexTable> {
+        &self.index_table
+    }
+
+    fn new(index_table: Arc<NodeIndexTable>) -> Self {
+        Self {
+            slots: vec![
+                LayoutSlot {
+                    frame: Rect::new(0.0, 0.0, 0.0, 0.0),
+                    text_layout: None,
+                };
+                index_table.len()
+            ],
+            index_table,
+        }
+    }
+
+    fn upsert(&mut self, index: usize, frame: Rect, text_layout: Option<TextLayout>) {
+        self.slots[index] = LayoutSlot {
+            frame,
+            text_layout,
+        };
+    }
+
+    fn shift(&mut self, index: usize, dx: f32, dy: f32) {
+        let slot = &mut self.slots[index];
+        slot.frame = Rect::new(
+            slot.frame.origin.x + dx,
+            slot.frame.origin.y + dy,
+            slot.frame.size.width,
+            slot.frame.size.height,
+        );
+    }
+
+    fn collect(&mut self, node: &Node, index: usize, measured: &MeasuredNode) {
+        self.slots[index] = LayoutSlot {
             frame: measured.frame,
             text_layout: match &measured.kind {
                 MeasuredKind::Text(layout) => Some(layout.clone()),
                 _ => None,
             },
-        });
+        };
         match (&node.kind, &measured.kind) {
             (NodeKind::Container(child), MeasuredKind::Single(measured_child)) => {
-                self.collect(child, measured_child);
+                let child_index = self.index_table.child_indices(index)[0];
+                self.collect(child, child_index, measured_child);
             }
             (NodeKind::Box { children }, MeasuredKind::Multiple(measured_children))
             | (NodeKind::Stack { children, .. }, MeasuredKind::Multiple(measured_children)) => {
-                for (child, measured_child) in children.iter().zip(measured_children.iter()) {
-                    self.collect(child, measured_child);
+                let child_indices = self.index_table.child_indices(index).to_vec();
+                for ((child, child_index), measured_child) in children
+                    .iter()
+                    .zip(child_indices.into_iter())
+                    .zip(measured_children.iter())
+                {
+                    self.collect(child, child_index, measured_child);
                 }
             }
             _ => {}
@@ -79,8 +121,10 @@ pub(crate) fn measure_layout(
     available: Size,
     text_system: &dyn TextSystem,
 ) -> LayoutArena {
-    let measured = measure_node(root, origin, available, text_system);
-    LayoutArena::from_measured(root, &measured)
+    let index_table = NodeIndexTable::build(root);
+    let mut arena = LayoutArena::new(index_table);
+    let _ = measure_into_arena(root, 0, origin, available, text_system, &mut arena);
+    arena
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,32 +141,66 @@ pub(crate) enum MeasuredKind {
     Spacer,
 }
 
+#[derive(Debug, Clone)]
+struct NodeLayoutData {
+    frame: Rect,
+}
+
 pub(crate) fn measure_node(
     node: &Node,
     origin: Point,
     available: Size,
     text_system: &dyn TextSystem,
 ) -> MeasuredNode {
+    let arena = measure_layout(node, origin, available, text_system);
+    measured_from_layout(node, &arena)
+}
+
+fn measure_into_arena(
+    node: &Node,
+    index: usize,
+    origin: Point,
+    available: Size,
+    text_system: &dyn TextSystem,
+    arena: &mut LayoutArena,
+) -> NodeLayoutData {
     match &node.kind {
-        NodeKind::Text(text) => measure_text(node, text, origin, available, text_system),
+        NodeKind::Text(text) => {
+            measure_text_into_arena(node, index, text, origin, available, text_system, arena)
+        }
         NodeKind::Container(child) => {
-            measure_container(node, child, origin, available, text_system)
+            measure_container_into_arena(node, index, child, origin, available, text_system, arena)
         }
-        NodeKind::Box { children } => measure_box(node, children, origin, available, text_system),
+        NodeKind::Box { children } => {
+            measure_box_into_arena(node, index, children, origin, available, text_system, arena)
+        }
         NodeKind::Stack { axis, children } => {
-            measure_stack(node, *axis, children, origin, available, text_system)
+            measure_stack_into_arena(
+                node,
+                index,
+                *axis,
+                children,
+                origin,
+                available,
+                text_system,
+                arena,
+            )
         }
-        NodeKind::Spacer(spacer) => measure_spacer(node, spacer, origin, available),
+        NodeKind::Spacer(spacer) => {
+            measure_spacer_into_arena(node, index, spacer, origin, available, arena)
+        }
     }
 }
 
-pub(crate) fn measure_text(
+fn measure_text_into_arena(
     node: &Node,
+    index: usize,
     text: &TextNode,
     origin: Point,
     available: Size,
     text_system: &dyn TextSystem,
-) -> MeasuredNode {
+    arena: &mut LayoutArena,
+) -> NodeLayoutData {
     let inner_available = content_available(node, available);
     let style = node.resolved_style();
     let paragraph = TextParagraph {
@@ -134,32 +212,88 @@ pub(crate) fn measure_text(
     let layout = text_system.layout(paragraph);
     let content = line_box(&layout);
     let size = finalize_size(node, available, content);
-    MeasuredNode {
-        frame: Rect::new(origin.x, origin.y, size.width, size.height),
-        kind: MeasuredKind::Text(layout),
-    }
+    let frame = Rect::new(origin.x, origin.y, size.width, size.height);
+    arena.upsert(index, frame, Some(layout.clone()));
+    NodeLayoutData { frame }
 }
 
-fn measure_box(
+fn measure_spacer_into_arena(
     node: &Node,
+    index: usize,
+    spacer: &SpacerNode,
+    origin: Point,
+    available: Size,
+    arena: &mut LayoutArena,
+) -> NodeLayoutData {
+    let style = node.resolved_style();
+    let width = style.width.unwrap_or(spacer.width).min(available.width.max(0.0));
+    let height = style.height.unwrap_or(spacer.height).min(available.height.max(0.0));
+    let frame = Rect::new(origin.x, origin.y, width, height);
+    arena.upsert(index, frame, None);
+    NodeLayoutData { frame }
+}
+
+fn measure_container_into_arena(
+    node: &Node,
+    index: usize,
+    child: &Node,
+    origin: Point,
+    available: Size,
+    text_system: &dyn TextSystem,
+    arena: &mut LayoutArena,
+) -> NodeLayoutData {
+    let style = node.resolved_style();
+    let padding = style.padding;
+    let child_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
+    let child_available = content_available(node, available);
+    let child_index = arena.index_table.child_indices(index)[0];
+    let measured_child = measure_into_arena(
+        child,
+        child_index,
+        child_origin,
+        child_available,
+        text_system,
+        arena,
+    );
+    let size = finalize_size(node, available, measured_child.frame.size);
+    let frame = Rect::new(origin.x, origin.y, size.width, size.height);
+    arena.upsert(index, frame, None);
+    NodeLayoutData { frame }
+}
+
+fn measure_box_into_arena(
+    node: &Node,
+    index: usize,
     children: &[Node],
     origin: Point,
     available: Size,
     text_system: &dyn TextSystem,
-) -> MeasuredNode {
+    arena: &mut LayoutArena,
+) -> NodeLayoutData {
     let style = node.resolved_style();
     let padding = style.padding;
     let content_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
     let child_available = content_available(node, available);
-    let mut measured_children = Vec::with_capacity(children.len());
+    let mut child_layouts = Vec::with_capacity(children.len());
     let mut max_width = 0.0f32;
     let mut max_height = 0.0f32;
+    let child_indices = arena.index_table.child_indices(index).to_vec();
 
-    for child in children {
-        let measured = measure_node(child, content_origin, child_available, text_system);
+    for (child, child_index) in children
+        .iter()
+        .zip(child_indices.iter().copied())
+    {
+        let measured = measure_into_arena(
+            child,
+            child_index,
+            content_origin,
+            child_available,
+            text_system,
+            arena,
+        );
         max_width = max_width.max(measured.frame.size.width);
         max_height = max_height.max(measured.frame.size.height);
-        measured_children.push(measured);
+        child_layouts.push(measured);
     }
 
     let size = finalize_size(node, available, Size::new(max_width, max_height));
@@ -167,124 +301,168 @@ fn measure_box(
         (size.width - padding.horizontal()).max(0.0),
         (size.height - padding.vertical()).max(0.0),
     );
-    let aligned_children = measured_children
-        .into_iter()
-        .map(|child| {
-            let aligned_origin = Point::new(
-                content_origin.x
-                    + aligned_offset(
-                        content_size.width,
-                        child.frame.size.width,
-                        style.content_alignment.horizontal,
-                    ),
-                content_origin.y
-                    + aligned_offset(
-                        content_size.height,
-                        child.frame.size.height,
-                        style.content_alignment.vertical,
-                    ),
-            );
-            translate_measured_node(&child, aligned_origin)
-        })
-        .collect();
-
-    MeasuredNode {
-        frame: Rect::new(origin.x, origin.y, size.width, size.height),
-        kind: MeasuredKind::Multiple(aligned_children),
+    for ((child, child_index), child_layout) in children
+        .iter()
+        .zip(child_indices.iter().copied())
+        .zip(child_layouts.iter())
+    {
+        let aligned_origin = Point::new(
+            content_origin.x
+                + aligned_offset(
+                    content_size.width,
+                    child_layout.frame.size.width,
+                    style.content_alignment.horizontal,
+                ),
+            content_origin.y
+                + aligned_offset(
+                    content_size.height,
+                    child_layout.frame.size.height,
+                    style.content_alignment.vertical,
+                ),
+        );
+        shift_subtree_in_arena(
+            child,
+            child_index,
+            aligned_origin.x - child_layout.frame.origin.x,
+            aligned_origin.y - child_layout.frame.origin.y,
+            arena,
+        );
     }
+
+    let frame = Rect::new(origin.x, origin.y, size.width, size.height);
+    arena.upsert(index, frame, None);
+    NodeLayoutData { frame }
 }
 
-fn measure_container(
+fn measure_stack_into_arena(
     node: &Node,
-    child: &Node,
-    origin: Point,
-    available: Size,
-    text_system: &dyn TextSystem,
-) -> MeasuredNode {
-    let style = node.resolved_style();
-    let padding = style.padding;
-    let child_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
-    let child_available = content_available(node, available);
-    let measured_child = measure_node(child, child_origin, child_available, text_system);
-    let content = measured_child.frame.size;
-    let size = finalize_size(node, available, content);
-    MeasuredNode {
-        frame: Rect::new(origin.x, origin.y, size.width, size.height),
-        kind: MeasuredKind::Single(Box::new(measured_child)),
-    }
-}
-
-fn measure_stack(
-    node: &Node,
+    index: usize,
     axis: Axis,
     children: &[Node],
     origin: Point,
     available: Size,
     text_system: &dyn TextSystem,
-) -> MeasuredNode {
+    arena: &mut LayoutArena,
+) -> NodeLayoutData {
     let style = node.resolved_style();
     let padding = style.padding;
     let inner = content_available(node, available);
     let content_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
     let mut used_main = 0.0f32;
-    let mut max_width: f32 = 0.0;
-    let mut max_height: f32 = 0.0;
-    let mut measured_children = Vec::with_capacity(children.len());
+    let mut max_width = 0.0f32;
+    let mut max_height = 0.0f32;
+    let mut child_layouts = Vec::with_capacity(children.len());
+    let child_indices = arena.index_table.child_indices(index).to_vec();
 
-    for (index, child) in children.iter().enumerate() {
+    for (child_position, (child, child_index)) in children
+        .iter()
+        .zip(child_indices.iter().copied())
+        .enumerate()
+    {
         let remaining = remaining_available_for_axis(inner, used_main, axis);
-        let measured = measure_node(child, content_origin, remaining, text_system);
+        let measured = measure_into_arena(
+            child,
+            child_index,
+            content_origin,
+            remaining,
+            text_system,
+            arena,
+        );
         max_width = max_width.max(measured.frame.size.width);
         max_height = max_height.max(measured.frame.size.height);
-        used_main += match axis {
-            Axis::Horizontal => measured.frame.size.width,
-            Axis::Vertical => measured.frame.size.height,
-        };
-        if index + 1 < children.len() {
+        used_main += main_axis_extent(measured.frame.size, axis);
+        if child_position + 1 < children.len() {
             used_main += style.spacing;
         }
-        measured_children.push(measured);
+        child_layouts.push(measured);
     }
 
-    let base_main = stack_main_extent(&measured_children, axis);
+    let base_main = stack_main_extent(&child_layouts, axis);
     let base_cross = stack_cross_extent(max_width, max_height, axis);
     let size = finalize_size(node, available, stack_content_size(axis, base_main, base_cross));
-    let aligned_children = position_stack_children(
+    let child_origins = position_stack_children(
         content_origin,
         Size::new(
             (size.width - padding.horizontal()).max(0.0),
             (size.height - padding.vertical()).max(0.0),
         ),
-        &measured_children,
+        &child_layouts,
         axis,
         style.spacing,
         style.arrangement,
         style.cross_axis_alignment,
     );
-    MeasuredNode {
-        frame: Rect::new(origin.x, origin.y, size.width, size.height),
-        kind: MeasuredKind::Multiple(aligned_children),
+    for (((child, child_index), child_layout), child_origin) in children
+        .iter()
+        .zip(child_indices.iter().copied())
+        .zip(child_layouts.iter())
+        .zip(child_origins.into_iter())
+    {
+        shift_subtree_in_arena(
+            child,
+            child_index,
+            child_origin.x - child_layout.frame.origin.x,
+            child_origin.y - child_layout.frame.origin.y,
+            arena,
+        );
+    }
+
+    let frame = Rect::new(origin.x, origin.y, size.width, size.height);
+    arena.upsert(index, frame, None);
+    NodeLayoutData { frame }
+}
+
+fn shift_subtree_in_arena(node: &Node, index: usize, dx: f32, dy: f32, arena: &mut LayoutArena) {
+    arena.shift(index, dx, dy);
+    match &node.kind {
+        NodeKind::Container(child) => {
+            let child_index = arena.index_table.child_indices(index)[0];
+            shift_subtree_in_arena(child, child_index, dx, dy, arena)
+        }
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
+            let child_indices = arena.index_table.child_indices(index).to_vec();
+            for (child, child_index) in children
+                .iter()
+                .zip(child_indices.into_iter())
+            {
+                shift_subtree_in_arena(child, child_index, dx, dy, arena);
+            }
+        }
+        _ => {}
     }
 }
 
-pub(crate) fn measure_spacer(
-    node: &Node,
-    spacer: &SpacerNode,
-    origin: Point,
-    available: Size,
-) -> MeasuredNode {
-    let style = node.resolved_style();
-    let width = style
-        .width
-        .unwrap_or(spacer.width)
-        .min(available.width.max(0.0));
-    let height = style
-        .height
-        .unwrap_or(spacer.height)
-        .min(available.height.max(0.0));
+fn measured_from_layout(node: &Node, arena: &LayoutArena) -> MeasuredNode {
+    measured_from_layout_at(node, 0, arena)
+}
+
+fn measured_from_layout_at(node: &Node, index: usize, arena: &LayoutArena) -> MeasuredNode {
+    let slot = arena.slot_at(index);
+    let kind = match &node.kind {
+        NodeKind::Text(_) => MeasuredKind::Text(
+            slot.text_layout
+                .clone()
+                .expect("text layout should exist for text node"),
+        ),
+        NodeKind::Container(child) => {
+            MeasuredKind::Single(Box::new(measured_from_layout_at(
+                child,
+                arena.index_table.child_indices(index)[0],
+                arena,
+            )))
+        }
+        NodeKind::Box { children } | NodeKind::Stack { children, .. } => MeasuredKind::Multiple(
+            children
+                .iter()
+                .zip(arena.index_table.child_indices(index).iter().copied())
+                .map(|(child, child_index)| measured_from_layout_at(child, child_index, arena))
+                .collect(),
+        ),
+        NodeKind::Spacer(_) => MeasuredKind::Spacer,
+    };
     MeasuredNode {
-        frame: Rect::new(origin.x, origin.y, width, height),
-        kind: MeasuredKind::Spacer,
+        frame: slot.frame,
+        kind,
     }
 }
 
@@ -337,13 +515,10 @@ pub(crate) fn aligned_offset_for_cross_axis(
     }
 }
 
-pub(crate) fn stack_main_extent(children: &[MeasuredNode], axis: Axis) -> f32 {
+fn stack_main_extent(children: &[NodeLayoutData], axis: Axis) -> f32 {
     children
         .iter()
-        .map(|child| match axis {
-            Axis::Horizontal => child.frame.size.width,
-            Axis::Vertical => child.frame.size.height,
-        })
+        .map(|child| main_axis_extent(child.frame.size, axis))
         .sum()
 }
 
@@ -398,16 +573,16 @@ pub(crate) fn arranged_gap_and_offset(
     }
 }
 
-pub(crate) fn position_stack_children(
+fn position_stack_children(
     content_origin: Point,
     content_size: Size,
-    measured_children: &[MeasuredNode],
+    children: &[NodeLayoutData],
     axis: Axis,
     spacing: f32,
     arrangement: crate::Arrangement,
     cross_axis_alignment: CrossAxisAlignment,
-) -> Vec<MeasuredNode> {
-    let content_main = stack_main_extent(measured_children, axis);
+) -> Vec<Point> {
+    let content_main = stack_main_extent(children, axis);
     let container_main = match axis {
         Axis::Horizontal => content_size.width,
         Axis::Vertical => content_size.height,
@@ -419,14 +594,14 @@ pub(crate) fn position_stack_children(
     let (gap, start_offset) = arranged_gap_and_offset(
         container_main,
         content_main,
-        measured_children.len(),
+        children.len(),
         spacing,
         arrangement,
     );
     let mut cursor = start_offset;
-    let last_index = measured_children.len().saturating_sub(1);
-    let mut aligned = Vec::with_capacity(measured_children.len());
-    for (index, child) in measured_children.iter().enumerate() {
+    let last_index = children.len().saturating_sub(1);
+    let mut aligned = Vec::with_capacity(children.len());
+    for (index, child) in children.iter().enumerate() {
         let (main_extent, cross_extent) = match axis {
             Axis::Horizontal => (child.frame.size.width, child.frame.size.height),
             Axis::Vertical => (child.frame.size.height, child.frame.size.width),
@@ -437,7 +612,7 @@ pub(crate) fn position_stack_children(
             Axis::Horizontal => Point::new(content_origin.x + cursor, content_origin.y + cross_offset),
             Axis::Vertical => Point::new(content_origin.x + cross_offset, content_origin.y + cursor),
         };
-        aligned.push(translate_measured_node(child, origin));
+        aligned.push(origin);
         cursor += main_extent;
         if index < last_index {
             cursor += gap;
@@ -446,45 +621,8 @@ pub(crate) fn position_stack_children(
     aligned
 }
 
-pub(crate) fn translate_measured_node(measured: &MeasuredNode, origin: Point) -> MeasuredNode {
-    let dx = origin.x - measured.frame.origin.x;
-    let dy = origin.y - measured.frame.origin.y;
-    translate_measured_node_by_delta(measured, dx, dy)
-}
-
-pub(crate) fn translate_measured_node_by_delta(measured: &MeasuredNode, dx: f32, dy: f32) -> MeasuredNode {
-    let frame = Rect::new(
-        measured.frame.origin.x + dx,
-        measured.frame.origin.y + dy,
-        measured.frame.size.width,
-        measured.frame.size.height,
-    );
-    let kind = match &measured.kind {
-        MeasuredKind::Text(layout) => MeasuredKind::Text(layout.clone()),
-        MeasuredKind::Single(child) => {
-            MeasuredKind::Single(Box::new(translate_measured_node_by_delta(child, dx, dy)))
-        }
-        MeasuredKind::Multiple(children) => MeasuredKind::Multiple(
-            children
-                .iter()
-                .map(|child| translate_measured_node_by_delta(child, dx, dy))
-                .collect(),
-        ),
-        MeasuredKind::Spacer => MeasuredKind::Spacer,
-    };
-    MeasuredNode { frame, kind }
-}
-
 trait IntoAlignmentAxis {
     fn resolve(self, container_extent: f32, child_extent: f32) -> f32;
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum LayoutRelayoutClass {
-    Reused,
-    LocalOnly,
-    ParentOnly,
-    ParentAndFollowingSiblings,
 }
 
 #[must_use]
@@ -496,296 +634,9 @@ pub(crate) fn relayout_layout(
     retained: &RetainedComposeTree,
     layout_dirty_roots: &[NodeId],
 ) -> LayoutArena {
-    let measured = relayout_node_internal(
-        node,
-        origin,
-        available,
-        text_system,
-        retained,
-        layout_dirty_roots,
-        false,
-    )
-    .0;
-    LayoutArena::from_measured(node, &measured)
-}
-
-fn relayout_node_internal(
-    node: &Node,
-    origin: Point,
-    available: Size,
-    text_system: &dyn TextSystem,
-    retained: &RetainedComposeTree,
-    layout_dirty_roots: &[NodeId],
-    force_relayout: bool,
-) -> (MeasuredNode, bool) {
-    let dirty = layout_dirty_roots.contains(&node.id());
-    let descendant_dirty = retained.has_descendant_in(node.id(), layout_dirty_roots);
-    let dirty_flags = retained.dirty_flags_for(node.id());
-    if !force_relayout && !dirty && !descendant_dirty {
-        if let (Some(slot), Some(cached_available)) =
-            (retained.layout_for(node.id()), retained.available_for(node.id()))
-        {
-            if cached_available == available {
-                let measured = measure_node(node, origin, available, text_system);
-                return (measured, slot.frame.origin == origin);
-            }
-        }
-    }
-
-    match &node.kind {
-        NodeKind::Text(text) => {
-            let measured = measure_text(node, text, origin, available, text_system);
-            let _ = classify_leaf_relayout(retained.layout_for(node.id()), &measured);
-            (measured, false)
-        }
-        NodeKind::Spacer(spacer) => {
-            let measured = measure_spacer(node, spacer, origin, available);
-            let _ = classify_leaf_relayout(retained.layout_for(node.id()), &measured);
-            (measured, false)
-        }
-        NodeKind::Container(child) => {
-            let style = node.resolved_style();
-            let previous_slot = retained.layout_for(node.id());
-            let previous_child = retained.layout_for(child.id());
-            let child_available = content_available(node, available);
-            let (measured_child, child_reused) = relayout_node_internal(
-                child,
-                Point::new(origin.x + style.padding.left, origin.y + style.padding.top),
-                child_available,
-                text_system,
-                retained,
-                layout_dirty_roots,
-                force_relayout || dirty,
-            );
-            let size = finalize_size(node, available, measured_child.frame.size);
-            let measured = MeasuredNode {
-                frame: Rect::new(origin.x, origin.y, size.width, size.height),
-                kind: MeasuredKind::Single(Box::new(measured_child)),
-            };
-            let _ = classify_container_relayout(previous_slot, previous_child, &measured);
-            let _ = child_reused;
-            (measured, false)
-        }
-        NodeKind::Box { children } => {
-            let child_force_relayout =
-                force_relayout || (dirty && !dirty_flags.requires_order_only());
-            let measured = relayout_box_internal(
-                node,
-                children,
-                origin,
-                available,
-                text_system,
-                retained,
-                layout_dirty_roots,
-                child_force_relayout,
-            );
-            (measured, false)
-        }
-        NodeKind::Stack { axis, children } => {
-            let child_force_relayout =
-                force_relayout || (dirty && !dirty_flags.requires_order_only());
-            let measured = relayout_stack_internal(
-                node,
-                *axis,
-                children,
-                origin,
-                available,
-                text_system,
-                retained,
-                layout_dirty_roots,
-                child_force_relayout,
-            );
-            (measured, false)
-        }
-    }
-}
-
-fn relayout_box_internal(
-    node: &Node,
-    children: &[Node],
-    origin: Point,
-    available: Size,
-    text_system: &dyn TextSystem,
-    retained: &RetainedComposeTree,
-    layout_dirty_roots: &[NodeId],
-    force_relayout: bool,
-) -> MeasuredNode {
-    let style = node.resolved_style();
-    let content_origin = Point::new(origin.x + style.padding.left, origin.y + style.padding.top);
-    let child_available = content_available(node, available);
-    let mut measured_children = Vec::with_capacity(children.len());
-    let mut max_width = 0.0f32;
-    let mut max_height = 0.0f32;
-
-    for child in children {
-        let (measured_child, _) = relayout_node_internal(
-            child,
-            content_origin,
-            child_available,
-            text_system,
-            retained,
-            layout_dirty_roots,
-            force_relayout,
-        );
-        max_width = max_width.max(measured_child.frame.size.width);
-        max_height = max_height.max(measured_child.frame.size.height);
-        measured_children.push(measured_child);
-    }
-
-    let final_size = finalize_size(node, available, Size::new(max_width, max_height));
-    let content_size = Size::new(
-        (final_size.width - style.padding.horizontal()).max(0.0),
-        (final_size.height - style.padding.vertical()).max(0.0),
-    );
-    let aligned_children = measured_children
-        .into_iter()
-        .map(|child| {
-            let origin = Point::new(
-                content_origin.x
-                    + aligned_offset(
-                        content_size.width,
-                        child.frame.size.width,
-                        style.content_alignment.horizontal,
-                    ),
-                content_origin.y
-                    + aligned_offset(
-                        content_size.height,
-                        child.frame.size.height,
-                        style.content_alignment.vertical,
-                    ),
-            );
-            translate_measured_node(&child, origin)
-        })
-        .collect();
-
-    MeasuredNode {
-        frame: Rect::new(origin.x, origin.y, final_size.width, final_size.height),
-        kind: MeasuredKind::Multiple(aligned_children),
-    }
-}
-
-fn relayout_stack_internal(
-    node: &Node,
-    axis: Axis,
-    children: &[Node],
-    origin: Point,
-    available: Size,
-    text_system: &dyn TextSystem,
-    retained: &RetainedComposeTree,
-    layout_dirty_roots: &[NodeId],
-    force_relayout: bool,
-) -> MeasuredNode {
-    let style = node.resolved_style();
-    let mut measured_children = Vec::with_capacity(children.len());
-    let content_origin = Point::new(origin.x + style.padding.left, origin.y + style.padding.top);
-    let content_available = content_available(node, available);
-    let mut used_main = 0.0f32;
-    let mut max_width = 0.0f32;
-    let mut max_height = 0.0f32;
-    let mut downstream_relayout = force_relayout;
-
-    for (index, child) in children.iter().enumerate() {
-        let remaining = remaining_available_for_axis(content_available, used_main, axis);
-        let (measured_child, reused) = relayout_node_internal(
-            child,
-            content_origin,
-            remaining,
-            text_system,
-            retained,
-            layout_dirty_roots,
-            downstream_relayout,
-        );
-        if !downstream_relayout && !reused {
-            let previous_measured = retained.layout_for(child.id());
-            let child_class = classify_stack_child_relayout(previous_measured, &measured_child, axis);
-            downstream_relayout =
-                matches!(child_class, LayoutRelayoutClass::ParentAndFollowingSiblings);
-        }
-
-        max_width = max_width.max(measured_child.frame.size.width);
-        max_height = max_height.max(measured_child.frame.size.height);
-        used_main += match axis {
-            Axis::Horizontal => measured_child.frame.size.width,
-            Axis::Vertical => measured_child.frame.size.height,
-        };
-        if index + 1 < children.len() {
-            used_main += style.spacing;
-        }
-        measured_children.push(measured_child);
-    }
-
-    let main = stack_main_extent(&measured_children, axis);
-    let cross = stack_cross_extent(max_width, max_height, axis);
-    let content_size = stack_content_size(axis, main, cross);
-    let final_size = finalize_size(node, available, content_size);
-    let aligned_children = position_stack_children(
-        content_origin,
-        Size::new(
-            (final_size.width - style.padding.horizontal()).max(0.0),
-            (final_size.height - style.padding.vertical()).max(0.0),
-        ),
-        &measured_children,
-        axis,
-        style.spacing,
-        style.arrangement,
-        style.cross_axis_alignment,
-    );
-    MeasuredNode {
-        frame: Rect::new(origin.x, origin.y, final_size.width, final_size.height),
-        kind: MeasuredKind::Multiple(aligned_children),
-    }
-}
-
-fn classify_leaf_relayout(
-    previous: Option<&LayoutSlot>,
-    current: &MeasuredNode,
-) -> LayoutRelayoutClass {
-    match previous {
-        Some(previous) if previous.frame == current.frame => LayoutRelayoutClass::LocalOnly,
-        Some(_) => LayoutRelayoutClass::ParentOnly,
-        None => LayoutRelayoutClass::ParentOnly,
-    }
-}
-
-fn classify_container_relayout(
-    previous: Option<&LayoutSlot>,
-    previous_child: Option<&LayoutSlot>,
-    current: &MeasuredNode,
-) -> LayoutRelayoutClass {
-    let Some(previous) = previous else {
-        return LayoutRelayoutClass::ParentOnly;
-    };
-    if previous.frame != current.frame {
-        return LayoutRelayoutClass::ParentOnly;
-    }
-    let current_child_frame = match &current.kind {
-        MeasuredKind::Single(child) => Some(child.frame),
-        _ => None,
-    };
-    if previous_child.map(|child| child.frame) == current_child_frame {
-        LayoutRelayoutClass::Reused
-    } else {
-        LayoutRelayoutClass::LocalOnly
-    }
-}
-
-fn classify_stack_child_relayout(
-    previous: Option<&LayoutSlot>,
-    current: &MeasuredNode,
-    axis: Axis,
-) -> LayoutRelayoutClass {
-    let Some(previous) = previous else {
-        return LayoutRelayoutClass::ParentAndFollowingSiblings;
-    };
-    let previous_main = main_axis_extent(previous.frame.size, axis);
-    let current_main = main_axis_extent(current.frame.size, axis);
-    if (previous_main - current_main).abs() > f32::EPSILON {
-        LayoutRelayoutClass::ParentAndFollowingSiblings
-    } else if previous.frame == current.frame {
-        LayoutRelayoutClass::LocalOnly
-    } else {
-        LayoutRelayoutClass::ParentOnly
-    }
+    let _ = retained;
+    let _ = layout_dirty_roots;
+    measure_layout(node, origin, available, text_system)
 }
 
 impl IntoAlignmentAxis for HorizontalAlignment {

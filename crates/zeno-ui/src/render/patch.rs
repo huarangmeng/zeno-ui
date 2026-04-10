@@ -67,6 +67,7 @@ pub(super) fn patch_scene_for_nodes(
     let mut next_order = 1u32;
     collect::collect_scene_patch_items(
         root,
+        0,
         retained.layout(),
         retained.fragments(),
         Scene::ROOT_LAYER_ID,

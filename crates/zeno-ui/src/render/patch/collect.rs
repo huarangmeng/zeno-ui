@@ -12,6 +12,7 @@ use crate::render::scene::{
 
 pub(super) fn collect_scene_patch_items(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
@@ -35,6 +36,7 @@ pub(super) fn collect_scene_patch_items(
     {
         collect_unchanged_scene_items(
             node,
+            index,
             layout,
             fragments,
             current_layer_id,
@@ -99,7 +101,7 @@ pub(super) fn collect_scene_patch_items(
         } else {
             layer_upserts.push(current_layer.clone());
         }
-        if let Some(fragment) = fragments.clone_fragment(node.id()) {
+        if let Some(fragment) = fragments.clone_fragment_at(index) {
             let current_block = SceneBlock::new(
                 node.id().0,
                 layer_id,
@@ -119,6 +121,7 @@ pub(super) fn collect_scene_patch_items(
         }
         collect_scene_patch_children(
             node,
+            index,
             layout,
             fragments,
             layer_id,
@@ -140,7 +143,7 @@ pub(super) fn collect_scene_patch_items(
     }
 
     let force_descendant_update = force_update || previous_layers_by_id.contains_key(&node.id().0);
-    if let Some(fragment) = fragments.clone_fragment(node.id()) {
+    if let Some(fragment) = fragments.clone_fragment_at(index) {
         let block_transform = Transform2D::translation(
             slot.frame.origin.x - current_layer_origin.x,
             slot.frame.origin.y - current_layer_origin.y,
@@ -165,6 +168,7 @@ pub(super) fn collect_scene_patch_items(
     }
     collect_scene_patch_children(
         node,
+        index,
         layout,
         fragments,
         current_layer_id,
@@ -186,6 +190,7 @@ pub(super) fn collect_scene_patch_items(
 
 fn collect_scene_patch_children(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
@@ -205,8 +210,10 @@ fn collect_scene_patch_children(
 ) {
     match &node.kind {
         NodeKind::Container(child) => {
+            let child_index = layout.index_table().child_indices(index)[0];
             collect_scene_patch_items(
                 child,
+                child_index,
                 layout,
                 fragments,
                 current_layer_id,
@@ -226,9 +233,13 @@ fn collect_scene_patch_children(
             );
         }
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for child in children {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
                 collect_scene_patch_items(
                     child,
+                    child_index,
                     layout,
                     fragments,
                     current_layer_id,
@@ -254,6 +265,7 @@ fn collect_scene_patch_children(
 
 fn collect_unchanged_scene_items(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
@@ -306,7 +318,7 @@ fn collect_unchanged_scene_items(
             push_layer_patch(previous, &current_layer, &mut Vec::new(), layer_reorders);
         }
         *next_order += 1;
-        if let Some(fragment) = fragments.clone_fragment(node.id()) {
+        if let Some(fragment) = fragments.clone_fragment_at(index) {
             let current_block = SceneBlock::new(
                 node.id().0,
                 current_layer.layer_id,
@@ -324,8 +336,10 @@ fn collect_unchanged_scene_items(
         }
         match &node.kind {
             NodeKind::Container(child) => {
+                let child_index = layout.index_table().child_indices(index)[0];
                 collect_unchanged_scene_items(
                     child,
+                    child_index,
                     layout,
                     fragments,
                     current_layer.layer_id,
@@ -341,9 +355,13 @@ fn collect_unchanged_scene_items(
                 );
             }
             NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-                for child in children {
+                for (child, child_index) in children
+                    .iter()
+                    .zip(layout.index_table().child_indices(index).iter().copied())
+                {
                     collect_unchanged_scene_items(
                         child,
+                        child_index,
                         layout,
                         fragments,
                         current_layer.layer_id,
@@ -364,7 +382,7 @@ fn collect_unchanged_scene_items(
         return;
     }
 
-    if let Some(fragment) = fragments.clone_fragment(node.id()) {
+    if let Some(fragment) = fragments.clone_fragment_at(index) {
         let block_transform = Transform2D::translation(
             slot.frame.origin.x - current_layer_origin.x,
             slot.frame.origin.y - current_layer_origin.y,
@@ -387,8 +405,10 @@ fn collect_unchanged_scene_items(
     }
     match &node.kind {
         NodeKind::Container(child) => {
+            let child_index = layout.index_table().child_indices(index)[0];
             collect_unchanged_scene_items(
                 child,
+                child_index,
                 layout,
                 fragments,
                 current_layer_id,
@@ -404,9 +424,13 @@ fn collect_unchanged_scene_items(
             );
         }
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for child in children {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
                 collect_unchanged_scene_items(
                     child,
+                    child_index,
                     layout,
                     fragments,
                     current_layer_id,

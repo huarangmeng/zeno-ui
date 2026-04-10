@@ -24,6 +24,7 @@ pub(super) fn build_layers_and_blocks(
     let mut next_order = 1u32;
     collect_scene_items(
         root,
+        0,
         layout,
         fragments,
         Scene::ROOT_LAYER_ID,
@@ -38,6 +39,7 @@ pub(super) fn build_layers_and_blocks(
 
 pub(super) fn collect_scene_items(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
@@ -88,7 +90,7 @@ pub(super) fn collect_scene_items(
                 || style.blur.is_some()
                 || style.drop_shadow.is_some(),
         ));
-        if let Some(fragment) = fragments.clone_fragment(node.id()) {
+        if let Some(fragment) = fragments.clone_fragment_at(index) {
             blocks.push(SceneBlock::new(
                 node.id().0,
                 layer_id,
@@ -102,6 +104,7 @@ pub(super) fn collect_scene_items(
         }
         collect_scene_children(
             node,
+            index,
             layout,
             fragments,
             layer_id,
@@ -114,7 +117,7 @@ pub(super) fn collect_scene_items(
         return;
     }
 
-    if let Some(fragment) = fragments.clone_fragment(node.id()) {
+    if let Some(fragment) = fragments.clone_fragment_at(index) {
         let block_transform = Transform2D::translation(
             slot.frame.origin.x - current_layer_origin.x,
             slot.frame.origin.y - current_layer_origin.y,
@@ -133,6 +136,7 @@ pub(super) fn collect_scene_items(
     }
     collect_scene_children(
         node,
+        index,
         layout,
         fragments,
         current_layer_id,
@@ -146,6 +150,7 @@ pub(super) fn collect_scene_items(
 
 pub(super) fn collect_scene_children(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
@@ -157,8 +162,10 @@ pub(super) fn collect_scene_children(
 ) {
     match &node.kind {
         NodeKind::Container(child) => {
+            let child_index = layout.index_table().child_indices(index)[0];
             collect_scene_items(
                 child,
+                child_index,
                 layout,
                 fragments,
                 current_layer_id,
@@ -170,9 +177,13 @@ pub(super) fn collect_scene_children(
             );
         }
         NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
-            for child in children {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
                 collect_scene_items(
                     child,
+                    child_index,
                     layout,
                     fragments,
                     current_layer_id,

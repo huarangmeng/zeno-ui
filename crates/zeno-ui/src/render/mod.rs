@@ -129,9 +129,9 @@ impl<'a> ComposeEngine<'a> {
                     retained,
                     &layout_dirty_roots,
                 );
-                let available_by_node =
-                    fragments::available_map_from_layout(root, viewport, &layout);
-                let current_node_ids: HashSet<NodeId> = available_by_node.keys().copied().collect();
+                let available = fragments::available_slots_from_layout(root, viewport, &layout);
+                let current_node_ids: HashSet<NodeId> =
+                    layout.index_table().node_ids().iter().copied().collect();
                 let new_node_ids: HashSet<NodeId> = current_node_ids
                     .difference(&previous_node_ids)
                     .copied()
@@ -148,7 +148,7 @@ impl<'a> ComposeEngine<'a> {
                     root.clone(),
                     viewport,
                     layout.clone(),
-                    available_by_node,
+                    available,
                 );
                 patch::update_fragments_for_nodes(
                     root,
@@ -173,14 +173,14 @@ impl<'a> ComposeEngine<'a> {
         self.stats.compose_passes += 1;
         self.stats.layout_passes += 1;
         let layout = measure_layout(root, Point::new(0.0, 0.0), viewport, self.text_system);
-        let (available_by_node, fragments_by_node, scene) =
+        let (available, fragments_by_node, scene) =
             fragments::structured_scene_from_layout(root, viewport, &layout);
         match self.retained.as_mut() {
             Some(retained) => retained.replace(
                 root.clone(),
                 viewport,
                 layout,
-                available_by_node,
+                available,
                 fragments_by_node,
                 scene.clone(),
             ),
@@ -189,7 +189,7 @@ impl<'a> ComposeEngine<'a> {
                     root.clone(),
                     viewport,
                     layout,
-                    available_by_node,
+                    available,
                     fragments_by_node,
                     scene.clone(),
                 ));

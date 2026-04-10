@@ -3,6 +3,7 @@
 use super::scene::build_scene;
 use super::*;
 use crate::layout::LayoutArena;
+use crate::tree::NodeIndexTable;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandRange {
@@ -13,44 +14,68 @@ pub(crate) struct CommandRange {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct FragmentStore {
     commands: Vec<DrawCommand>,
-    ranges_by_node: HashMap<NodeId, CommandRange>,
+    ranges_by_index: Vec<Option<CommandRange>>,
 }
 
 impl FragmentStore {
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new_with_len(len: usize) -> Self {
+        Self {
+            commands: Vec::new(),
+            ranges_by_index: vec![None; len],
+        }
     }
 
-    pub fn insert(&mut self, node_id: NodeId, fragment: Vec<DrawCommand>) {
+    pub fn insert_at(&mut self, index: usize, fragment: Vec<DrawCommand>) {
         let range = self.append(&fragment);
-        self.ranges_by_node.insert(node_id, range);
+        if index >= self.ranges_by_index.len() {
+            self.ranges_by_index.resize(index + 1, None);
+        }
+        self.ranges_by_index[index] = Some(range);
     }
 
     #[must_use]
-    pub fn fragment_range(&self, node_id: NodeId) -> Option<CommandRange> {
-        self.ranges_by_node.get(&node_id).copied()
+    pub fn fragment_range_at(&self, index: usize) -> Option<CommandRange> {
+        self.ranges_by_index.get(index).copied().flatten()
     }
 
     #[must_use]
-    pub fn fragment(&self, node_id: NodeId) -> Option<&[DrawCommand]> {
-        self.fragment_range(node_id)
+    pub fn fragment_at(&self, index: usize) -> Option<&[DrawCommand]> {
+        self.fragment_range_at(index)
             .map(|range| &self.commands[range.start..range.start + range.len])
     }
 
     #[must_use]
-    pub fn clone_fragment(&self, node_id: NodeId) -> Option<Vec<DrawCommand>> {
-        self.fragment(node_id).map(|fragment| fragment.to_vec())
+    pub fn clone_fragment_at(&self, index: usize) -> Option<Vec<DrawCommand>> {
+        self.fragment_at(index).map(|fragment| fragment.to_vec())
     }
 
-    pub fn retain(&mut self, valid_ids: &HashSet<NodeId>) {
-        self.ranges_by_node.retain(|node_id, _| valid_ids.contains(node_id));
+    pub fn remap(
+        &mut self,
+        old_index_table: &NodeIndexTable,
+        new_index_table: &NodeIndexTable,
+    ) {
+        let mut remapped = vec![None; new_index_table.len()];
+        for (old_index, maybe_range) in self.ranges_by_index.iter().copied().enumerate() {
+            let Some(range) = maybe_range else {
+                continue;
+            };
+            let node_id = old_index_table.node_ids()[old_index];
+            if let Some(new_index) = new_index_table.index_of(node_id) {
+                remapped[new_index] = Some(range);
+            }
+        }
+        self.ranges_by_index = remapped;
         self.compact();
     }
 
     #[must_use]
     pub fn active_command_count(&self) -> usize {
-        self.ranges_by_node.values().map(|range| range.len).sum()
+        self.ranges_by_index
+            .iter()
+            .flatten()
+            .map(|range| range.len)
+            .sum()
     }
 
     fn append(&mut self, fragment: &[DrawCommand]) -> CommandRange {
@@ -64,26 +89,20 @@ impl FragmentStore {
 
     fn compact(&mut self) {
         let mut rebuilt = Vec::with_capacity(self.active_command_count());
-        let mut rebuilt_ranges = HashMap::with_capacity(self.ranges_by_node.len());
-        let mut entries: Vec<_> = self
-            .ranges_by_node
-            .iter()
-            .map(|(node_id, range)| (*node_id, *range))
-            .collect();
-        entries.sort_by_key(|(node_id, _)| node_id.0);
-        for (node_id, range) in entries {
+        let mut rebuilt_ranges = vec![None; self.ranges_by_index.len()];
+        for (index, maybe_range) in self.ranges_by_index.iter().copied().enumerate() {
+            let Some(range) = maybe_range else {
+                continue;
+            };
             let start = rebuilt.len();
             rebuilt.extend_from_slice(&self.commands[range.start..range.start + range.len]);
-            rebuilt_ranges.insert(
-                node_id,
-                CommandRange {
-                    start,
-                    len: range.len,
-                },
-            );
+            rebuilt_ranges[index] = Some(CommandRange {
+                start,
+                len: range.len,
+            });
         }
         self.commands = rebuilt;
-        self.ranges_by_node = rebuilt_ranges;
+        self.ranges_by_index = rebuilt_ranges;
     }
 }
 
@@ -92,63 +111,71 @@ pub(super) fn structured_scene_from_layout(
     viewport: Size,
     layout: &LayoutArena,
 ) -> (
-    HashMap<NodeId, Size>,
+    Vec<Size>,
     FragmentStore,
     Scene,
 ) {
-    let mut fragments = FragmentStore::new();
-    let mut available_by_node = HashMap::new();
+    let mut fragments = FragmentStore::new_with_len(layout.index_table().len());
+    let mut available = vec![Size::new(0.0, 0.0); layout.index_table().len()];
     collect_fragments(
         root,
+        0,
         layout,
         viewport,
-        &mut available_by_node,
+        &mut available,
         &mut fragments,
     );
     let scene = build_scene(root, layout, viewport, &fragments);
-    (available_by_node, fragments, scene)
+    (available, fragments, scene)
 }
 
-pub(super) fn available_map_from_layout(
+pub(super) fn available_slots_from_layout(
     root: &Node,
     viewport: Size,
     layout: &LayoutArena,
-) -> HashMap<NodeId, Size> {
-    let mut available_by_node = HashMap::new();
-    collect_available(root, layout, viewport, &mut available_by_node);
-    available_by_node
+) -> Vec<Size> {
+    let mut available = vec![Size::new(0.0, 0.0); layout.index_table().len()];
+    collect_available(root, 0, layout, viewport, &mut available);
+    available
 }
 
 pub(super) fn collect_fragments(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     available: Size,
-    available_by_node: &mut HashMap<NodeId, Size>,
+    available_by_index: &mut [Size],
     fragments: &mut FragmentStore,
 ) {
-    available_by_node.insert(node.id(), available);
+    available_by_index[index] = available;
     if let Some(slot) = layout.slot(node.id()) {
-        fragments.insert(node.id(), node_fragment(node, slot, layout));
+        fragments.insert_at(index, node_fragment(node, slot, layout));
     }
 
     match &node.kind {
         NodeKind::Container(child) => {
+            let child_index = layout.index_table().child_indices(index)[0];
             collect_fragments(
                 child,
+                child_index,
                 layout,
                 crate::layout::content_available(node, available),
-                available_by_node,
+                available_by_index,
                 fragments,
             );
         }
         NodeKind::Box { children } => {
             let child_available = crate::layout::content_available(node, available);
-            for child in children {
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
                 collect_fragments(
                     child,
+                    child_index,
                     layout,
                     child_available,
-                    available_by_node,
+                    available_by_index,
                     fragments,
                 );
             }
@@ -157,9 +184,10 @@ pub(super) fn collect_fragments(
             collect_stack_fragments(
                 node,
                 children,
+                index,
                 layout,
                 available,
-                available_by_node,
+                available_by_index,
                 fragments,
             );
         }
@@ -169,39 +197,49 @@ pub(super) fn collect_fragments(
 
 fn collect_available(
     node: &Node,
+    index: usize,
     layout: &LayoutArena,
     available: Size,
-    available_by_node: &mut HashMap<NodeId, Size>,
+    available_by_index: &mut [Size],
 ) {
-    available_by_node.insert(node.id(), available);
+    available_by_index[index] = available;
     match &node.kind {
         NodeKind::Container(child) => {
+            let child_index = layout.index_table().child_indices(index)[0];
             collect_available(
                 child,
+                child_index,
                 layout,
                 crate::layout::content_available(node, available),
-                available_by_node,
+                available_by_index,
             );
         }
         NodeKind::Box { children } => {
             let child_available = crate::layout::content_available(node, available);
-            for child in children {
-                collect_available(child, layout, child_available, available_by_node);
+            for (child, child_index) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+            {
+                collect_available(child, child_index, layout, child_available, available_by_index);
             }
         }
         NodeKind::Stack { children, .. } => {
             let content_available = crate::layout::content_available(node, available);
             let axis = child_axis(node);
             let mut used_main = 0.0f32;
-            for (index, child) in children.iter().enumerate() {
+            for (position, (child, child_index)) in children
+                .iter()
+                .zip(layout.index_table().child_indices(index).iter().copied())
+                .enumerate()
+            {
                 let child_available =
                     crate::layout::remaining_available_for_axis(content_available, used_main, axis);
-                collect_available(child, layout, child_available, available_by_node);
+                collect_available(child, child_index, layout, child_available, available_by_index);
                 let child_frame = layout
                     .frame(child.id())
                     .expect("layout frame should exist for stack child");
                 used_main += main_axis_extent(child_frame.size, axis);
-                if index + 1 != children.len() {
+                if position + 1 != children.len() {
                     used_main += node.resolved_style().spacing;
                 }
             }
@@ -270,29 +308,35 @@ pub(super) fn find_node(node: &Node, node_id: NodeId) -> Option<&Node> {
 fn collect_stack_fragments(
     node: &Node,
     children: &[Node],
+    index: usize,
     layout: &LayoutArena,
     available: Size,
-    available_by_node: &mut HashMap<NodeId, Size>,
+    available_by_index: &mut [Size],
     fragments: &mut FragmentStore,
 ) {
     let content_available = crate::layout::content_available(node, available);
     let mut used_main = 0.0f32;
     let axis = child_axis(node);
-    for (index, child) in children.iter().enumerate() {
+    for (position, (child, child_index)) in children
+        .iter()
+        .zip(layout.index_table().child_indices(index).iter().copied())
+        .enumerate()
+    {
         let child_available =
             crate::layout::remaining_available_for_axis(content_available, used_main, axis);
         collect_fragments(
             child,
+            child_index,
             layout,
             child_available,
-            available_by_node,
+            available_by_index,
             fragments,
         );
         let child_frame = layout
             .frame(child.id())
             .expect("layout frame should exist for stack child");
         used_main += main_axis_extent(child_frame.size, axis);
-        if index + 1 != children.len() {
+        if position + 1 != children.len() {
             used_main += node.resolved_style().spacing;
         }
     }
@@ -356,28 +400,27 @@ mod tests {
         let measured =
             crate::layout::measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
         let layout = crate::layout::LayoutArena::from_measured(&root, &measured);
-        let available_by_node = available_map_from_layout(&root, viewport, &layout);
+        let available = available_slots_from_layout(&root, viewport, &layout);
+        let table = layout.index_table();
 
-        assert_eq!(available_by_node[&root.id()], viewport);
-        assert_eq!(available_by_node[&first_id], Size::new(60.0, 30.0));
-        assert_eq!(available_by_node[&second_id], Size::new(23.0, 30.0));
-        assert_eq!(available_by_node[&third_id], Size::new(0.0, 30.0));
+        assert_eq!(available[table.index_of(root.id()).unwrap()], viewport);
+        assert_eq!(available[table.index_of(first_id).unwrap()], Size::new(60.0, 30.0));
+        assert_eq!(available[table.index_of(second_id).unwrap()], Size::new(23.0, 30.0));
+        assert_eq!(available[table.index_of(third_id).unwrap()], Size::new(0.0, 30.0));
     }
 
     #[test]
     fn fragment_store_uses_ranges_over_shared_buffer() {
-        let id_a = next_node_id();
-        let id_b = next_node_id();
-        let mut store = FragmentStore::new();
+        let mut store = FragmentStore::new_with_len(2);
 
-        store.insert(id_a, vec![DrawCommand::Clear(Color::WHITE)]);
-        store.insert(id_b, vec![
+        store.insert_at(0, vec![DrawCommand::Clear(Color::WHITE)]);
+        store.insert_at(1, vec![
             DrawCommand::Clear(Color::BLACK),
             DrawCommand::Clear(Color::TRANSPARENT),
         ]);
 
-        assert_eq!(store.fragment_range(id_a), Some(CommandRange { start: 0, len: 1 }));
-        assert_eq!(store.fragment_range(id_b), Some(CommandRange { start: 1, len: 2 }));
+        assert_eq!(store.fragment_range_at(0), Some(CommandRange { start: 0, len: 1 }));
+        assert_eq!(store.fragment_range_at(1), Some(CommandRange { start: 1, len: 2 }));
         assert_eq!(store.active_command_count(), 3);
     }
 }
