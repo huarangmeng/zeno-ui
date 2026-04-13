@@ -8,7 +8,7 @@ use zeno_core::Platform;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
 #[cfg(feature = "mobile_ios")]
 use zeno_scene::{
-    FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer, Scene,
+    FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer, RetainedScene,
 };
 
 use crate::PlatformDescriptor;
@@ -70,15 +70,15 @@ impl IosMobilePresenter {
         }
     }
 
-    pub(crate) fn render(
+    pub(crate) fn render_retained(
         &self,
         surface: &RenderSurface,
-        scene: &Scene,
+        scene: &mut RetainedScene,
     ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::SkiaView(presenter) => presenter.render(surface, scene),
-            Self::SkiaMetalLayer(presenter) => presenter.render(surface, scene),
-            Self::ImpellerMetalLayer(presenter) => presenter.render(surface, scene),
+            Self::SkiaView(presenter) => presenter.render_retained(surface, scene),
+            Self::SkiaMetalLayer(presenter) => presenter.render_retained(surface, scene),
+            Self::ImpellerMetalLayer(presenter) => presenter.render_retained(surface, scene),
         }
     }
 }
@@ -114,8 +114,12 @@ impl IosSkiaViewPresenter {
         self.renderer.capabilities()
     }
 
-    fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
-        self.renderer.render(surface, scene)
+    fn render_retained(
+        &self,
+        surface: &RenderSurface,
+        scene: &mut RetainedScene,
+    ) -> Result<FrameReport, ZenoError> {
+        self.renderer.render_retained(surface, scene)
     }
 }
 
@@ -153,8 +157,12 @@ impl IosSkiaMetalLayerPresenter {
         self.renderer.capabilities()
     }
 
-    fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
-        self.renderer.render(surface, scene)
+    fn render_retained(
+        &self,
+        surface: &RenderSurface,
+        scene: &mut RetainedScene,
+    ) -> Result<FrameReport, ZenoError> {
+        self.renderer.render_retained(surface, scene)
     }
 }
 
@@ -184,7 +192,11 @@ impl IosImpellerMetalLayerPresenter {
         self.renderer.capabilities()
     }
 
-    fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
-        self.renderer.render(surface, scene)
+    fn render_retained(
+        &self,
+        surface: &RenderSurface,
+        scene: &mut RetainedScene,
+    ) -> Result<FrameReport, ZenoError> {
+        self.renderer.render_retained(surface, scene)
     }
 }

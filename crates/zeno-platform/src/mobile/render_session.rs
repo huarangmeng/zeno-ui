@@ -1,6 +1,6 @@
 use zeno_core::{Backend, Size, ZenoError, ZenoErrorCode};
 use zeno_scene::{
-    FrameReport, RenderCapabilities, RenderSceneUpdate, RenderSession, RenderSurface, Scene,
+    DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface, RetainedScene,
 };
 
 use crate::platform;
@@ -70,12 +70,32 @@ impl RenderSession for MobileRenderSession {
         }
     }
 
-    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
+    fn submit_retained_scene(
+        &mut self,
+        scene: &mut RetainedScene,
+        _dirty_bounds: Option<zeno_core::Rect>,
+        patch_upserts: usize,
+        patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::Android(session) => session.submit_scene(update),
-            Self::IosView(session) => session.submit_scene(update),
-            Self::IosMetalLayer(session) => session.submit_scene(update),
+            Self::Android(session) => session.submit_retained_scene(scene, patch_upserts, patch_removes),
+            Self::IosView(session) => session.submit_retained_scene(scene, patch_upserts, patch_removes),
+            Self::IosMetalLayer(session) => session.submit_retained_scene(scene, patch_upserts, patch_removes),
         }
+    }
+
+    fn submit_display_list(
+        &mut self,
+        _display_list: &DisplayList,
+        _dirty_bounds: Option<zeno_core::Rect>,
+        _patch_upserts: usize,
+        _patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError> {
+        Err(mobile_session_error(
+            ZenoErrorCode::WindowRendererUnavailable,
+            "submit_display_list",
+            "display list submit is not implemented for mobile sessions",
+        ))
     }
 }
 
@@ -84,7 +104,6 @@ pub(crate) struct AndroidNativeWindowSession {
     attachment: MobilePresenterAttachment,
     surface: RenderSurface,
     presenter: platform::android::AndroidMobilePresenter,
-    last_scene: Option<Scene>,
 }
 
 impl AndroidNativeWindowSession {
@@ -115,7 +134,6 @@ impl AndroidNativeWindowSession {
             attachment: attached.attachment,
             surface: attached.binding.surface.surface,
             presenter,
-            last_scene: None,
         })
     }
 
@@ -135,16 +153,20 @@ impl AndroidNativeWindowSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
-        let backend = self.presenter.kind();
-        let capabilities = self.presenter.capabilities();
-        submit_mobile_scene(
-            backend,
-            capabilities,
-            |surface, scene| self.presenter.render(surface, scene),
+    fn submit_retained_scene(
+        &mut self,
+        scene: &mut RetainedScene,
+        patch_upserts: usize,
+        patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError> {
+        submit_mobile_retained_scene(
+            self.presenter.kind(),
+            self.presenter.capabilities(),
+            |surface, snapshot| self.presenter.render(surface, snapshot),
             &self.surface,
-            &mut self.last_scene,
-            update,
+            scene,
+            patch_upserts,
+            patch_removes,
         )
     }
 }
@@ -154,7 +176,6 @@ pub(crate) struct IosViewSession {
     attachment: MobilePresenterAttachment,
     surface: RenderSurface,
     presenter: platform::ios::IosMobilePresenter,
-    last_scene: Option<Scene>,
 }
 
 impl IosViewSession {
@@ -176,7 +197,6 @@ impl IosViewSession {
             attachment: attached.attachment,
             surface: attached.binding.surface.surface,
             presenter,
-            last_scene: None,
         })
     }
 
@@ -196,16 +216,20 @@ impl IosViewSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
-        let backend = self.presenter.kind();
-        let capabilities = self.presenter.capabilities();
-        submit_mobile_scene(
-            backend,
-            capabilities,
-            |surface, scene| self.presenter.render(surface, scene),
+    fn submit_retained_scene(
+        &mut self,
+        scene: &mut RetainedScene,
+        patch_upserts: usize,
+        patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError> {
+        submit_mobile_retained_scene(
+            self.presenter.kind(),
+            self.presenter.capabilities(),
+            |surface, snapshot| self.presenter.render(surface, snapshot),
             &self.surface,
-            &mut self.last_scene,
-            update,
+            scene,
+            patch_upserts,
+            patch_removes,
         )
     }
 }
@@ -215,7 +239,6 @@ pub(crate) struct IosMetalLayerSession {
     attachment: MobilePresenterAttachment,
     surface: RenderSurface,
     presenter: platform::ios::IosMobilePresenter,
-    last_scene: Option<Scene>,
 }
 
 impl IosMetalLayerSession {
@@ -248,7 +271,6 @@ impl IosMetalLayerSession {
             attachment: attached.attachment,
             surface: attached.binding.surface.surface,
             presenter,
-            last_scene: None,
         })
     }
 
@@ -268,16 +290,20 @@ impl IosMetalLayerSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_scene(&mut self, update: &RenderSceneUpdate) -> Result<FrameReport, ZenoError> {
-        let backend = self.presenter.kind();
-        let capabilities = self.presenter.capabilities();
-        submit_mobile_scene(
-            backend,
-            capabilities,
-            |surface, scene| self.presenter.render(surface, scene),
+    fn submit_retained_scene(
+        &mut self,
+        scene: &mut RetainedScene,
+        patch_upserts: usize,
+        patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError> {
+        submit_mobile_retained_scene(
+            self.presenter.kind(),
+            self.presenter.capabilities(),
+            |surface, snapshot| self.presenter.render(surface, snapshot),
             &self.surface,
-            &mut self.last_scene,
-            update,
+            scene,
+            patch_upserts,
+            patch_removes,
         )
     }
 }
@@ -305,44 +331,26 @@ fn resize_mobile_surface(
     Ok(())
 }
 
-fn submit_mobile_scene(
+fn submit_mobile_retained_scene(
     backend: Backend,
     capabilities: RenderCapabilities,
-    render_scene: impl FnOnce(&RenderSurface, &Scene) -> Result<FrameReport, ZenoError>,
+    render_scene: impl FnOnce(
+        &RenderSurface,
+        &mut RetainedScene,
+    ) -> Result<FrameReport, ZenoError>,
     surface: &RenderSurface,
-    last_scene: &mut Option<Scene>,
-    update: &RenderSceneUpdate,
+    scene: &mut RetainedScene,
+    patch_upserts: usize,
+    patch_removes: usize,
 ) -> Result<FrameReport, ZenoError> {
-    let scene = update.snapshot(last_scene.as_ref()).ok_or_else(|| {
-        mobile_session_error(
-            ZenoErrorCode::GraphicsScenePatchWithoutBase,
-            "submit_scene",
-            "scene patch requires a previous snapshot",
-        )
-    })?;
-    let (patch_upserts, patch_removes) = patch_stats(update);
-    let mut report = render_scene(surface, &scene)?;
+    let mut report = render_scene(surface, scene)?;
     report.backend = backend;
-    report.command_count = scene.command_count();
-    report.resource_count = scene.resource_keys().len();
-    report.block_count = scene.blocks.len();
+    report.command_count = scene.packet_count();
+    report.resource_count = scene.resource_key_count();
+    report.block_count = scene.live_object_count();
     report.patch_upserts = patch_upserts;
     report.patch_removes = patch_removes;
     report.surface_id = surface.id.clone();
     let _ = capabilities;
-    *last_scene = Some(scene);
     Ok(report)
-}
-
-fn patch_stats(update: &RenderSceneUpdate) -> (usize, usize) {
-    match update {
-        RenderSceneUpdate::Full(scene) => (scene.objects.len(), 0),
-        RenderSceneUpdate::Delta { delta, .. } => (
-            delta.object_upserts.len()
-                + delta.object_reorders.len()
-                + delta.layer_upserts.len()
-                + delta.layer_reorders.len(),
-            delta.object_removes.len() + delta.layer_removes.len(),
-        ),
-    }
 }

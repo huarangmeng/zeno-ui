@@ -3,22 +3,21 @@
 use super::*;
 use crate::frontend::{FrontendObject, FrontendObjectTable, compile_object_table};
 use crate::layout::LayoutArena;
+use crate::render::fragments::node_fragment;
 
 pub(super) fn build_scene(
     root: &Node,
     layout: &LayoutArena,
     viewport: Size,
-    fragments: &crate::render::fragments::FragmentStore,
 ) -> Scene {
     let frontend = compile_object_table(root);
-    let (layers, objects) = build_layers_and_objects(&frontend, layout, fragments, viewport);
+    let (layers, objects) = build_layers_and_objects(&frontend, layout, viewport);
     Scene::from_layers_and_objects(viewport, None, layers, objects)
 }
 
 pub(super) fn build_layers_and_objects(
     frontend: &FrontendObjectTable,
     layout: &LayoutArena,
-    fragments: &crate::render::fragments::FragmentStore,
     viewport: Size,
 ) -> (Vec<LayerObject>, Vec<RenderObject>) {
     let mut layers = vec![LayerObject::root(viewport)];
@@ -35,7 +34,6 @@ pub(super) fn build_layers_and_objects(
             frontend.object(visit.index),
             visit.index,
             layout,
-            fragments,
             visit.current_layer_id,
             visit.current_layer_origin,
             visit.current_layer_world_transform,
@@ -94,7 +92,6 @@ fn scene_item_from_object(
     object: &FrontendObject,
     index: usize,
     layout: &LayoutArena,
-    fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
@@ -138,8 +135,9 @@ fn scene_item_from_object(
                 || style.blur.is_some()
                 || style.drop_shadow.is_some(),
         );
+        let fragment = node_fragment(object, slot);
         let mut next = order + 1;
-        let scene_object = fragments.clone_fragment_at(index).map(|fragment| {
+        let scene_object = (!fragment.is_empty()).then(|| {
             let object = RenderObject::new(
                 object.node_id.0,
                 layer_id,
@@ -160,7 +158,8 @@ fn scene_item_from_object(
         };
     }
 
-    let scene_object = fragments.clone_fragment_at(index).map(|fragment| {
+    let fragment = node_fragment(object, slot);
+    let scene_object = (!fragment.is_empty()).then(|| {
         let block_transform = Transform2D::translation(
             slot.frame.origin.x - current_layer_origin.x,
             slot.frame.origin.y - current_layer_origin.y,

@@ -45,9 +45,11 @@ impl DirtyTable {
     pub fn mark(&mut self, index: usize, bits: DirtyBits) {
         self.bits[index] = self.bits[index] | bits;
     }
+    #[allow(dead_code)]
     pub fn clear(&mut self, index: usize) {
         self.bits[index] = DirtyBits::NONE;
     }
+    #[allow(dead_code)]
     pub fn clear_all(&mut self) {
         for b in &mut self.bits { *b = DirtyBits::NONE; }
     }

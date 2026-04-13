@@ -15,23 +15,16 @@ fn layer_creating_paint_change_emits_direct_layer_patch() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let display_list = snapshot_display_list(
+        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
+    );
 
-    match submit {
-        SceneSubmit::Patch { patch, current } => {
-            assert!(
-                patch
-                    .layer_upserts
-                    .iter()
-                    .any(|layer| layer.layer_id == root_id)
-            );
-            assert!(patch.layer_removes.is_empty());
-            assert!(patch.upserts.iter().any(|block| block.node_id == root_id));
-            assert!(current.layers.iter().any(|layer| layer.layer_id == root_id));
-        }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
-    }
+    assert_eq!(display_list.stacking_contexts.len(), 1);
+    let context = &display_list.stacking_contexts[0];
+    assert_eq!(context.opacity, 0.5);
+    assert!(context.needs_offscreen);
+    let _ = root_id;
 }
 
 #[test]
@@ -50,26 +43,19 @@ fn adding_layer_rehomes_descendant_blocks_in_patch() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let display_list = snapshot_display_list(
+        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
+    );
 
-    match submit {
-        SceneSubmit::Patch { patch, current } => {
-            let text_block = patch
-                .upserts
-                .iter()
-                .find(|block| block.node_id == text_id)
-                .expect("text block upsert");
-            assert_eq!(text_block.layer_id, root_id);
-            let current_text_block = current
-                .blocks
-                .iter()
-                .find(|block| block.node_id == text_id)
-                .expect("current text block");
-            assert_eq!(current_text_block.layer_id, root_id);
-        }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
-    }
+    assert_eq!(display_list.stacking_contexts.len(), 1);
+    let text_item = display_list
+        .items
+        .iter()
+        .find(|item| matches!(item.payload, zeno_scene::DisplayItemPayload::TextRun(_)))
+        .expect("text item");
+    assert!(text_item.stacking_context.is_some());
+    let _ = (root_id, text_id);
 }
 
 #[test]
@@ -87,26 +73,19 @@ fn removing_layer_rehomes_descendant_blocks_in_patch() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let display_list = snapshot_display_list(
+        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
+    );
 
-    match submit {
-        SceneSubmit::Patch { patch, current } => {
-            let text_block = patch
-                .upserts
-                .iter()
-                .find(|block| block.node_id == text_id)
-                .expect("text block upsert");
-            assert_eq!(text_block.layer_id, Scene::ROOT_LAYER_ID);
-            let current_text_block = current
-                .blocks
-                .iter()
-                .find(|block| block.node_id == text_id)
-                .expect("current text block");
-            assert_eq!(current_text_block.layer_id, Scene::ROOT_LAYER_ID);
-        }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
-    }
+    let text_item = display_list
+        .items
+        .iter()
+        .find(|item| matches!(item.payload, zeno_scene::DisplayItemPayload::TextRun(_)))
+        .expect("text item");
+    assert!(text_item.stacking_context.is_none());
+    assert!(display_list.stacking_contexts.is_empty());
+    let _ = text_id;
 }
 
 #[test]
@@ -126,28 +105,22 @@ fn layer_effect_change_emits_direct_layer_upsert() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let display_list = snapshot_display_list(
+        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
+    );
 
-    match submit {
-        SceneSubmit::Patch { patch, .. } => {
-            let layer = patch
-                .layer_upserts
-                .iter()
-                .find(|layer| layer.layer_id == root_id)
-                .expect("layer upsert");
-            assert_eq!(layer.blend_mode, SceneBlendMode::Multiply);
-            assert_eq!(
-                layer.effects,
-                vec![SceneEffect::DropShadow {
-                    dx: 4.0,
-                    dy: 6.0,
-                    blur: 8.0,
-                    color: Color::rgba(0, 0, 0, 120),
-                }]
-            );
-            assert!(layer.offscreen);
-        }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
-    }
+    let context = display_list.stacking_contexts.first().expect("stacking context");
+    assert_eq!(context.blend_mode, zeno_scene::BlendMode::Multiply);
+    assert_eq!(
+        context.effects,
+        vec![zeno_scene::Effect::DropShadow {
+            dx: 4.0,
+            dy: 6.0,
+            blur: 8.0,
+            color: Color::rgba(0, 0, 0, 120),
+        }]
+    );
+    assert!(context.needs_offscreen);
+    let _ = root_id;
 }

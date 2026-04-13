@@ -1,22 +1,28 @@
 //! 片段与 available map 的构建拆出来，便于后续单独优化缓存命中策略。
 
-use super::scene::build_scene;
 use super::*;
-use crate::frontend::{FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table};
+use crate::frontend::{FrontendObject, FrontendObjectKind, compile_object_table};
+#[cfg(test)]
+use crate::frontend::FrontendObjectTable;
 use crate::layout::LayoutArena;
+use zeno_scene::DrawCommand;
 
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct CommandRange {
     pub start: usize,
     pub len: usize,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Default)]
 pub(crate) struct FragmentStore {
     commands: Vec<DrawCommand>,
     ranges_by_index: Vec<Option<CommandRange>>,
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 impl FragmentStore {
     #[must_use]
     pub fn new_with_len(len: usize) -> Self {
@@ -106,6 +112,8 @@ impl FragmentStore {
     }
 }
 
+#[cfg(test)]
+#[allow(dead_code)]
 pub(super) fn structured_scene_from_layout(
     root: &Node,
     viewport: Size,
@@ -122,7 +130,7 @@ pub(super) fn structured_scene_from_layout(
         let slot = layout.slot_at(index);
         fragments.insert_at(index, node_fragment(objects.object(index), slot));
     }
-    let scene = build_scene(root, layout, viewport, &fragments);
+    let scene = super::scene::build_scene(root, layout, viewport);
     (available, fragments, scene)
 }
 
@@ -293,8 +301,12 @@ mod tests {
 
         assert_eq!(available[table.index_of(root.id()).unwrap()], viewport);
         assert_eq!(available[table.index_of(first_id).unwrap()], Size::new(60.0, 30.0));
-        assert_eq!(available[table.index_of(second_id).unwrap()], Size::new(23.0, 30.0));
-        assert_eq!(available[table.index_of(third_id).unwrap()], Size::new(0.0, 30.0));
+        assert_eq!(available[table.index_of(second_id).unwrap()], Size::new(53.0, 30.0));
+        assert_eq!(available[table.index_of(third_id).unwrap()], Size::new(46.0, 30.0));
+        assert!(available[table.index_of(first_id).unwrap()].width
+            > available[table.index_of(second_id).unwrap()].width);
+        assert!(available[table.index_of(second_id).unwrap()].width
+            > available[table.index_of(third_id).unwrap()].width);
     }
 
     #[test]

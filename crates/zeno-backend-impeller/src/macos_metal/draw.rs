@@ -4,7 +4,7 @@ use metal::{
     MTLSize, MTLTextureType, MTLTextureUsage, RenderPipelineState, Texture,
 };
 use zeno_core::{Color, Point, Rect, Transform2D};
-use zeno_scene::{DrawCommand, Scene, Shape};
+use zeno_scene::{DrawCommand, Shape};
 use zeno_text::GlyphRasterCache;
 
 use super::text::rasterize_layout;
@@ -37,7 +37,7 @@ pub(super) struct CompositeVertex {
     pub color: [f32; 4],
 }
 
-// 该模块只负责把 Scene 的绘制命令翻译成 GPU 顶点与纹理资源。
+// 该模块只负责把 retained scene 中的绘制命令翻译成 GPU 顶点与纹理资源。
 pub(super) fn draw_commands(
     device: &Device,
     color_pipeline: &RenderPipelineState,
@@ -262,6 +262,35 @@ pub(super) fn make_text_texture(device: &Device, alpha: &[u8], width: u32, heigh
     texture
 }
 
+pub(super) fn make_rgba_texture(
+    device: &Device,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Texture {
+    let descriptor = metal::TextureDescriptor::new();
+    descriptor.set_texture_type(MTLTextureType::D2);
+    descriptor.set_pixel_format(MTLPixelFormat::RGBA8Unorm);
+    descriptor.set_width(width as u64);
+    descriptor.set_height(height as u64);
+    descriptor.set_usage(MTLTextureUsage::ShaderRead);
+    let texture = device.new_texture(&descriptor);
+    texture.replace_region(
+        MTLRegion {
+            origin: MTLOrigin { x: 0, y: 0, z: 0 },
+            size: MTLSize {
+                width: width as u64,
+                height: height as u64,
+                depth: 1,
+            },
+        },
+        0,
+        rgba.as_ptr().cast(),
+        (width * 4) as u64,
+    );
+    texture
+}
+
 pub(super) fn make_offscreen_texture(device: &Device, width: u64, height: u64) -> Texture {
     let descriptor = metal::TextureDescriptor::new();
     descriptor.set_texture_type(MTLTextureType::D2);
@@ -270,19 +299,6 @@ pub(super) fn make_offscreen_texture(device: &Device, width: u64, height: u64) -
     descriptor.set_height(height);
     descriptor.set_usage(MTLTextureUsage::RenderTarget | MTLTextureUsage::ShaderRead);
     device.new_texture(&descriptor)
-}
-
-pub(super) fn clear_color_for_scene(scene: &Scene) -> metal::MTLClearColor {
-    let clear = scene
-        .clear_color
-        .or_else(|| scene.clear_packet())
-        .unwrap_or(Color::WHITE);
-    metal::MTLClearColor::new(
-        f64::from(clear.red) / 255.0,
-        f64::from(clear.green) / 255.0,
-        f64::from(clear.blue) / 255.0,
-        f64::from(clear.alpha) / 255.0,
-    )
 }
 
 pub(super) fn color_to_f32(color: Color) -> [f32; 4] {

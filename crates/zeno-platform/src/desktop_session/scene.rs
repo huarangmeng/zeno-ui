@@ -1,16 +1,19 @@
+#![allow(dead_code)]
+
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
 use std::collections::{HashMap, HashSet};
 
 use zeno_core::{Color, Rect};
 use zeno_scene::{
-    Brush, DrawCommand, DrawPacketRange, LayerObject, RenderObject, RenderSceneUpdate, Scene,
-    SceneBlendMode, SceneTransform, Shape,
+    Brush, DrawCommand, DrawPacketRange, LayerObject, RenderObject, Scene, SceneBlendMode,
+    SceneTransform, Shape,
 };
 
-pub(super) fn patch_stats(update: &RenderSceneUpdate) -> (usize, usize) {
+#[cfg(test)]
+pub(super) fn patch_stats(update: &zeno_scene::RenderSceneUpdate) -> (usize, usize) {
     match update {
-        RenderSceneUpdate::Full(scene) => (scene.objects.len(), 0),
-        RenderSceneUpdate::Delta { delta, .. } => (
+        zeno_scene::RenderSceneUpdate::Full(scene) => (scene.objects.len(), 0),
+        zeno_scene::RenderSceneUpdate::Delta { delta, .. } => (
             delta.object_upserts.len()
                 + delta.object_reorders.len()
                 + delta.layer_upserts.len()
@@ -193,8 +196,8 @@ mod tests {
     use super::{default_clear_color, ensure_clear_command};
     use zeno_core::{Color, Rect, Size};
     use zeno_scene::{
-        Brush, DrawCommand, Scene, SceneBlendMode, SceneBlock, SceneClip, SceneLayer, SceneSubmit,
-        SceneTransform, Shape,
+        Brush, DrawCommand, LayerObject, RenderObject, RenderObjectDelta, RenderSceneUpdate, Scene,
+        SceneBlendMode, SceneClip, SceneTransform, Shape,
     };
 
     #[test]
@@ -205,10 +208,10 @@ mod tests {
 
     #[test]
     fn ensure_clear_command_prepends_fallback_clear_once() {
-        let scene = Scene::from_blocks(
+        let scene = Scene::from_objects(
             Size::new(200.0, 100.0),
             None,
-            vec![SceneBlock::new(
+            vec![RenderObject::new(
                 1,
                 Scene::ROOT_LAYER_ID,
                 0,
@@ -223,28 +226,28 @@ mod tests {
         );
         let prepared = ensure_clear_command(&scene, Color::rgba(10, 20, 30, 255));
         assert_eq!(prepared.clear_color, Some(Color::rgba(10, 20, 30, 255)));
-        assert_eq!(prepared.commands, scene.commands);
-        assert_eq!(prepared.command_count(), scene.command_count() + 1);
-        assert_eq!(prepared.blocks, scene.blocks);
+        assert_eq!(prepared.packets, scene.packets);
+        assert_eq!(prepared.packet_count(), scene.packet_count() + 1);
+        assert_eq!(prepared.objects, scene.objects);
         let prepared_again = ensure_clear_command(&prepared, Color::WHITE);
         assert_eq!(prepared_again, prepared);
     }
 
     #[test]
     fn patch_stats_report_full_and_patch_counts() {
-        let scene = Scene::from_blocks(Size::new(10.0, 10.0), None, Vec::new());
-        let full = super::patch_stats(&SceneSubmit::Full(scene.clone()));
-        let patch = super::patch_stats(&SceneSubmit::Patch {
-            patch: zeno_scene::ScenePatch {
+        let scene = Scene::from_objects(Size::new(10.0, 10.0), None, Vec::new());
+        let full = super::patch_stats(&RenderSceneUpdate::Full(scene.clone()));
+        let patch = super::patch_stats(&RenderSceneUpdate::Delta {
+            delta: RenderObjectDelta {
                 size: scene.size,
-                commands: Vec::new(),
-                base_layer_count: scene.layers.len(),
-                base_block_count: scene.blocks.len(),
+                packets: Vec::new(),
+                base_layer_count: scene.layer_graph.len(),
+                base_object_count: scene.objects.len(),
                 layer_upserts: Vec::new(),
                 layer_reorders: Vec::new(),
                 layer_removes: Vec::new(),
-                upserts: vec![
-                    SceneBlock::new(
+                object_upserts: vec![
+                    RenderObject::new(
                         1,
                         Scene::ROOT_LAYER_ID,
                         0,
@@ -253,7 +256,7 @@ mod tests {
                         None,
                         Vec::new(),
                     ),
-                    SceneBlock::new(
+                    RenderObject::new(
                         2,
                         Scene::ROOT_LAYER_ID,
                         1,
@@ -263,8 +266,8 @@ mod tests {
                         Vec::new(),
                     ),
                 ],
-                reorders: Vec::new(),
-                removes: vec![3],
+                object_reorders: Vec::new(),
+                object_removes: vec![3],
             },
             current: scene,
         });
@@ -275,9 +278,9 @@ mod tests {
 
     #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
     #[test]
-    fn partial_scene_keeps_only_dirty_layers_and_blocks() {
+    fn partial_scene_keeps_only_dirty_layers_and_objects() {
         let size = Size::new(200.0, 100.0);
-        let child_layer = SceneLayer::new(
+        let child_layer = LayerObject::new(
             10,
             10,
             Some(Scene::ROOT_LAYER_ID),
@@ -291,7 +294,7 @@ mod tests {
             Vec::new(),
             false,
         );
-        let untouched_layer = SceneLayer::new(
+        let untouched_layer = LayerObject::new(
             20,
             20,
             Some(Scene::ROOT_LAYER_ID),
@@ -305,7 +308,7 @@ mod tests {
             Vec::new(),
             false,
         );
-        let dirty_block = SceneBlock::new(
+        let dirty_object = RenderObject::new(
             101,
             10,
             0,
@@ -317,7 +320,7 @@ mod tests {
                 brush: Brush::Solid(Color::rgba(10, 20, 30, 255)),
             }],
         );
-        let untouched_block = SceneBlock::new(
+        let untouched_object = RenderObject::new(
             202,
             20,
             1,
@@ -329,40 +332,40 @@ mod tests {
                 brush: Brush::Solid(Color::rgba(200, 210, 220, 255)),
             }],
         );
-        let scene = Scene::from_layers_and_blocks(
+        let scene = Scene::from_layers_and_objects(
             size,
             Some(Color::WHITE),
-            vec![SceneLayer::root(size), child_layer.clone(), untouched_layer],
-            vec![dirty_block, untouched_block],
+            vec![LayerObject::root(size), child_layer.clone(), untouched_layer],
+            vec![dirty_object, untouched_object],
         );
 
         let partial =
             super::partial_scene_for_dirty_bounds(&scene, Rect::new(20.0, 10.0, 40.0, 30.0));
 
-        assert_eq!(partial.layers.len(), 2);
+        assert_eq!(partial.layer_graph.len(), 2);
         assert!(
             partial
-                .layers
+                .layer_graph
                 .iter()
                 .any(|layer| layer.layer_id == Scene::ROOT_LAYER_ID)
         );
         assert!(
             partial
-                .layers
+                .layer_graph
                 .iter()
                 .any(|layer| layer.layer_id == child_layer.layer_id)
         );
-        assert_eq!(partial.blocks.len(), 2);
-        assert_eq!(partial.blocks[0].node_id, u64::MAX);
-        assert_eq!(partial.blocks[1].node_id, 101);
-        assert_eq!(partial.blocks[1].layer_id, child_layer.layer_id);
+        assert_eq!(partial.objects.len(), 2);
+        assert_eq!(partial.objects[0].object_id, u64::MAX);
+        assert_eq!(partial.objects[1].object_id, 101);
+        assert_eq!(partial.objects[1].layer_id, child_layer.layer_id);
     }
 
     #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
     #[test]
-    fn partial_scene_replays_non_intersecting_blocks_for_offscreen_layers() {
+    fn partial_scene_replays_non_intersecting_objects_for_offscreen_layers() {
         let size = Size::new(240.0, 120.0);
-        let offscreen_layer = SceneLayer::new(
+        let offscreen_layer = LayerObject::new(
             30,
             30,
             Some(Scene::ROOT_LAYER_ID),
@@ -376,7 +379,7 @@ mod tests {
             Vec::new(),
             true,
         );
-        let leading_block = SceneBlock::new(
+        let leading_object = RenderObject::new(
             301,
             30,
             0,
@@ -388,7 +391,7 @@ mod tests {
                 brush: Brush::Solid(Color::rgba(10, 20, 30, 255)),
             }],
         );
-        let dirty_tail_block = SceneBlock::new(
+        let dirty_tail_object = RenderObject::new(
             302,
             30,
             1,
@@ -400,20 +403,20 @@ mod tests {
                 brush: Brush::Solid(Color::rgba(220, 80, 60, 255)),
             }],
         );
-        let scene = Scene::from_layers_and_blocks(
+        let scene = Scene::from_layers_and_objects(
             size,
             Some(Color::WHITE),
-            vec![SceneLayer::root(size), offscreen_layer.clone()],
-            vec![leading_block, dirty_tail_block],
+            vec![LayerObject::root(size), offscreen_layer.clone()],
+            vec![leading_object, dirty_tail_object],
         );
 
         let partial =
             super::partial_scene_for_dirty_bounds(&scene, Rect::new(108.0, 16.0, 24.0, 24.0));
-        let partial_ids: Vec<u64> = partial.blocks.iter().map(|block| block.node_id).collect();
+        let partial_ids: Vec<u64> = partial.objects.iter().map(|object| object.object_id).collect();
 
         assert!(
             partial
-                .layers
+                .layer_graph
                 .iter()
                 .any(|layer| layer.layer_id == offscreen_layer.layer_id)
         );
@@ -425,7 +428,7 @@ mod tests {
     #[test]
     fn partial_scene_replays_clipped_descendants_when_ancestor_clip_is_dirty() {
         let size = Size::new(240.0, 160.0);
-        let clipped_layer = SceneLayer::new(
+        let clipped_layer = LayerObject::new(
             10,
             10,
             Some(Scene::ROOT_LAYER_ID),
@@ -439,7 +442,7 @@ mod tests {
             Vec::new(),
             false,
         );
-        let nested_layer = SceneLayer::new(
+        let nested_layer = LayerObject::new(
             20,
             20,
             Some(10),
@@ -453,7 +456,7 @@ mod tests {
             Vec::new(),
             false,
         );
-        let leading_block = SceneBlock::new(
+        let leading_object = RenderObject::new(
             401,
             20,
             0,
@@ -465,7 +468,7 @@ mod tests {
                 brush: Brush::Solid(Color::WHITE),
             }],
         );
-        let clipped_block = SceneBlock::new(
+        let clipped_object = RenderObject::new(
             402,
             20,
             1,
@@ -477,16 +480,16 @@ mod tests {
                 brush: Brush::Solid(Color::rgba(200, 20, 30, 255)),
             }],
         );
-        let scene = Scene::from_layers_and_blocks(
+        let scene = Scene::from_layers_and_objects(
             size,
             Some(Color::WHITE),
-            vec![SceneLayer::root(size), clipped_layer, nested_layer],
-            vec![leading_block, clipped_block],
+            vec![LayerObject::root(size), clipped_layer, nested_layer],
+            vec![leading_object, clipped_object],
         );
 
         let partial =
             super::partial_scene_for_dirty_bounds(&scene, Rect::new(70.0, 70.0, 20.0, 20.0));
-        let partial_ids: Vec<u64> = partial.blocks.iter().map(|block| block.node_id).collect();
+        let partial_ids: Vec<u64> = partial.objects.iter().map(|object| object.object_id).collect();
 
         assert!(partial_ids.contains(&401));
         assert!(partial_ids.contains(&402));

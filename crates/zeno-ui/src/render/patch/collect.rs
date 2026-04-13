@@ -3,6 +3,7 @@
 use super::*;
 use crate::frontend::FrontendObjectTable;
 use crate::layout::LayoutArena;
+use crate::render::fragments::node_fragment;
 use crate::render::patch::diff::{
     layer_context_changed, push_block_patch, push_layer_patch, subtree_contains_updates,
 };
@@ -15,7 +16,6 @@ pub(super) fn collect_scene_patch_items(
     objects: &FrontendObjectTable,
     index: usize,
     layout: &LayoutArena,
-    fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
@@ -38,7 +38,6 @@ pub(super) fn collect_scene_patch_items(
             objects,
             index,
             layout,
-            fragments,
             current_layer_id,
             current_layer_origin,
             current_layer_world_transform,
@@ -96,7 +95,8 @@ pub(super) fn collect_scene_patch_items(
         } else {
             layer_upserts.push(current_layer.clone());
         }
-        if let Some(fragment) = fragments.clone_fragment_at(index) {
+        let fragment = node_fragment(object, slot);
+        if !fragment.is_empty() {
             let current_block = RenderObject::new(
                 object.node_id.0,
                 layer_id,
@@ -119,7 +119,6 @@ pub(super) fn collect_scene_patch_items(
                 objects,
                 child_index,
                 layout,
-                fragments,
                 layer_id,
                 slot.frame.origin,
                 world_transform,
@@ -140,7 +139,8 @@ pub(super) fn collect_scene_patch_items(
     }
 
     let force_descendant_update = force_update || previous_layers_by_id.contains_key(&object.node_id.0);
-    if let Some(fragment) = fragments.clone_fragment_at(index) {
+    let fragment = node_fragment(object, slot);
+    if !fragment.is_empty() {
         let block_transform = Transform2D::translation(
             slot.frame.origin.x - current_layer_origin.x,
             slot.frame.origin.y - current_layer_origin.y,
@@ -168,7 +168,6 @@ pub(super) fn collect_scene_patch_items(
             objects,
             child_index,
             layout,
-            fragments,
             current_layer_id,
             current_layer_origin,
             current_layer_world_transform,
@@ -191,7 +190,6 @@ fn collect_unchanged_scene_items(
     objects: &FrontendObjectTable,
     index: usize,
     layout: &LayoutArena,
-    fragments: &crate::render::fragments::FragmentStore,
     current_layer_id: u64,
     current_layer_origin: Point,
     current_layer_world_transform: Transform2D,
@@ -241,7 +239,8 @@ fn collect_unchanged_scene_items(
             push_layer_patch(previous, &current_layer, &mut Vec::new(), layer_reorders);
         }
         *next_order += 1;
-        if let Some(fragment) = fragments.clone_fragment_at(index) {
+        let fragment = node_fragment(object, slot);
+        if !fragment.is_empty() {
             let current_block = RenderObject::new(
                 object.node_id.0,
                 current_layer.layer_id,
@@ -262,7 +261,6 @@ fn collect_unchanged_scene_items(
                 objects,
                 child_index,
                 layout,
-                fragments,
                 current_layer.layer_id,
                 slot.frame.origin,
                 world_transform,
@@ -278,7 +276,8 @@ fn collect_unchanged_scene_items(
         return;
     }
 
-    if let Some(fragment) = fragments.clone_fragment_at(index) {
+    let fragment = node_fragment(object, slot);
+    if !fragment.is_empty() {
         let block_transform = Transform2D::translation(
             slot.frame.origin.x - current_layer_origin.x,
             slot.frame.origin.y - current_layer_origin.y,
@@ -304,7 +303,6 @@ fn collect_unchanged_scene_items(
             objects,
             child_index,
             layout,
-            fragments,
             current_layer_id,
             current_layer_origin,
             current_layer_world_transform,

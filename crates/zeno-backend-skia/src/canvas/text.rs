@@ -1,8 +1,11 @@
 use std::collections::HashMap;
 
 use skia_safe as sk;
+use zeno_core::{Color, Point};
 use zeno_scene::SceneResourceKey;
 use zeno_text::preferred_font_families;
+
+use crate::canvas::mapping::sk_color;
 
 #[derive(Default)]
 pub struct SkiaTextCache {
@@ -71,6 +74,40 @@ impl SkiaTextCache {
     }
 }
 
+pub(crate) fn draw_text_layout(
+    canvas: &sk::Canvas,
+    position: Point,
+    layout: &zeno_text::TextLayout,
+    color: Color,
+    text_cache: &mut SkiaTextCache,
+) {
+    let mut paint = sk::Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_color(sk_color(color));
+    let mut font = text_cache.resolve_font(
+        Some(SceneResourceKey(layout.cache_key().stable_hash())),
+        &layout.paragraph.font.family,
+        layout.paragraph.font_size.max(12.0),
+    );
+    font.set_edging(sk::font::Edging::AntiAlias);
+    let mut glyph_run = Vec::new();
+    for glyph in &layout.glyphs {
+        if glyph.glyph_id != 0 {
+            glyph_run.push(glyph);
+            continue;
+        }
+        flush_glyph_run(canvas, &glyph_run, position, &font, &paint);
+        glyph_run.clear();
+        canvas.draw_str(
+            glyph.glyph.to_string(),
+            (position.x + glyph.x, position.y + glyph.baseline_y),
+            &font,
+            &paint,
+        );
+    }
+    flush_glyph_run(canvas, &glyph_run, position, &font, &paint);
+}
+
 fn build_font(typeface: Option<sk::Typeface>, font_size: f32) -> sk::Font {
     match typeface {
         Some(typeface) => sk::Font::from_typeface(typeface, font_size),
@@ -91,4 +128,28 @@ fn resolve_typeface_uncached(requested_family: &str) -> Option<sk::Typeface> {
     }
 
     None
+}
+
+fn flush_glyph_run(
+    canvas: &sk::Canvas,
+    glyph_run: &[&zeno_text::ShapedGlyph],
+    position: Point,
+    font: &sk::Font,
+    paint: &sk::Paint,
+) {
+    if glyph_run.is_empty() {
+        return;
+    }
+    let glyph_ids: Vec<u16> = glyph_run.iter().map(|glyph| glyph.glyph_id).collect();
+    let positions: Vec<sk::Point> = glyph_run
+        .iter()
+        .map(|glyph| sk::Point::new(glyph.x, glyph.baseline_y))
+        .collect();
+    canvas.draw_glyphs_at(
+        &glyph_ids,
+        positions.as_slice(),
+        sk::Point::new(position.x, position.y),
+        font,
+        paint,
+    );
 }

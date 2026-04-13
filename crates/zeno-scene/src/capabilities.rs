@@ -6,6 +6,7 @@ pub struct RenderCapabilities {
     pub text_shaping: bool,
     pub filters: bool,
     pub offscreen_rendering: bool,
+    pub display_list_submit: bool,
 }
 
 impl RenderCapabilities {
@@ -16,6 +17,7 @@ impl RenderCapabilities {
             text_shaping: true,
             filters: false,
             offscreen_rendering: false,
+            display_list_submit: false,
         }
     }
 }

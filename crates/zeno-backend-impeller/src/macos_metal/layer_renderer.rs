@@ -1,25 +1,17 @@
-use std::collections::HashMap;
-
 use fontdue::Font;
 use metal::{CommandQueue, Device, MTLScissorRect, RenderPipelineState};
 use zeno_core::Transform2D;
-use zeno_scene::{LayerObject, RenderObject, Scene};
+use zeno_scene::{DrawOp, RetainedScene, Scene};
 use zeno_text::GlyphRasterCache;
 
 use super::{
     draw::draw_commands,
-    offscreen::{render_offscreen_layer, should_render_offscreen},
+    offscreen::{render_offscreen_layer_retained, should_render_offscreen},
     scissor::{clip_rect, intersect_scissor, scissor_for_rect},
 };
 
-enum LayerItem<'a> {
-    Object(&'a RenderObject),
-    Layer(u64),
-}
-
-// 负责按 layer/block 的顺序递归渲染 Scene，主文件只保留渲染入口。
 #[allow(clippy::too_many_arguments)]
-pub(super) fn render_scene_layers(
+pub(super) fn render_retained_scene_layers(
     device: &Device,
     queue: &CommandQueue,
     color_pipeline: &RenderPipelineState,
@@ -29,114 +21,94 @@ pub(super) fn render_scene_layers(
     composite_screen_pipeline: &RenderPipelineState,
     font: Option<&Font>,
     encoder: &metal::RenderCommandEncoderRef,
-    scene: &Scene,
+    scene: &mut RetainedScene,
     root_scissor: MTLScissorRect,
     viewport_width: f32,
     viewport_height: f32,
     glyph_cache: &GlyphRasterCache,
 ) {
-    let layers_by_id: HashMap<u64, &LayerObject> = scene
-        .layer_graph
-        .iter()
-        .map(|layer| (layer.layer_id, layer))
-        .collect();
-    let mut child_layers_by_parent: HashMap<u64, Vec<&LayerObject>> = HashMap::new();
-    let mut objects_by_layer: HashMap<u64, Vec<&RenderObject>> = HashMap::new();
-    for layer in &scene.layer_graph {
-        if let Some(parent_id) = layer.parent_layer_id {
-            child_layers_by_parent
-                .entry(parent_id)
-                .or_default()
-                .push(layer);
-        }
-    }
-    for object in &scene.objects {
-        objects_by_layer
-            .entry(object.layer_id)
-            .or_default()
-            .push(object);
-    }
-    let Some(root_layer) = layers_by_id.get(&Scene::ROOT_LAYER_ID).copied() else {
-        return;
-    };
-    render_layer(
-        device,
-        queue,
-        color_pipeline,
-        text_pipeline,
-        composite_pipeline,
-        composite_multiply_pipeline,
-        composite_screen_pipeline,
-        font,
-        encoder,
-        scene,
-        root_layer,
-        Transform2D::identity(),
-        1.0,
-        root_scissor,
-        &layers_by_id,
-        &child_layers_by_parent,
-        &objects_by_layer,
-        viewport_width,
-        viewport_height,
-        glyph_cache,
-    );
-    encoder.set_scissor_rect(root_scissor);
-}
+    // RetainedScene caches traversal order; clone ops to avoid borrow conflicts while drawing.
+    let ops = scene.draw_ops().to_vec();
+    let mut layer_stack: Vec<LayerState> = Vec::new();
+    let mut i = 0usize;
+    while i < ops.len() {
+        match ops[i] {
+            DrawOp::EnterLayer(layer_index) => {
+                let layer = scene.layer(layer_index);
+                // Root layer is always rendered in-place.
+                if layer.layer_id != Scene::ROOT_LAYER_ID && should_render_offscreen(layer) {
+                    let parent = layer_stack.last().copied().unwrap_or(LayerState {
+                        transform: Transform2D::identity(),
+                        opacity: 1.0,
+                        scissor: root_scissor,
+                    });
+                    let combined_transform = parent.transform.then(layer.transform);
+                    let combined_opacity = parent.opacity * layer.opacity;
+                    render_offscreen_layer_retained(
+                        device,
+                        queue,
+                        color_pipeline,
+                        text_pipeline,
+                        composite_pipeline,
+                        composite_multiply_pipeline,
+                        composite_screen_pipeline,
+                        font,
+                        encoder,
+                        scene,
+                        &ops,
+                        i,
+                        layer_index,
+                        combined_transform,
+                        combined_opacity,
+                        parent.scissor,
+                        viewport_width,
+                        viewport_height,
+                        glyph_cache,
+                    );
+                    // Skip the entire subtree; offscreen renderer already handled it.
+                    i = skip_subtree(&ops, i);
+                    encoder.set_scissor_rect(parent.scissor);
+                    continue;
+                }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_layer(
-    device: &Device,
-    queue: &CommandQueue,
-    color_pipeline: &RenderPipelineState,
-    text_pipeline: &RenderPipelineState,
-    composite_pipeline: &RenderPipelineState,
-    composite_multiply_pipeline: &RenderPipelineState,
-    composite_screen_pipeline: &RenderPipelineState,
-    font: Option<&Font>,
-    encoder: &metal::RenderCommandEncoderRef,
-    scene: &Scene,
-    layer: &LayerObject,
-    combined_transform: Transform2D,
-    combined_opacity: f32,
-    parent_scissor: MTLScissorRect,
-    layers_by_id: &HashMap<u64, &LayerObject>,
-    child_layers_by_parent: &HashMap<u64, Vec<&LayerObject>>,
-    objects_by_layer: &HashMap<u64, Vec<&RenderObject>>,
-    viewport_width: f32,
-    viewport_height: f32,
-    glyph_cache: &GlyphRasterCache,
-) {
-    let layer_scissor = layer.clip.map_or(parent_scissor, |clip| {
-        intersect_scissor(
-            parent_scissor,
-            scissor_for_rect(
-                clip_rect(clip, combined_transform),
-                viewport_width,
-                viewport_height,
-            ),
-        )
-    });
-    encoder.set_scissor_rect(layer_scissor);
-    let mut items = Vec::new();
-    if let Some(objects) = objects_by_layer.get(&layer.layer_id) {
-        for object in objects {
-            items.push((object.order, LayerItem::Object(*object)));
-        }
-    }
-    if let Some(children) = child_layers_by_parent.get(&layer.layer_id) {
-        for child in children {
-            items.push((child.order, LayerItem::Layer(child.layer_id)));
-        }
-    }
-    items.sort_by_key(|(order, _)| *order);
-    for (_, item) in items {
-        match item {
-            LayerItem::Object(object) => {
-                let object_transform = combined_transform.then(object.transform);
-                let object_scissor = object.clip.map_or(layer_scissor, |clip| {
+                let parent = layer_stack.last().copied().unwrap_or(LayerState {
+                    transform: Transform2D::identity(),
+                    opacity: 1.0,
+                    scissor: root_scissor,
+                });
+                let combined_transform = if layer.layer_id == Scene::ROOT_LAYER_ID {
+                    parent.transform
+                } else {
+                    parent.transform.then(layer.transform)
+                };
+                let layer_scissor = layer.clip.map_or(parent.scissor, |clip| {
                     intersect_scissor(
-                        layer_scissor,
+                        parent.scissor,
+                        scissor_for_rect(
+                            clip_rect(clip, combined_transform),
+                            viewport_width,
+                            viewport_height,
+                        ),
+                    )
+                });
+                encoder.set_scissor_rect(layer_scissor);
+                layer_stack.push(LayerState {
+                    transform: combined_transform,
+                    opacity: parent.opacity * layer.opacity,
+                    scissor: layer_scissor,
+                });
+                i += 1;
+            }
+            DrawOp::DrawObject(object_index) => {
+                let Some(state) = layer_stack.last().copied() else {
+                    i += 1;
+                    continue;
+                };
+                let object = scene.object(object_index);
+                let object_transform = state.transform.then(object.transform);
+                let object_scissor = object.clip.map_or(state.scissor, |clip| {
+                    intersect_scissor(
+                        state.scissor,
                         scissor_for_rect(
                             clip_rect(clip, object_transform),
                             viewport_width,
@@ -151,70 +123,53 @@ pub(super) fn render_layer(
                     text_pipeline,
                     font,
                     encoder,
-                    scene.packets_for_object(object),
+                    scene.packets_for_object_index(object_index),
                     viewport_width,
                     viewport_height,
                     object_transform,
-                    combined_opacity,
+                    state.opacity,
                     glyph_cache,
                 );
-                encoder.set_scissor_rect(layer_scissor);
+                encoder.set_scissor_rect(state.scissor);
+                i += 1;
             }
-            LayerItem::Layer(child_layer_id) => {
-                let Some(child_layer) = layers_by_id.get(&child_layer_id).copied() else {
-                    continue;
-                };
-                let child_transform = combined_transform.then(child_layer.transform);
-                let child_opacity = combined_opacity * child_layer.opacity;
-                if should_render_offscreen(child_layer) {
-                    render_offscreen_layer(
-                        device,
-                        queue,
-                        color_pipeline,
-                        text_pipeline,
-                        composite_pipeline,
-                        composite_multiply_pipeline,
-                        composite_screen_pipeline,
-                        font,
-                        encoder,
-                        scene,
-                        child_layer,
-                        child_transform,
-                        child_opacity,
-                        layer_scissor,
-                        layers_by_id,
-                        child_layers_by_parent,
-                        objects_by_layer,
-                        viewport_width,
-                        viewport_height,
-                        glyph_cache,
-                    );
-                    encoder.set_scissor_rect(layer_scissor);
-                } else {
-                    render_layer(
-                        device,
-                        queue,
-                        color_pipeline,
-                        text_pipeline,
-                        composite_pipeline,
-                        composite_multiply_pipeline,
-                        composite_screen_pipeline,
-                        font,
-                        encoder,
-                        scene,
-                        child_layer,
-                        child_transform,
-                        child_opacity,
-                        layer_scissor,
-                        layers_by_id,
-                        child_layers_by_parent,
-                        objects_by_layer,
-                        viewport_width,
-                        viewport_height,
-                        glyph_cache,
-                    );
-                }
+            DrawOp::ExitLayer(_) => {
+                let _ = layer_stack.pop();
+                let scissor = layer_stack
+                    .last()
+                    .copied()
+                    .map(|s| s.scissor)
+                    .unwrap_or(root_scissor);
+                encoder.set_scissor_rect(scissor);
+                i += 1;
             }
         }
     }
+    encoder.set_scissor_rect(root_scissor);
+}
+
+#[derive(Clone, Copy)]
+struct LayerState {
+    transform: Transform2D,
+    opacity: f32,
+    scissor: MTLScissorRect,
+}
+
+fn skip_subtree(ops: &[DrawOp], enter_index: usize) -> usize {
+    let mut depth = 0i32;
+    let mut i = enter_index;
+    while i < ops.len() {
+        match ops[i] {
+            DrawOp::EnterLayer(_) => depth += 1,
+            DrawOp::ExitLayer(_) => {
+                depth -= 1;
+                if depth == 0 {
+                    return i + 1;
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    ops.len()
 }

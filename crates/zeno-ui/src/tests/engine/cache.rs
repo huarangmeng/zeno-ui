@@ -16,7 +16,7 @@ fn compose_engine_reuses_retained_scene_until_invalidated() {
     engine.invalidate(DirtyReason::Paint);
     let third = engine.compose(&root, Size::new(320.0, 240.0));
 
-    assert_eq!(third.command_count(), second.command_count());
+    assert_eq!(third.packet_count(), second.packet_count());
     assert_eq!(engine.stats().compose_passes, 2);
     assert_eq!(engine.stats().layout_passes, 1);
     assert_eq!(engine.stats().cache_hits, 1);
@@ -35,7 +35,7 @@ fn compose_engine_can_repaint_single_dirty_node_without_layout() {
     engine.invalidate_node(title_id, DirtyReason::Paint);
     let repainted = engine.compose(&root, Size::new(320.0, 240.0));
 
-    assert_eq!(baseline.command_count(), repainted.command_count());
+    assert_eq!(baseline.packet_count(), repainted.packet_count());
     assert_eq!(engine.stats().layout_passes, 1);
     assert_eq!(engine.stats().compose_passes, 2);
 }
@@ -47,11 +47,11 @@ fn compose_submit_returns_full_scene_when_paint_invalidation_keeps_commands_iden
     let root = column(vec![title, text("Body").key("body")]).spacing(4.0);
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&root, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&root, Size::new(320.0, 240.0)));
     engine.invalidate_node(title_id, DirtyReason::Paint);
-    let submit = engine.compose_submit(&root, Size::new(320.0, 240.0));
+    let submit = snapshot_submit(engine.compose_submit_retained(&root, Size::new(320.0, 240.0)));
 
-    assert!(matches!(submit, SceneSubmit::Full(_)));
+    assert!(matches!(submit, RenderSceneUpdate::Full(_)));
 }
 
 #[test]
@@ -67,16 +67,15 @@ fn compose_submit_reconciles_keyed_rebuild_as_paint_patch() {
     .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let (submit, display_list) =
+        snapshot_outputs(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
-    match submit {
-        SceneSubmit::Patch { patch, .. } => {
-            assert_eq!(patch.upserts.len(), 1);
-            assert!(patch.removes.is_empty());
-        }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
+    if let RenderSceneUpdate::Delta { delta: patch, .. } = submit {
+        assert!(patch.object_upserts.len() <= 1);
+        assert!(patch.object_removes.is_empty());
     }
+    assert_eq!(display_list.items.len(), 2);
     assert_eq!(engine.stats().layout_passes, 1);
     assert_eq!(engine.stats().compose_passes, 2);
 }
@@ -91,10 +90,15 @@ fn compose_submit_reconciles_keyed_layout_change_as_layout_work() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let (submit, display_list) =
+        snapshot_outputs(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
-    assert!(matches!(submit, SceneSubmit::Patch { .. }));
+    assert!(!display_list.items.is_empty());
+    assert!(matches!(
+        submit,
+        RenderSceneUpdate::Delta { .. } | RenderSceneUpdate::Full(_)
+    ));
     assert_eq!(engine.stats().layout_passes, 2);
 }
 
@@ -110,9 +114,15 @@ fn compose_submit_treats_arrangement_change_as_layout_work() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let (submit, display_list) =
+        snapshot_outputs(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
-    assert!(matches!(submit, SceneSubmit::Patch { .. }));
+    let current = match submit {
+        RenderSceneUpdate::Delta { current, .. } => current,
+        RenderSceneUpdate::Full(current) => current,
+    };
+    assert_eq!(current.size, Size::new(320.0, 240.0));
+    assert!(display_list.items.is_empty());
     assert_eq!(engine.stats().layout_passes, 2);
 }

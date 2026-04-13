@@ -10,12 +10,10 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_impeller::MetalSceneRenderer;
 use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
-use zeno_scene::{FrameReport, RenderSceneUpdate, RenderSurface, Scene};
+use zeno_scene::{DisplayList, FrameReport, RenderSurface, RetainedScene};
 
 use super::desktop_session_error;
-use super::scene::{
-    default_clear_color, ensure_clear_command, partial_scene_for_dirty_bounds, patch_stats,
-};
+use super::scene::default_clear_color;
 use crate::NativeSurface;
 
 pub(super) struct ImpellerMetalSession {
@@ -24,7 +22,6 @@ pub(super) struct ImpellerMetalSession {
     renderer: MetalSceneRenderer,
     surface: RenderSurface,
     clear_color: Color,
-    last_scene: Option<Scene>,
 }
 
 impl ImpellerMetalSession {
@@ -70,7 +67,6 @@ impl ImpellerMetalSession {
             renderer,
             surface,
             clear_color: default_clear_color(config.transparent),
-            last_scene: None,
         })
     }
 
@@ -89,32 +85,13 @@ impl ImpellerMetalSession {
         Ok(())
     }
 
-    pub(super) fn submit_scene(
+    pub(super) fn submit_retained_scene(
         &mut self,
-        update: &RenderSceneUpdate,
+        scene: &mut RetainedScene,
+        dirty_bounds: Option<zeno_core::Rect>,
+        patch_upserts: usize,
+        patch_removes: usize,
     ) -> Result<FrameReport, ZenoError> {
-        let scene = update.snapshot(self.last_scene.as_ref()).ok_or_else(|| {
-            desktop_session_error(
-                ZenoErrorCode::GraphicsScenePatchWithoutBase,
-                "submit_scene",
-                "scene patch requires a previous snapshot",
-            )
-        })?;
-        let patch_is_empty =
-            matches!(update, RenderSceneUpdate::Delta { delta, .. } if delta.is_empty());
-        let scene = ensure_clear_command(&scene, self.clear_color);
-        if patch_is_empty {
-            self.last_scene = Some(scene.clone());
-            return Ok(FrameReport {
-                backend: Backend::Impeller,
-                command_count: scene.packet_count(),
-                resource_count: scene.resource_keys().len(),
-                block_count: scene.objects.len(),
-                patch_upserts: 0,
-                patch_removes: 0,
-                surface_id: self.surface.id.clone(),
-            });
-        }
         let drawable = self.layer.next_drawable().ok_or_else(|| {
             desktop_session_error(
                 ZenoErrorCode::SessionNextDrawableUnavailable,
@@ -122,60 +99,90 @@ impl ImpellerMetalSession {
                 "metal layer did not provide a drawable",
             )
         })?;
-        let dirty_bounds = match update {
-            RenderSceneUpdate::Full(_) => None,
-            RenderSceneUpdate::Delta { delta, .. } if self.last_scene.is_some() => {
-                delta.dirty_bounds(self.last_scene.as_ref())
-            }
-            RenderSceneUpdate::Delta { .. } => None,
-        };
+        scene.clear_color = Some(self.clear_color);
         zeno_session_log!(
             trace,
-            op = "submit_scene",
+            op = "submit_retained_scene",
             backend = ?Backend::Impeller,
             mode = if dirty_bounds.is_some() { "patch" } else { "full" },
             surface = %self.surface.id,
             scale_factor = self.window.scale_factor(),
             clear = ?self.clear_color,
             ?dirty_bounds,
-            "impeller macos scene submit"
+            "impeller macos retained scene submit"
         );
         if let Some(bounds) = dirty_bounds {
-            let partial_scene = partial_scene_for_dirty_bounds(&scene, bounds);
-            self.renderer.render_to_drawable_region_with_load(
+            self.renderer.render_retained_to_drawable_region_with_load(
                 drawable,
-                &partial_scene,
+                scene,
                 true,
                 Some(bounds),
             )?;
         } else {
-            self.renderer.render_to_drawable(drawable, &scene)?;
+            self.renderer.render_retained_to_drawable(drawable, scene)?;
         }
-        let (patch_upserts, patch_removes) = patch_stats(update);
         Ok(FrameReport {
             backend: Backend::Impeller,
             command_count: scene.packet_count(),
-            resource_count: scene.resource_keys().len(),
-            block_count: scene.objects.len(),
+            resource_count: scene.resource_key_count(),
+            block_count: scene.live_object_count(),
+            display_item_count: 0,
+            stacking_context_count: 0,
             patch_upserts,
             patch_removes,
             surface_id: self.surface.id.clone(),
         })
-        .map(|report| {
-            zeno_session_log!(
-                debug,
-                op = "submit_scene_report",
-                backend = ?Backend::Impeller,
-                mode = if dirty_bounds.is_some() { "patch" } else { "full" },
-                block_count = report.block_count,
-                patch_upserts = report.patch_upserts,
-                patch_removes = report.patch_removes,
-                resource_count = report.resource_count,
-                surface = %report.surface_id,
-                "impeller macos frame report"
-            );
-            self.last_scene = Some(scene);
-            report
+    }
+
+    pub(super) fn submit_display_list(
+        &mut self,
+        display_list: &DisplayList,
+        dirty_bounds: Option<zeno_core::Rect>,
+        patch_upserts: usize,
+        patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError> {
+        let drawable = self.layer.next_drawable().ok_or_else(|| {
+            desktop_session_error(
+                ZenoErrorCode::SessionNextDrawableUnavailable,
+                "next_drawable",
+                "metal layer did not provide a drawable",
+            )
+        })?;
+        zeno_session_log!(
+            trace,
+            op = "submit_display_list",
+            backend = ?Backend::Impeller,
+            mode = if dirty_bounds.is_some() { "patch" } else { "full" },
+            surface = %self.surface.id,
+            scale_factor = self.window.scale_factor(),
+            clear = ?self.clear_color,
+            ?dirty_bounds,
+            items = display_list.items.len(),
+            contexts = display_list.stacking_contexts.len(),
+            "impeller macos native display list submit"
+        );
+        if let Some(bounds) = dirty_bounds {
+            self.renderer.render_display_list_to_drawable_region_with_load(
+                drawable,
+                display_list,
+                Some(self.clear_color),
+                true,
+                Some(bounds),
+            )?;
+        } else {
+            self.renderer
+                .render_display_list_to_drawable(drawable, display_list, Some(self.clear_color))?;
+        }
+        Ok(FrameReport {
+            backend: Backend::Impeller,
+            command_count: display_list.items.len(),
+            resource_count: 0,
+            block_count: 0,
+            display_item_count: display_list.items.len(),
+            stacking_context_count: display_list.stacking_contexts.len(),
+            patch_upserts,
+            patch_removes,
+            surface_id: self.surface.id.clone(),
         })
     }
 

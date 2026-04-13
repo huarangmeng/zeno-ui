@@ -8,16 +8,7 @@ use super::*;
 use crate::layout::LayoutArena;
 
 pub(super) fn repaint_dirty_nodes(root: &Node, retained: &mut RetainedComposeTree) {
-    let _ = root;
-    let dirty_indices = retained.dirty_indices();
-    for index in dirty_indices {
-        let object = retained.objects().object(index).clone();
-        let slot = retained.layout().slot_at(index).clone();
-        retained.update_fragment(
-            object.node_id,
-            crate::render::fragments::node_fragment(&object, &slot),
-        );
-    }
+    let _ = (root, retained);
 }
 
 pub(super) fn update_fragments_for_nodes(
@@ -45,7 +36,7 @@ pub(super) fn patch_scene_for_nodes(
     update_ids: &HashSet<usize>,
 ) -> RenderObjectDelta {
     let _ = root;
-    let previous_scene = retained.scene().clone();
+    let previous_scene = retained.scene().snapshot_scene();
     let previous_layers_by_id: HashMap<u64, &LayerObject> = previous_scene
         .layer_graph
         .iter()
@@ -67,7 +58,6 @@ pub(super) fn patch_scene_for_nodes(
         retained.objects(),
         0,
         retained.layout(),
-        retained.fragments(),
         Scene::ROOT_LAYER_ID,
         Point::new(0.0, 0.0),
         Transform2D::identity(),
@@ -109,7 +99,6 @@ pub(super) fn patch_scene_for_nodes(
         object_reorders: reorders,
         object_removes: removes,
     };
-    let scene = previous_scene.apply_delta(&patch);
-    retained.replace_scene(scene);
+    retained.scene_mut().apply_delta_in_place(&patch);
     patch
 }

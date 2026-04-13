@@ -2,7 +2,7 @@
 
 ## 状态
 - 状态：进行中
-- 阶段判断：声明式节点树、最小布局、retained tree 与 `RenderSceneUpdate` 生成已经成立，当前已进入 retained runtime 的 MVP 阶段。已完成首批局部化与一致性修复：patch 路径与 full 路径的 layer/offscreen 判定已统一；paint-only、结构不变的 relayout，以及 keyed child insert/remove 的结构变更都将按脏子树生成 `RenderObjectDelta`；macOS Shell 在多层场景下也支持基于 dirty-bounds 的局部提交；keyed child reorder 已收敛为 order-only patch；layout/text dirty root 会尽量保留在叶子与局部分支；Stack reorder 场景已优先复用既有测量结果并仅在必要时扩大 patch。
+- 阶段判断：声明式节点树、最小布局、retained tree 与 retained scene update 生成已经成立，当前已进入 retained runtime 的 MVP 阶段。已完成首批局部化与一致性修复：patch 路径与 full 路径的 layer/offscreen 判定已统一；paint-only、结构不变的 relayout，以及 keyed child insert/remove 的结构变更都将按脏子树生成 `RenderObjectDelta`；macOS Shell 在多层场景下也支持基于 dirty-bounds 的局部提交；keyed child reorder 已收敛为 order-only patch；layout/text dirty root 会尽量保留在叶子与局部分支；Stack reorder 场景已优先复用既有测量结果并仅在必要时扩大 patch。
 
 ## Goal
 - 在渲染抽象之上增加一层声明式 UI 节点树。
@@ -13,16 +13,16 @@
 - `Node` 作为统一声明式节点。
 - `zeno-ui` 保留节点模型、modifier、layout、retained tree 与 scene 翻译；`text / container / box / column / row / spacer` 等首批基础构件已迁入 `zeno-foundation`，作为更接近 Compose Foundation 的稳定入口。
 - `Modifier` 链是节点装饰的唯一真相源；padding、background、foreground、font size、corner radius、spacing、fixed size、content alignment、stack arrangement、stack cross-axis alignment、clip、2D transform、transform origin、opacity、layer、effect 都在布局/绘制阶段按需解析。
-- `ComposeRenderer` / `ComposeEngine` 负责把节点树测量并转换为 `RenderSceneUpdate`。
+- `ComposeRenderer` / `ComposeEngine` 负责把节点树测量并转换为 retained scene update；测试侧如需旧式快照断言，会在测试 helper 里把 retained update 临时投影成 `RenderSceneUpdate`。
 - 当前文本测量依赖 `TextSystem`；默认门面路径可选择 fallback/system shaping 实现。
 
 ## Flow
 1. 上层通过声明式节点 API 构建组件树。
 2. retained tree 在 frontend compile 阶段将 `Node` 树编译为 `FrontendObjectTable`（稠密对象表），再由 `DirtyTable`（bitset + generation）管理 style/intrinsic/layout/paint/scene/resource 六种脏类型，决定是否走局部 relayout 或 paint-only 快路径。`NodeId` 仅在此阶段提供 keyed identity。
 3. `LayoutWorkQueue` 以两阶段工作队列（intrinsic + placement）驱动布局，按对象类型批处理（Text/Spacer/Container/Box/Stack），不再从 `Node` 树递归。
-4. `ComposeRenderer` 基于 `FrontendObjectTable` 显式栈遍历构建 `LayerObject + RenderObject` 的结构化 `RenderSceneUpdate`，layer 承载 subtree clip / transform / opacity / blend / effect / offscreen 语义，必要时生成 `RenderObjectDelta`。
+4. `ComposeRenderer` 基于 `FrontendObjectTable` 显式栈遍历构建 `LayerObject + RenderObject` 的 retained scene graph，layer 承载 subtree clip / transform / opacity / blend / effect / offscreen 语义，必要时生成 `RenderObjectDelta`。
 5. keyed rebuild 会先做 keyed identity 对照；reconcile 基于新旧 `FrontendObjectTable` 对象 diff，而非 Node 树递归；fragment 更新、scene patch 与 repaint 全部 index-first，`NodeId` 仅收敛在 keyed identity 边界。
-6. `UiRuntime` 与 runtime/shell 闭环会决定何时重组、何时提交；外部 app 只声明 `AppView`，不直接感知 `RenderSceneUpdate`。
+6. `UiRuntime` 与 runtime/shell 闭环会决定何时重组、何时提交；外部 app 只声明 `AppView`，不直接感知旧 `RenderSceneUpdate` 协议。
 
 ## 当前限制
 - keyed rebuild 目前依赖稳定 `NodeId`；未显式 `.key()` 的节点仍会退化为更粗粒度更新。

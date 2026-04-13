@@ -17,7 +17,8 @@ pub use modifier::{
 pub use node::NodeId;
 pub use node::{Node, NodeKind, SpacerNode, TextNode};
 pub use render::{
-    ComposeEngine, ComposeRenderer, ComposeStats, compose_scene, dump_layout, dump_scene,
+    ComposeEngine, ComposeRenderer, ComposeStats, RetainedComposeUpdate, compose_scene,
+    dump_layout, dump_scene,
 };
 pub use style::{Axis, EdgeInsets, Style};
 

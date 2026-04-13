@@ -1,0 +1,242 @@
+use zeno_core::{Point, Rect, Size, Transform2D};
+use zeno_scene::{
+    ClipChain, ClipChainId, ClipChainStore, ClipRegion, DisplayItem, DisplayItemId,
+    DisplayItemPayload, DisplayList, DisplayTextRun, Effect, RetainedDisplayList, SpatialNode,
+    SpatialNodeId, SpatialTree, StackingContext, StackingContextId,
+};
+
+use super::scene::node_creates_layer;
+use super::*;
+use crate::frontend::{FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table};
+use crate::layout::LayoutArena;
+
+pub(super) fn build_retained_display_list(
+    root: &Node,
+    layout: &LayoutArena,
+    viewport: Size,
+) -> RetainedDisplayList {
+    let frontend = compile_object_table(root);
+    build_retained_display_list_from_frontend(&frontend, layout, viewport)
+}
+
+#[must_use]
+pub(super) fn snapshot_display_list(
+    retained: &RetainedDisplayList,
+    viewport: Size,
+) -> DisplayList {
+    retained.snapshot(viewport)
+}
+
+fn build_retained_display_list_from_frontend(
+    objects: &FrontendObjectTable,
+    layout: &LayoutArena,
+    viewport: Size,
+) -> RetainedDisplayList {
+    let mut list = RetainedDisplayList::new(viewport);
+    let stacking_context_map = build_stacking_context_map(objects);
+    list.spatial_tree = SpatialTree {
+        nodes: build_spatial_tree(objects, layout),
+    };
+    list.clip_chains = ClipChainStore {
+        chains: build_clip_chains(objects, layout, viewport),
+    };
+    list.stacking_contexts = build_stacking_contexts(objects, layout);
+    for index in 0..objects.len() {
+        list.replace_object_items(
+            index,
+            items_for_object(objects, index, layout, stacking_context_map[index]),
+        );
+    }
+    list.compact_if_needed();
+    list
+}
+
+fn build_stacking_context_map(
+    objects: &FrontendObjectTable,
+) -> Vec<Option<StackingContextId>> {
+    let mut map = vec![None; objects.len()];
+    for index in 0..objects.len() {
+        let object = objects.object(index);
+        map[index] = if node_creates_layer(&object.style) {
+            Some(StackingContextId(index as u32))
+        } else {
+            objects.parent_index_of(index).and_then(|parent| map[parent])
+        };
+    }
+    map
+}
+
+fn build_spatial_tree(objects: &FrontendObjectTable, layout: &LayoutArena) -> Vec<SpatialNode> {
+    let mut nodes: Vec<SpatialNode> = Vec::with_capacity(objects.len());
+    for index in 0..objects.len() {
+        let slot = layout.slot_at(index);
+        let object = objects.object(index);
+        let parent_origin = objects
+            .parent_index_of(index)
+            .map(|parent| layout.slot_at(parent).frame.origin)
+            .unwrap_or(Point::new(0.0, 0.0));
+        let size = slot.frame.size;
+        let pivot = Point::new(
+            size.width * object.style.transform_origin.x,
+            size.height * object.style.transform_origin.y,
+        );
+        let local_transform = Transform2D::translation(-pivot.x, -pivot.y)
+            .then(object.style.transform)
+            .then(Transform2D::translation(pivot.x, pivot.y))
+            .then(Transform2D::translation(
+                slot.frame.origin.x - parent_origin.x,
+                slot.frame.origin.y - parent_origin.y,
+            ));
+        let world_transform = objects
+            .parent_index_of(index)
+            .map(|parent| nodes[parent].world_transform.then(local_transform))
+            .unwrap_or(local_transform);
+        nodes.push(SpatialNode {
+            id: SpatialNodeId(index as u32),
+            parent: objects.parent_index_of(index).map(|idx| SpatialNodeId(idx as u32)),
+            local_transform,
+            world_transform,
+            dirty: false,
+        });
+    }
+    nodes
+}
+
+fn build_clip_chains(
+    objects: &FrontendObjectTable,
+    layout: &LayoutArena,
+    viewport: Size,
+) -> Vec<ClipChain> {
+    let mut chains = vec![ClipChain {
+        id: ClipChainId(0),
+        spatial_id: SpatialNodeId(0),
+        clip: ClipRegion::Rect(Rect::new(0.0, 0.0, viewport.width, viewport.height)),
+        parent: None,
+    }];
+    for index in 0..objects.len() {
+        let object = objects.object(index);
+        if object.style.clip.is_some() {
+            let slot = layout.slot_at(index);
+            chains.push(ClipChain {
+                id: ClipChainId(index as u32 + 1),
+                spatial_id: SpatialNodeId(index as u32),
+                clip: ClipRegion::Rect(Rect::new(
+                    0.0,
+                    0.0,
+                    slot.frame.size.width,
+                    slot.frame.size.height,
+                )),
+                parent: Some(ClipChainId(0)),
+            });
+        }
+    }
+    chains
+}
+
+fn build_stacking_contexts(
+    objects: &FrontendObjectTable,
+    layout: &LayoutArena,
+) -> Vec<StackingContext> {
+    let mut contexts = Vec::new();
+    for index in 0..objects.len() {
+        let object = objects.object(index);
+        if !node_creates_layer(&object.style) {
+            continue;
+        }
+        let _slot = layout.slot_at(index);
+        let effects = effects_for_object(object);
+        contexts.push(StackingContext {
+            id: StackingContextId(index as u32),
+            spatial_id: SpatialNodeId(index as u32),
+            opacity: object.style.opacity,
+            blend_mode: match object.style.blend_mode {
+                BlendMode::Normal => zeno_scene::BlendMode::Normal,
+                BlendMode::Multiply => zeno_scene::BlendMode::Multiply,
+                BlendMode::Screen => zeno_scene::BlendMode::Screen,
+            },
+            effects,
+            needs_offscreen: object.style.layer
+                || object.style.opacity < 1.0
+                || object.style.blend_mode != BlendMode::Normal
+                || object.style.blur.is_some()
+                || object.style.drop_shadow.is_some(),
+        });
+    }
+    contexts
+}
+
+fn items_for_object(
+    objects: &FrontendObjectTable,
+    index: usize,
+    layout: &LayoutArena,
+    stacking_context: Option<StackingContextId>,
+) -> Vec<DisplayItem> {
+    let object = objects.object(index);
+    let slot = layout.slot_at(index);
+    let clip_chain_id = if object.style.clip.is_some() {
+        ClipChainId(index as u32 + 1)
+    } else {
+        ClipChainId(0)
+    };
+    let mut items = Vec::new();
+    if let Some(background) = object.style.background {
+        items.push(DisplayItem {
+            item_id: DisplayItemId((index as u32) * 2),
+            spatial_id: SpatialNodeId(index as u32),
+            clip_chain_id,
+            stacking_context,
+            visual_rect: slot.frame,
+            payload: if object.style.corner_radius > 0.0 {
+                DisplayItemPayload::FillRoundedRect {
+                    rect: Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height),
+                    radius: object.style.corner_radius,
+                    color: background,
+                }
+            } else {
+                DisplayItemPayload::FillRect {
+                    rect: Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height),
+                    color: background,
+                }
+            },
+        });
+    }
+    if matches!(&object.kind, FrontendObjectKind::Text(_)) {
+        let text_layout = slot
+            .text_layout
+            .as_ref()
+            .expect("text layout should exist for text display item")
+            .clone();
+        items.push(DisplayItem {
+            item_id: DisplayItemId((index as u32) * 2 + 1),
+            spatial_id: SpatialNodeId(index as u32),
+            clip_chain_id,
+            stacking_context,
+            visual_rect: slot.frame,
+            payload: DisplayItemPayload::TextRun(DisplayTextRun {
+                position: Point::new(
+                    object.style.padding.left,
+                    object.style.padding.top + text_layout.metrics.ascent,
+                ),
+                layout: text_layout,
+                color: object.style.foreground,
+            }),
+        });
+    }
+    items
+}
+
+fn effects_for_object(object: &FrontendObject) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    if let Some(blur) = object.style.blur {
+        effects.push(Effect::Blur { sigma: blur });
+    }
+    if let Some(shadow) = object.style.drop_shadow {
+        effects.push(Effect::DropShadow {
+            dx: shadow.dx,
+            dy: shadow.dy,
+            blur: shadow.blur,
+            color: shadow.color,
+        });
+    }
+    effects
+}

@@ -1,4 +1,5 @@
 mod draw;
+mod display_list_renderer;
 mod layer_renderer;
 mod offscreen;
 mod pipeline;
@@ -13,13 +14,14 @@ use metal::{
 };
 use shaders::SHADERS;
 use zeno_core::zeno_session_log;
-use zeno_core::{Rect, Transform2D, ZenoError, ZenoErrorCode};
-use zeno_scene::{Scene, SceneBlendMode};
+use zeno_core::{Color, Rect, Transform2D, ZenoError, ZenoErrorCode};
+use zeno_scene::{RetainedScene, SceneBlendMode};
 use zeno_text::{GlyphRasterCache, load_system_font};
 
 use self::{
-    draw::{clear_color_for_scene, draw_commands},
-    layer_renderer::render_scene_layers,
+    draw::draw_commands,
+    display_list_renderer::render_display_list_to_drawable_region_with_load,
+    layer_renderer::render_retained_scene_layers,
     pipeline::{create_color_pipeline, create_composite_pipeline, create_text_pipeline},
     scissor::effective_root_scissor,
 };
@@ -75,27 +77,59 @@ impl MetalSceneRenderer {
         })
     }
 
-    pub fn render_to_drawable(
+    pub fn render_retained_to_drawable(
         &mut self,
         drawable: &MetalDrawableRef,
-        scene: &Scene,
+        scene: &mut RetainedScene,
     ) -> Result<(), ZenoError> {
-        self.render_to_drawable_region_with_load(drawable, scene, false, None)
+        self.render_retained_to_drawable_region_with_load(drawable, scene, false, None)
     }
 
-    pub fn render_to_drawable_with_load(
+    pub fn render_display_list_to_drawable(
         &mut self,
         drawable: &MetalDrawableRef,
-        scene: &Scene,
+        display_list: &zeno_scene::DisplayList,
+        clear_color: Option<Color>,
+    ) -> Result<(), ZenoError> {
+        self.render_display_list_to_drawable_region_with_load(
+            drawable,
+            display_list,
+            clear_color,
+            false,
+            None,
+        )
+    }
+
+    pub fn render_display_list_to_drawable_region_with_load(
+        &mut self,
+        drawable: &MetalDrawableRef,
+        display_list: &zeno_scene::DisplayList,
+        clear_color: Option<Color>,
         preserve_contents: bool,
+        dirty_bounds: Option<Rect>,
     ) -> Result<(), ZenoError> {
-        self.render_to_drawable_region_with_load(drawable, scene, preserve_contents, None)
+        render_display_list_to_drawable_region_with_load(
+            &self.device,
+            &self.queue,
+            &self.color_pipeline,
+            &self.text_pipeline,
+            &self.composite_pipeline,
+            &self.composite_multiply_pipeline,
+            &self.composite_screen_pipeline,
+            self.font.as_ref(),
+            drawable,
+            display_list,
+            clear_color,
+            preserve_contents,
+            dirty_bounds,
+            &mut self.glyph_cache,
+        )
     }
 
-    pub fn render_to_drawable_region_with_load(
+    pub fn render_retained_to_drawable_region_with_load(
         &mut self,
         drawable: &MetalDrawableRef,
-        scene: &Scene,
+        scene: &mut RetainedScene,
         preserve_contents: bool,
         dirty_bounds: Option<Rect>,
     ) -> Result<(), ZenoError> {
@@ -107,7 +141,7 @@ impl MetalSceneRenderer {
                 ZenoError::invalid_configuration(
                     ZenoErrorCode::BackendImpellerRenderPassAttachmentMissing,
                     "backend.impeller",
-                    "render_to_drawable",
+                    "render_retained_to_drawable",
                     "missing metal color attachment",
                 )
             })?;
@@ -119,17 +153,26 @@ impl MetalSceneRenderer {
         });
         attachment.set_store_action(MTLStoreAction::Store);
         if !preserve_contents {
-            attachment.set_clear_color(clear_color_for_scene(scene));
+            let clear = scene
+                .clear_color
+                .or_else(|| scene.clear_packet())
+                .unwrap_or(zeno_core::Color::TRANSPARENT);
+            attachment.set_clear_color(metal::MTLClearColor::new(
+                f64::from(clear.red) / 255.0,
+                f64::from(clear.green) / 255.0,
+                f64::from(clear.blue) / 255.0,
+                f64::from(clear.alpha) / 255.0,
+            ));
         }
 
         let command_buffer = self.queue.new_command_buffer();
         zeno_session_log!(
             trace,
-            op = "impeller_encoder_root_begin",
+            op = "impeller_retained_encoder_root_begin",
             preserve_contents,
             ?dirty_bounds,
-            blocks = scene.objects.len(),
-            "impeller root encoder begin"
+            objects = scene.live_object_count(),
+            "impeller retained root encoder begin"
         );
         let encoder = command_buffer.new_render_command_encoder(&render_pass);
         let viewport_width = scene.size.width.max(1.0);
@@ -137,14 +180,14 @@ impl MetalSceneRenderer {
         let root_scissor = effective_root_scissor(dirty_bounds, viewport_width, viewport_height);
         encoder.set_scissor_rect(root_scissor);
 
-        if scene.objects.is_empty() {
+        if scene.live_object_count() == 0 {
             draw_commands(
                 &self.device,
                 &self.color_pipeline,
                 &self.text_pipeline,
                 self.font.as_ref(),
                 &encoder,
-                &scene.iter_packets().cloned().collect::<Vec<_>>(),
+                scene.packets(),
                 viewport_width,
                 viewport_height,
                 Transform2D::identity(),
@@ -152,7 +195,7 @@ impl MetalSceneRenderer {
                 &mut self.glyph_cache,
             );
         } else {
-            render_scene_layers(
+            render_retained_scene_layers(
                 &self.device,
                 &self.queue,
                 &self.color_pipeline,
@@ -172,8 +215,8 @@ impl MetalSceneRenderer {
 
         zeno_session_log!(
             trace,
-            op = "impeller_encoder_root_end",
-            "impeller root encoder end"
+            op = "impeller_retained_encoder_root_end",
+            "impeller retained root encoder end"
         );
         encoder.end_encoding();
         command_buffer.present_drawable(drawable);
@@ -192,12 +235,12 @@ mod tests {
         scissor::{effective_root_scissor, inverse_map_rect, rect_from_scissor},
     };
     use zeno_core::{Color, Rect, Size, Transform2D};
-    use zeno_scene::{Scene, SceneBlendMode, SceneEffect, SceneLayer};
+    use zeno_scene::{LayerObject, Scene, SceneBlendMode, SceneEffect};
 
     #[test]
     fn offscreen_layer_policy_skips_root_and_keeps_explicit_offscreen_layers() {
-        let root = SceneLayer::root(Size::new(200.0, 100.0));
-        let child = SceneLayer::new(
+        let root = LayerObject::root(Size::new(200.0, 100.0));
+        let child = LayerObject::new(
             10,
             10,
             Some(Scene::ROOT_LAYER_ID),
@@ -218,7 +261,7 @@ mod tests {
 
     #[test]
     fn effect_bounds_and_params_include_blur_and_shadow() {
-        let layer = SceneLayer::new(
+        let layer = LayerObject::new(
             10,
             10,
             Some(Scene::ROOT_LAYER_ID),

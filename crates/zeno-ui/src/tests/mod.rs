@@ -6,12 +6,14 @@ mod modifiers;
 mod smoke;
 
 use crate::{
-    Alignment, Arrangement, BlendMode, ComposeEngine, CrossAxisAlignment, DirtyReason,
+    Alignment, Arrangement, BlendMode, ComposeEngine, ComposeRenderer, CrossAxisAlignment, DirtyReason,
     EdgeInsets, Modifier, Node, NodeId, NodeKind, SpacerNode, TextNode, compose_scene,
-    dump_layout, dump_scene,
+    dump_layout, dump_scene, RetainedComposeUpdate,
 };
-use zeno_core::{Color, Size, Transform2D};
-use zeno_scene::{DrawCommand, Scene, SceneBlendMode, SceneClip, SceneEffect, SceneSubmit};
+use zeno_core::{Color, Point, Size, Transform2D};
+use zeno_scene::{
+    DisplayList, RenderSceneUpdate, Scene, SceneBlendMode, SceneClip, SceneEffect,
+};
 use zeno_text::FallbackTextSystem;
 
 // Local test helpers to avoid depending on zeno-foundation in this crate's tests,
@@ -78,3 +80,44 @@ mod helpers {
 }
 
 pub(crate) use helpers::*;
+
+pub(crate) fn snapshot_submit(update: RetainedComposeUpdate<'_>) -> RenderSceneUpdate {
+    match update {
+        RetainedComposeUpdate::Full { scene, .. } => RenderSceneUpdate::Full(scene.snapshot_scene()),
+        RetainedComposeUpdate::Delta { scene, delta, .. } => RenderSceneUpdate::Delta {
+            current: scene.snapshot_scene(),
+            delta,
+        },
+    }
+}
+
+pub(crate) fn snapshot_display_list(update: RetainedComposeUpdate<'_>) -> DisplayList {
+    match update {
+        RetainedComposeUpdate::Full { display_list, .. } => display_list,
+        RetainedComposeUpdate::Delta { display_list, .. } => display_list,
+    }
+}
+
+pub(crate) fn snapshot_outputs(update: RetainedComposeUpdate<'_>) -> (RenderSceneUpdate, DisplayList) {
+    match update {
+        RetainedComposeUpdate::Full {
+            scene,
+            display_list,
+            ..
+        } => {
+            (RenderSceneUpdate::Full(scene.snapshot_scene()), display_list)
+        }
+        RetainedComposeUpdate::Delta {
+            scene,
+            delta,
+            display_list,
+            ..
+        } => (
+            RenderSceneUpdate::Delta {
+                current: scene.snapshot_scene(),
+                delta,
+            },
+            display_list,
+        ),
+    }
+}

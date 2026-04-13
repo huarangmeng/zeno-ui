@@ -14,6 +14,8 @@ pub struct FrameReport {
     pub command_count: usize,
     pub resource_count: usize,
     pub block_count: usize,
+    pub display_item_count: usize,
+    pub stacking_context_count: usize,
     pub patch_upserts: usize,
     pub patch_removes: usize,
     pub surface_id: String,

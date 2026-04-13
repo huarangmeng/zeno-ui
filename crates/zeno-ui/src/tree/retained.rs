@@ -1,15 +1,14 @@
 //! RetainedComposeTree 持有增量合成所需的全部缓存快照。
 
 use zeno_core::Size;
-use zeno_scene::Scene;
+use zeno_scene::{RetainedDisplayList, RetainedScene, Scene};
 
 use crate::frontend::{DirtyBits, DirtyTable, FrontendObjectTable, compile_object_table};
-use crate::render::FragmentStore;
 use crate::{DirtyFlags, DirtyReason, Node, NodeId, layout::LayoutArena};
 
 use super::indexing::DenseNodeStore;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct RetainedComposeTree {
     pub(super) root: Node,
     pub(super) objects: FrontendObjectTable,
@@ -18,8 +17,8 @@ pub struct RetainedComposeTree {
     pub(super) dense_nodes: DenseNodeStore,
     pub(super) dirty_table: DirtyTable,
     pub(super) layout_dirty_roots: Vec<usize>,
-    pub(super) fragments_by_node: FragmentStore,
-    pub(super) scene: Scene,
+    pub(super) display_list: RetainedDisplayList,
+    pub(super) scene: RetainedScene,
     pub(super) dirty: DirtyFlags,
 }
 
@@ -30,7 +29,7 @@ impl RetainedComposeTree {
         viewport: Size,
         layout: LayoutArena,
         available: Vec<Size>,
-        fragments_by_node: FragmentStore,
+        display_list: RetainedDisplayList,
         scene: Scene,
     ) -> Self {
         let dense_nodes = DenseNodeStore::build(layout.object_table().clone(), available);
@@ -44,15 +43,25 @@ impl RetainedComposeTree {
             dense_nodes,
             dirty_table,
             layout_dirty_roots: Vec::new(),
-            fragments_by_node,
-            scene,
+            display_list,
+            scene: RetainedScene::from_scene(scene),
             dirty: DirtyFlags::clean(),
         }
     }
 
     #[must_use]
-    pub fn scene(&self) -> &Scene {
+    pub fn scene(&self) -> &RetainedScene {
         &self.scene
+    }
+
+    #[must_use]
+    pub fn scene_mut(&mut self) -> &mut RetainedScene {
+        &mut self.scene
+    }
+
+    #[must_use]
+    pub fn display_list(&self) -> &RetainedDisplayList {
+        &self.display_list
     }
 
     #[must_use]
@@ -71,12 +80,14 @@ impl RetainedComposeTree {
         viewport: Size,
         layout: LayoutArena,
         available: Vec<Size>,
-        fragments_by_node: FragmentStore,
+        display_list: RetainedDisplayList,
         scene: Scene,
     ) {
         let dense_nodes = DenseNodeStore::build(layout.object_table().clone(), available);
         let objects = compile_object_table(&root);
         let dirty_table = DirtyTable::new(layout.object_table().len());
+        let mut display_list = display_list;
+        display_list.generation = self.display_list.generation.saturating_add(1);
         self.root = root;
         self.objects = objects;
         self.viewport = viewport;
@@ -84,8 +95,8 @@ impl RetainedComposeTree {
         self.dense_nodes = dense_nodes;
         self.dirty_table = dirty_table;
         self.layout_dirty_roots.clear();
-        self.fragments_by_node = fragments_by_node;
-        self.scene = scene;
+        self.display_list = display_list;
+        self.scene = RetainedScene::from_scene(scene);
         self.dirty = DirtyFlags::clean();
     }
 
@@ -160,11 +171,6 @@ impl RetainedComposeTree {
     }
 
     #[must_use]
-    pub fn fragments(&self) -> &FragmentStore {
-        &self.fragments_by_node
-    }
-
-    #[must_use]
     pub fn objects(&self) -> &FrontendObjectTable {
         &self.objects
     }
@@ -184,13 +190,10 @@ impl RetainedComposeTree {
         self.dense_nodes.parent_index_of(index)
     }
 
-    pub fn update_fragment(&mut self, node_id: NodeId, fragment: Vec<zeno_scene::DrawCommand>) {
-        let index = self
-            .dense_nodes
-            .index_of(node_id)
-            .expect("layout index should exist for fragment update");
-        self.fragments_by_node.insert_at(index, fragment);
-        self.dirty_table.clear(index);
+    pub fn replace_display_list(&mut self, display_list: RetainedDisplayList) {
+        let mut display_list = display_list;
+        display_list.generation = self.display_list.generation.saturating_add(1);
+        self.display_list = display_list;
     }
 
     pub fn apply_layout_state(
@@ -200,12 +203,9 @@ impl RetainedComposeTree {
         layout: LayoutArena,
         available: Vec<Size>,
     ) {
-        let old_object_table = self.layout.object_table().clone();
         let new_object_table = layout.object_table().clone();
         let dense_nodes = DenseNodeStore::build(layout.object_table().clone(), available);
         let objects = compile_object_table(&root);
-        self.fragments_by_node
-            .remap(old_object_table.as_ref(), new_object_table.as_ref());
         self.root = root;
         self.objects = objects;
         self.viewport = viewport;
@@ -216,7 +216,8 @@ impl RetainedComposeTree {
         self.dirty = DirtyFlags::clean();
     }
 
-    pub fn replace_scene(&mut self, scene: Scene) {
+    #[allow(dead_code)]
+    pub fn replace_scene(&mut self, scene: RetainedScene) {
         self.scene = scene;
         self.dirty = DirtyFlags::clean();
         self.layout_dirty_roots.clear();

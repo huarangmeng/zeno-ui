@@ -1,29 +1,25 @@
-use zeno_core::{Backend, Platform, ZenoError, ZenoErrorCode};
+use zeno_core::{Backend, Platform, ZenoError};
 
-use crate::{BackendProbe, FrameReport, RenderCapabilities, RenderSceneUpdate, RenderSurface, Scene};
+use crate::{
+    BackendProbe, DisplayList, FrameReport, RenderCapabilities, RenderSurface, RetainedScene,
+};
 
 pub trait Renderer: Send + Sync {
     fn kind(&self) -> Backend;
 
     fn capabilities(&self) -> RenderCapabilities;
 
-    fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError>;
-
-    fn submit(
+    fn render_retained(
         &self,
         surface: &RenderSurface,
-        submit: &RenderSceneUpdate,
-    ) -> Result<FrameReport, ZenoError> {
-        let scene = submit.snapshot(None).ok_or_else(|| {
-            ZenoError::invalid_configuration(
-                ZenoErrorCode::GraphicsScenePatchWithoutBase,
-                "graphics.renderer",
-                "submit",
-                "scene patch requires a previous snapshot",
-            )
-        })?;
-        self.render(surface, &scene)
-    }
+        scene: &mut RetainedScene,
+    ) -> Result<FrameReport, ZenoError>;
+
+    fn render_display_list(
+        &self,
+        surface: &RenderSurface,
+        display_list: &DisplayList,
+    ) -> Result<FrameReport, ZenoError>;
 }
 
 pub trait RenderSession {
@@ -35,7 +31,21 @@ pub trait RenderSession {
 
     fn resize(&mut self, width: u32, height: u32) -> Result<(), ZenoError>;
 
-    fn submit_scene(&mut self, submit: &RenderSceneUpdate) -> Result<FrameReport, ZenoError>;
+    fn submit_retained_scene(
+        &mut self,
+        scene: &mut RetainedScene,
+        dirty_bounds: Option<zeno_core::Rect>,
+        patch_upserts: usize,
+        patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError>;
+
+    fn submit_display_list(
+        &mut self,
+        display_list: &DisplayList,
+        dirty_bounds: Option<zeno_core::Rect>,
+        patch_upserts: usize,
+        patch_removes: usize,
+    ) -> Result<FrameReport, ZenoError>;
 }
 
 pub trait GraphicsBackend: Send + Sync {

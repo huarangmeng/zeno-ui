@@ -3,11 +3,10 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use zeno_core::{Point, Size};
-use zeno_scene::Scene;
+use zeno_scene::{RetainedDisplayList, Scene};
 use zeno_text::FallbackTextSystem;
 
 use super::RetainedComposeTree;
-use crate::render::FragmentStore;
 use crate::{DirtyReason, Node, NodeId, NodeKind, TextNode, layout::measure_node};
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
@@ -128,7 +127,7 @@ fn retained_tree_for(root: Node, viewport: Size) -> RetainedComposeTree {
         viewport,
         layout,
         Vec::new(),
-        FragmentStore::new_with_len(0),
+        RetainedDisplayList::new(viewport),
         Scene::new(viewport),
     )
 }

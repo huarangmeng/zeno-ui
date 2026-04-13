@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::layout::LayoutArena;
-use crate::render::fragments::node_fragment;
 
 pub(super) fn update_fragments_for_nodes(
     node: &Node,
@@ -13,11 +12,7 @@ pub(super) fn update_fragments_for_nodes(
     retained: &mut RetainedComposeTree,
 ) -> bool {
     let _ = (node, index, available);
-    for &update_index in update_ids {
-        let object = retained.objects().object(update_index).clone();
-        let slot = layout.slot_at(update_index).clone();
-        retained.update_fragment(object.node_id, node_fragment(&object, &slot));
-    }
+    let _ = (layout, retained);
     !update_ids.is_empty()
 }
 
@@ -30,8 +25,9 @@ pub(super) fn scene_update_ids_for_relayout(
 ) -> HashSet<usize> {
     let _ = (node, index);
     let mut update_ids = fragment_update_ids.clone();
-    for current_index in 0..layout.object_table().len() {
-        let object = retained.objects().object(current_index);
+    let object_table = layout.object_table();
+    for current_index in 0..object_table.len() {
+        let object = object_table.object(current_index);
         let current_frame = layout.slot_at(current_index).frame;
         let changed = fragment_update_ids.contains(&current_index)
             || retained
@@ -39,10 +35,10 @@ pub(super) fn scene_update_ids_for_relayout(
                 .map_or(true, |previous| previous.frame != current_frame);
         if changed {
             update_ids.insert(current_index);
-            let mut parent = retained.parent_index_of(current_index);
+            let mut parent = object_table.parent_index_of(current_index);
             while let Some(parent_index) = parent {
                 update_ids.insert(parent_index);
-                parent = retained.parent_index_of(parent_index);
+                parent = object_table.parent_index_of(parent_index);
             }
         }
     }

@@ -1,6 +1,5 @@
 //! 调试输出与一次性 compose helper 放在这里，避免和增量路径纠缠。
 
-use super::fragments::structured_scene_from_layout;
 use super::*;
 use crate::layout::{MeasuredKind, MeasuredNode, measure_node};
 
@@ -11,7 +10,7 @@ pub(super) fn compose_scene_internal(
 ) -> Scene {
     let measured = measure_node(root, Point::new(0.0, 0.0), viewport, text_system);
     let layout = crate::layout::LayoutArena::from_measured(root, &measured);
-    structured_scene_from_layout(root, viewport, &layout).2
+    super::scene::build_scene(root, &layout, viewport)
 }
 
 pub(super) fn dump_scene(scene: &Scene) -> String {

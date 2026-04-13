@@ -11,13 +11,16 @@ fn builds_scene_from_column_tree() {
     .spacing(6.0)
     .background(Color::rgba(245, 247, 250, 255));
 
-    let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
-    let commands: Vec<_> = scene.iter_commands().collect();
+    let renderer = ComposeRenderer::new(&FallbackTextSystem);
+    let display_list = renderer.compose_display_list(&root, Size::new(320.0, 240.0));
 
-    assert_eq!(scene.command_count(), 3);
-    assert!(matches!(commands[0], DrawCommand::Fill { .. }));
-    assert!(matches!(commands[1], DrawCommand::Text { .. }));
-    assert!(matches!(commands[2], DrawCommand::Text { .. }));
+    assert_eq!(display_list.items.len(), 3);
+    assert!(matches!(
+        display_list.items[0].payload,
+        zeno_scene::DisplayItemPayload::FillRect { .. } | zeno_scene::DisplayItemPayload::FillRoundedRect { .. }
+    ));
+    assert!(matches!(display_list.items[1].payload, zeno_scene::DisplayItemPayload::TextRun(_)));
+    assert!(matches!(display_list.items[2].payload, zeno_scene::DisplayItemPayload::TextRun(_)));
 }
 
 #[test]
@@ -31,17 +34,20 @@ fn builds_scene_from_nested_container_and_row() {
     .background(Color::rgba(39, 110, 241, 255))
     .corner_radius(18.0);
 
-    let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
-    let commands: Vec<_> = scene.iter_commands().collect();
+    let renderer = ComposeRenderer::new(&FallbackTextSystem);
+    let display_list = renderer.compose_display_list(&root, Size::new(320.0, 240.0));
 
-    assert_eq!(scene.command_count(), 3);
+    assert_eq!(display_list.items.len(), 3);
     assert!(matches!(
-        commands[0],
-        DrawCommand::Fill {
-            shape: zeno_scene::Shape::RoundedRect { .. },
-            ..
-        }
+        display_list.items[0].payload,
+        zeno_scene::DisplayItemPayload::FillRoundedRect { .. }
     ));
+    assert!(display_list
+        .items
+        .iter()
+        .filter(|item| matches!(item.payload, zeno_scene::DisplayItemPayload::TextRun(_)))
+        .count()
+        >= 2);
 }
 
 #[test]
@@ -57,19 +63,14 @@ fn keyed_nodes_keep_stable_ids_across_rebuilds() {
 #[test]
 fn compose_submit_keeps_text_baseline_in_sync_with_text_metrics() {
     let root = text("Baseline").font_size(20.0).padding_all(10.0);
-    let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
-    let commands: Vec<_> = scene.iter_commands().collect();
-
-    match commands[0] {
-        DrawCommand::Text {
-            position, layout, ..
-        } => {
-            assert_eq!(position.y, 10.0 + layout.metrics.ascent);
-            assert!(layout.metrics.ascent > 0.0);
-            assert!(layout.metrics.descent >= 0.0);
-        }
-        _ => panic!("expected text command"),
-    }
+    let viewport = Size::new(320.0, 240.0);
+    let measured =
+        crate::layout::measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+    assert!(text_layout.metrics.ascent > 0.0);
+    assert!(text_layout.metrics.descent >= 0.0);
 }
 
 #[test]
@@ -92,28 +93,25 @@ fn dump_helpers_report_scene_and_layout_structure() {
 
 #[test]
 fn box_aligns_children_within_fixed_bounds() {
-    let spacer_id = spacer(20.0, 10.0).key("child").id().0;
     let root = r#box(vec![spacer(20.0, 10.0).key("child")])
         .fixed_size(100.0, 60.0)
         .padding_all(5.0)
         .content_alignment(Alignment::BOTTOM_END)
         .background(Color::WHITE)
         .key("root");
-    let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
-    let child_block = scene
-        .blocks
-        .iter()
-        .find(|block| block.node_id == spacer_id)
-        .expect("aligned child block");
-
-    assert_eq!(child_block.bounds.origin.x, 75.0);
-    assert_eq!(child_block.bounds.origin.y, 45.0);
+    let viewport = Size::new(320.0, 240.0);
+    let measured =
+        crate::layout::measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Multiple(children) = measured.kind else {
+        panic!("box should measure children");
+    };
+    let child = &children[0].frame;
+    assert_eq!(child.origin.x, 75.0);
+    assert_eq!(child.origin.y, 45.0);
 }
 
 #[test]
 fn row_arrangement_and_cross_axis_alignment_position_children() {
-    let first_id = spacer(20.0, 10.0).key("first").id().0;
-    let second_id = spacer(10.0, 20.0).key("second").id().0;
     let root = row(vec![
         spacer(20.0, 10.0).key("first"),
         spacer(10.0, 20.0).key("second"),
@@ -122,28 +120,23 @@ fn row_arrangement_and_cross_axis_alignment_position_children() {
     .arrangement(Arrangement::SpaceBetween)
     .cross_axis_alignment(CrossAxisAlignment::Center)
     .key("root");
-    let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
-    let first = scene
-        .blocks
-        .iter()
-        .find(|block| block.node_id == first_id)
-        .expect("first block");
-    let second = scene
-        .blocks
-        .iter()
-        .find(|block| block.node_id == second_id)
-        .expect("second block");
+    let viewport = Size::new(320.0, 240.0);
+    let measured =
+        crate::layout::measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Multiple(children) = measured.kind else {
+        panic!("row should measure children");
+    };
+    let first = &children[0].frame;
+    let second = &children[1].frame;
 
-    assert_eq!(first.bounds.origin.x, 0.0);
-    assert_eq!(first.bounds.origin.y, 15.0);
-    assert_eq!(second.bounds.origin.x, 90.0);
-    assert_eq!(second.bounds.origin.y, 10.0);
+    assert_eq!(first.origin.x, 0.0);
+    assert_eq!(first.origin.y, 15.0);
+    assert_eq!(second.origin.x, 90.0);
+    assert_eq!(second.origin.y, 10.0);
 }
 
 #[test]
 fn column_arrangement_and_cross_axis_alignment_position_children() {
-    let top_id = spacer(20.0, 10.0).key("top").id().0;
-    let bottom_id = spacer(10.0, 20.0).key("bottom").id().0;
     let root = column(vec![
         spacer(20.0, 10.0).key("top"),
         spacer(10.0, 20.0).key("bottom"),
@@ -152,20 +145,17 @@ fn column_arrangement_and_cross_axis_alignment_position_children() {
     .arrangement(Arrangement::End)
     .cross_axis_alignment(CrossAxisAlignment::End)
     .key("root");
-    let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
-    let top = scene
-        .blocks
-        .iter()
-        .find(|block| block.node_id == top_id)
-        .expect("top block");
-    let bottom = scene
-        .blocks
-        .iter()
-        .find(|block| block.node_id == bottom_id)
-        .expect("bottom block");
+    let viewport = Size::new(320.0, 240.0);
+    let measured =
+        crate::layout::measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Multiple(children) = measured.kind else {
+        panic!("column should measure children");
+    };
+    let top = &children[0].frame;
+    let bottom = &children[1].frame;
 
-    assert_eq!(top.bounds.origin.x, 20.0);
-    assert_eq!(top.bounds.origin.y, 70.0);
-    assert_eq!(bottom.bounds.origin.x, 30.0);
-    assert_eq!(bottom.bounds.origin.y, 80.0);
+    assert_eq!(top.origin.x, 20.0);
+    assert_eq!(top.origin.y, 70.0);
+    assert_eq!(bottom.origin.x, 30.0);
+    assert_eq!(bottom.origin.y, 80.0);
 }

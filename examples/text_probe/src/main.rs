@@ -3,7 +3,6 @@ use std::{env, fs, path::Path, process};
 use zeno_core::{Color, Size};
 use zeno_foundation::{column, container, text};
 use zeno_runtime::UiRuntime;
-use zeno_scene::RenderSceneUpdate;
 use zeno_text::{SystemTextSystem, TextSystem};
 use zeno_ui::{EdgeInsets, dump_layout, dump_scene, Node};
 
@@ -38,15 +37,24 @@ fn main() {
     for index in 0..iterations {
         last_root = build_root(&variant, index);
         runtime.set_root(last_root.clone());
-        if let Some(frame) = runtime.prepare_frame().expect("text probe frame") {
-            match frame.scene_update {
-                RenderSceneUpdate::Full(_) => full_frames += 1,
-                RenderSceneUpdate::Delta { .. } => patch_frames += 1,
+        if let Some(mut frame) = runtime.prepare_frame().expect("text probe frame") {
+            if frame.is_full() {
+                full_frames += 1;
+            } else {
+                patch_frames += 1;
             }
-            total_commands += frame.scene.packet_count();
-            total_blocks += frame.scene.objects.len();
+            total_commands += frame.scene_mut().packet_count();
+            total_blocks += frame.scene().live_object_count();
             if matches!(dump_mode.as_str(), "scene" | "all") && index + 1 == iterations {
-                println!("--- scene dump ---\n{}", dump_scene(&frame.scene));
+                let scene_snapshot = frame.scene().snapshot_scene();
+                println!("--- scene dump ---\n{}", dump_scene(&scene_snapshot));
+            }
+            if matches!(dump_mode.as_str(), "display_list" | "all") && index + 1 == iterations {
+                println!(
+                    "--- display list ---\nitems={} stacking_contexts={}",
+                    frame.display_list().items.len(),
+                    frame.display_list().stacking_contexts.len()
+                );
             }
         }
     }

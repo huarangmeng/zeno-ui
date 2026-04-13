@@ -1,5 +1,5 @@
 use zeno_core::{Backend, BackendUnavailableReason, Platform, ZenoError, ZenoErrorCode};
-use zeno_scene::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
+use zeno_scene::{BackendProbe, GraphicsBackend, Renderer};
 
 use crate::renderer::ImpellerRenderer;
 
@@ -17,7 +17,7 @@ impl GraphicsBackend for ImpellerBackend {
 
     fn probe(&self, platform: Platform) -> BackendProbe {
         match platform {
-            Platform::MacOs => BackendProbe::available(self.kind(), RenderCapabilities::minimal()),
+            Platform::MacOs => BackendProbe::available(self.kind(), ImpellerRenderer.capabilities()),
             Platform::Android | Platform::Ios | Platform::Windows | Platform::Linux => {
                 BackendProbe::unavailable(
                     self.kind(),
@@ -37,5 +37,22 @@ impl GraphicsBackend for ImpellerBackend {
 
     fn create_renderer(&self) -> Result<Box<dyn Renderer>, ZenoError> {
         Ok(Box::new(ImpellerRenderer))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ImpellerBackend;
+    use zeno_core::Platform;
+    use zeno_scene::GraphicsBackend;
+
+    #[test]
+    fn macos_probe_reports_display_list_submit_support() {
+        let probe = ImpellerBackend.probe(Platform::MacOs);
+
+        assert!(probe.available);
+        assert!(probe.capabilities.display_list_submit);
+        assert!(probe.capabilities.offscreen_rendering);
+        assert!(probe.capabilities.filters);
     }
 }

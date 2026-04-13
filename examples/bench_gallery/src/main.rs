@@ -3,7 +3,6 @@ use std::{env, fs, path::Path, process};
 use zeno_core::{Color, Size};
 use zeno_foundation::{column, container, row, spacer, text};
 use zeno_runtime::UiRuntime;
-use zeno_scene::RenderSceneUpdate;
 use zeno_text::{SystemTextSystem, TextSystem};
 use zeno_ui::{BlendMode, EdgeInsets, Node};
 
@@ -42,13 +41,14 @@ fn main() {
 
         for iteration in 0..iterations {
             runtime.set_root(scenario.build(iteration));
-            if let Some(frame) = runtime.prepare_frame().expect("bench gallery frame") {
-                match frame.scene_update {
-                    RenderSceneUpdate::Full(_) => full_frames += 1,
-                    RenderSceneUpdate::Delta { .. } => patch_frames += 1,
+            if let Some(mut frame) = runtime.prepare_frame().expect("bench gallery frame") {
+                if frame.is_full() {
+                    full_frames += 1;
+                } else {
+                    patch_frames += 1;
                 }
-                total_commands += frame.scene.packet_count();
-                total_blocks += frame.scene.objects.len();
+                total_commands += frame.scene_mut().packet_count();
+                total_blocks += frame.scene().live_object_count();
             }
         }
 

@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use zeno_core::{
     AppConfig, Backend, Color, Platform, RendererConfig, Size, WindowConfig, ZenoErrorCode,
 };
-use zeno_scene::{RenderSceneUpdate, Scene};
+use zeno_scene::{RetainedScene, Scene};
 use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
 
 use super::{
@@ -17,12 +17,10 @@ fn fake_handle(seed: usize) -> NonZeroUsize {
     NonZeroUsize::new(seed).expect("non-zero handle")
 }
 
-fn test_submit() -> RenderSceneUpdate {
-    RenderSceneUpdate::Full({
-        let mut scene = Scene::new(Size::new(120.0, 80.0));
-        scene.clear_color = Some(Color::WHITE);
-        scene
-    })
+fn test_scene() -> Scene {
+    let mut scene = Scene::new(Size::new(120.0, 80.0));
+    scene.clear_color = Some(Color::WHITE);
+    scene
 }
 
 #[test]
@@ -282,7 +280,10 @@ fn create_render_session_builds_android_session() {
         )
         .expect("android attached session");
     let mut session = create_mobile_render_session(attached).expect("android render session");
-    let report = session.submit_scene(&test_submit()).expect("submit scene");
+    let mut scene = RetainedScene::from_scene(test_scene());
+    let report = session
+        .submit_retained_scene(&mut scene, None, 0, 0)
+        .expect("submit scene");
 
     assert_eq!(session.kind(), Backend::Skia);
     assert_eq!(
@@ -315,7 +316,10 @@ fn prepare_render_session_builds_android_skia_session() {
         )
         .expect("android render session");
     session.resize(800, 600).expect("resize mobile session");
-    let report = session.submit_scene(&test_submit()).expect("submit scene");
+    let mut scene = RetainedScene::from_scene(test_scene());
+    let report = session
+        .submit_retained_scene(&mut scene, None, 0, 0)
+        .expect("submit scene");
 
     assert_eq!(session.kind(), Backend::Skia);
     assert_eq!(session.surface().size.width, 800.0);

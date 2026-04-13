@@ -1,5 +1,5 @@
 use zeno_core::{Backend, Platform, ZenoError};
-use zeno_scene::{BackendProbe, GraphicsBackend, RenderCapabilities, Renderer};
+use zeno_scene::{BackendProbe, GraphicsBackend, Renderer};
 
 #[cfg(feature = "native_skia")]
 use crate::renderer::SkiaRenderer as SelectedRenderer;
@@ -19,7 +19,7 @@ impl GraphicsBackend for SkiaBackend {
     }
 
     fn probe(&self, _platform: Platform) -> BackendProbe {
-        BackendProbe::available(self.kind(), RenderCapabilities::minimal())
+        BackendProbe::available(self.kind(), SelectedRenderer::default().capabilities())
     }
 
     fn create_renderer(&self) -> Result<Box<dyn Renderer>, ZenoError> {

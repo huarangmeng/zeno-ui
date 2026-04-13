@@ -8,6 +8,7 @@
 | `backend-selection.md` | 后端选择策略与平台矩阵 | 进行中 | 保留并更新平台状态 |
 | `platform-shell.md` | Shell 职责与宿主边界 | 进行中 | 保留并更新当前实现 |
 | `desktop-rendering.md` | 桌面渲染链路与双后端 presenter | 进行中 | 保留，并把下一步聚焦到 Impeller 非 macOS 与更细粒度局部提交 |
+| `display-list-compositor.md` | DisplayList + Compositor 终极渲染架构 | 设计定稿 | 保留，作为 `Scene MVP -> 下一代渲染协议` 的目标文档 |
 | `compose-layer.md` | 声明式组件层与 Scene 生成 | 已完成 MVP 主链路 | 保留，继续记录 retained / patch / dirty roots 的下一阶段优化 |
 | `logging.md` | 统一日志系统与级别约定 | 已完成首版方案 | 保留，作为后续扩展 subscriber 的基线 |
 | `error-codes.md` | 统一错误码与语义错误日志规范 | 已完成首版方案 | 保留，作为日志/遥测/告警的稳定主键表 |
@@ -35,6 +36,7 @@
 
 - `zeno-text` 已补上 system shaping（rustybuzz）、paragraph cache 与后端共享 glyph 栅格缓存；下一步转向更完整的 shaping 覆盖与更强的缓存/统计体系。
 - `zeno-scene::Scene` 已具备 layer/clip/transform/effect/offscreen 的 retained compositor MVP；下一步转向更复杂 filter graph、多级 effect fusion 与资源句柄化。
+- `display-list-compositor.md` 已明确下一代终极目标：把当前 `Scene + RenderSceneUpdate` 架构升级为 `DisplayList + Compositor`，将 Paint、Rasterize 与 Composite 三阶段彻底解耦。
 - Impeller 的真实能力目前仍主要集中在 macOS；移动端虽已有 presenter 适配层，但真实 swapchain / drawable / command buffer 生命周期仍未完全落地，非 macOS 桌面 Impeller 也仍未完成。
 - 已补 `examples/text_probe` 与 `examples/bench_gallery` 并提供 bench suite 脚本与 CI workflow；后续重点转向 golden image、更多场景覆盖与基线管理策略。
 
@@ -46,3 +48,4 @@
 - 路线图只记录真正还未完成的工作，不重复已经完成的架构拆分。
 - `performance-plan.md` 负责记录“下一阶段先做什么、为什么做、按什么顺序做”。
 - V2 对象表架构已在当前代码线上原地落地（`FrontendObjectTable` / `DirtyTable` / `LayoutWorkQueue` / 对象 diff reconcile / index-first scene & patch），相关设计已融入 `rendering-architecture.md`、`compose-layer.md` 与 `performance-plan.md`。
+- `display-list-compositor.md` 负责定义 Scene MVP 之后的代际升级目标；`rendering-architecture.md` 记录主架构总览，`performance-plan.md` 记录分阶段落地顺序。

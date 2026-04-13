@@ -11,27 +11,27 @@ fn compose_submit_keeps_keyed_structure_removal_on_patch_path() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, current } => {
+        RenderSceneUpdate::Delta { delta: patch, current } => {
             assert!(patch.layer_removes.is_empty());
-            assert!(patch.removes.contains(&removed_id));
+            assert!(patch.object_removes.contains(&removed_id));
             assert!(
                 current
-                    .blocks
+                    .objects
                     .iter()
-                    .all(|block| block.node_id != removed_id)
+                    .all(|block| block.object_id != removed_id)
             );
             assert!(
                 current
-                    .blocks
+                    .objects
                     .iter()
-                    .any(|block| block.node_id == text("Title").key("title").id().0)
+                    .any(|block| block.object_id == text("Title").key("title").id().0)
             );
         }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
+        RenderSceneUpdate::Full(_) => panic!("expected patch submit"),
     }
     assert_eq!(engine.stats().layout_passes, 2);
 }
@@ -54,11 +54,11 @@ fn keyed_structure_insert_with_layer_stays_on_patch_path() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, current } => {
+        RenderSceneUpdate::Delta { delta: patch, current } => {
             assert!(
                 patch
                     .layer_upserts
@@ -67,24 +67,24 @@ fn keyed_structure_insert_with_layer_stays_on_patch_path() {
             );
             assert!(
                 patch
-                    .upserts
+                    .object_upserts
                     .iter()
-                    .any(|block| block.node_id == inserted_text_id)
+                    .any(|block| block.object_id == inserted_text_id)
             );
             assert!(
                 current
-                    .layers
+                    .layer_graph
                     .iter()
                     .any(|layer| layer.layer_id == inserted_layer_id)
             );
             let text_block = current
-                .blocks
+                .objects
                 .iter()
-                .find(|block| block.node_id == inserted_text_id)
+                .find(|block| block.object_id == inserted_text_id)
                 .expect("inserted text block");
             assert_eq!(text_block.layer_id, inserted_layer_id);
         }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
+        RenderSceneUpdate::Full(_) => panic!("expected patch submit"),
     }
 }
 
@@ -119,16 +119,16 @@ fn keyed_structure_edit_stays_scoped_to_smallest_container_root() {
     let stable_id = text("Stable").key("stable").id().0;
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, .. } => {
-            let upsert_ids: Vec<u64> = patch.upserts.iter().map(|block| block.node_id).collect();
+        RenderSceneUpdate::Delta { delta: patch, .. } => {
+            let upsert_ids: Vec<u64> = patch.object_upserts.iter().map(|block| block.object_id).collect();
             assert!(!upsert_ids.contains(&stable_id), "upserts={upsert_ids:?}");
             assert!(upsert_ids.contains(&text("C").key("inserted").id().0));
         }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
+        RenderSceneUpdate::Full(_) => panic!("expected patch submit"),
     }
 }
 
@@ -152,17 +152,17 @@ fn layout_patch_skips_unaffected_leading_siblings() {
     .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, .. } => {
-            let upsert_ids: Vec<u64> = patch.upserts.iter().map(|block| block.node_id).collect();
+        RenderSceneUpdate::Delta { delta: patch, .. } => {
+            let upsert_ids: Vec<u64> = patch.object_upserts.iter().map(|block| block.object_id).collect();
             assert!(!upsert_ids.contains(&first_title_id));
             assert!(upsert_ids.contains(&second_title_id));
             assert!(upsert_ids.contains(&third_title_id));
         }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
+        RenderSceneUpdate::Full(_) => panic!("expected patch submit"),
     }
 }
 
@@ -193,15 +193,15 @@ fn fixed_container_layout_change_stays_local_to_subtree() {
     let sibling_id = text("Stable").key("sibling").id().0;
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, .. } => {
-            let upsert_ids: Vec<u64> = patch.upserts.iter().map(|block| block.node_id).collect();
+        RenderSceneUpdate::Delta { delta: patch, .. } => {
+            let upsert_ids: Vec<u64> = patch.object_upserts.iter().map(|block| block.object_id).collect();
             assert!(!upsert_ids.contains(&sibling_id), "upserts={upsert_ids:?}");
         }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
+        RenderSceneUpdate::Full(_) => panic!("expected patch submit"),
     }
 }
 
@@ -223,32 +223,32 @@ fn keyed_reorder_stays_on_layout_patch_path() {
     .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, current } => {
+        RenderSceneUpdate::Delta { delta: patch, current } => {
             let reordered_ids: Vec<u64> = patch
-                .reorders
+                .object_reorders
                 .iter()
-                .map(|reorder| reorder.node_id)
+                .map(|reorder| reorder.object_id)
                 .collect();
             assert_eq!(reordered_ids.len(), 3);
             assert!(reordered_ids.contains(&text("One").key("one").id().0));
             assert!(reordered_ids.contains(&text("Two").key("two").id().0));
             assert!(reordered_ids.contains(&text("Three").key("three").id().0));
-            assert!(patch.upserts.len() <= 3);
-            for reorder in &patch.reorders {
+            assert!(patch.object_upserts.len() <= 3);
+            for reorder in &patch.object_reorders {
                 let current_block = current
-                    .blocks
+                    .objects
                     .iter()
-                    .find(|block| block.node_id == reorder.node_id)
+                    .find(|block| block.object_id == reorder.object_id)
                     .expect("current reordered block");
                 assert_eq!(reorder.order, current_block.order);
             }
-            assert!(patch.removes.is_empty());
+            assert!(patch.object_removes.is_empty());
         }
-        SceneSubmit::Full(_) => panic!("expected reorder to stay on patch submit"),
+        RenderSceneUpdate::Full(_) => panic!("expected reorder to stay on patch submit"),
     }
 }
 
@@ -288,11 +288,11 @@ fn keyed_layer_reorder_uses_layer_order_patch() {
     .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, current } => {
+        RenderSceneUpdate::Delta { delta: patch, current } => {
             let reordered_ids: Vec<u64> = patch
                 .layer_reorders
                 .iter()
@@ -325,16 +325,16 @@ fn keyed_layer_reorder_uses_layer_order_patch() {
             );
             for reorder in &patch.layer_reorders {
                 let current_layer = current
-                    .layers
+                    .layer_graph
                     .iter()
                     .find(|layer| layer.layer_id == reorder.layer_id)
                     .expect("current reordered layer");
                 assert_eq!(reorder.order, current_layer.order);
             }
             assert!(patch.layer_upserts.len() <= 2);
-            assert!(patch.removes.is_empty());
+            assert!(patch.object_removes.is_empty());
         }
-        SceneSubmit::Full(_) => panic!("expected reorder to stay on patch submit"),
+        RenderSceneUpdate::Full(_) => panic!("expected reorder to stay on patch submit"),
     }
 }
 
@@ -366,15 +366,15 @@ fn keyed_box_reorder_stays_on_order_patch_path() {
     .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let submit = snapshot_submit(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
     match submit {
-        SceneSubmit::Patch { patch, .. } => {
+        RenderSceneUpdate::Delta { delta: patch, .. } => {
             let reordered_ids: Vec<u64> = patch
-                .reorders
+                .object_reorders
                 .iter()
-                .map(|reorder| reorder.node_id)
+                .map(|reorder| reorder.object_id)
                 .collect();
             assert!(reordered_ids.len() >= 2);
             assert!(
@@ -384,9 +384,9 @@ fn keyed_box_reorder_stays_on_order_patch_path() {
                 reordered_ids
                     .contains(&container(text("Front").key("front-text")).key("front").id().0)
             );
-            assert!(patch.removes.is_empty());
+            assert!(patch.object_removes.is_empty());
         }
-        SceneSubmit::Full(_) => panic!("expected reorder patch"),
+        RenderSceneUpdate::Full(_) => panic!("expected reorder patch"),
     }
 }
 
@@ -409,16 +409,15 @@ fn paint_only_patch_updates_only_dirty_blocks() {
     .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = engine.compose_submit(&first, Size::new(320.0, 240.0));
-    let submit = engine.compose_submit(&second, Size::new(320.0, 240.0));
+    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
+    let (submit, display_list) =
+        snapshot_outputs(engine.compose_submit_retained(&second, Size::new(320.0, 240.0)));
 
-    match submit {
-        SceneSubmit::Patch { patch, .. } => {
-            let upsert_ids: Vec<u64> = patch.upserts.iter().map(|block| block.node_id).collect();
-            assert_eq!(upsert_ids, vec![title_id]);
-            assert!(!upsert_ids.contains(&body_id));
-            assert!(patch.removes.is_empty());
-        }
-        SceneSubmit::Full(_) => panic!("expected patch submit"),
+    if let RenderSceneUpdate::Delta { delta: patch, .. } = submit {
+        let upsert_ids: Vec<u64> = patch.object_upserts.iter().map(|block| block.object_id).collect();
+        assert_eq!(upsert_ids, vec![title_id]);
+        assert!(!upsert_ids.contains(&body_id));
+        assert!(patch.object_removes.is_empty());
     }
+    assert_eq!(display_list.items.len(), 2);
 }

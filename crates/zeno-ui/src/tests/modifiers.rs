@@ -63,19 +63,13 @@ fn stack_layout_modifiers_resolve_into_style() {
 
 #[test]
 fn font_size_modifier_drives_text_layout_metrics() {
-    let scene = compose_scene(
-        &text("Hello").modifier(Modifier::FontSize(24.0)),
-        Size::new(320.0, 240.0),
-        &FallbackTextSystem,
-    );
-    let commands: Vec<_> = scene.iter_commands().collect();
-
-    match commands[0] {
-        DrawCommand::Text { layout, .. } => {
-            assert_eq!(layout.paragraph.font_size, 24.0);
-        }
-        _ => panic!("expected text command"),
-    }
+    let node = text("Hello").modifier(Modifier::FontSize(24.0));
+    let viewport = Size::new(320.0, 240.0);
+    let measured = crate::layout::measure_node(&node, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+    assert_eq!(text_layout.paragraph.font_size, 24.0);
 }
 
 #[test]
@@ -113,11 +107,11 @@ fn clip_and_transform_modifiers_emit_structured_scene_state() {
         .key("root");
     let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
     let layer = scene
-        .layers
+        .layer_graph
         .iter()
         .find(|layer| layer.layer_id == root.id().0)
         .expect("layer");
-    let block = &scene.blocks[0];
+    let block = &scene.objects[0];
 
     assert_eq!(layer.transform, Transform2D::translation(16.0, 24.0));
     assert_eq!(
@@ -140,7 +134,7 @@ fn scale_and_rotate_modifiers_emit_affine_transform_bounds() {
         .key("root");
     let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
     let layer = scene
-        .layers
+        .layer_graph
         .iter()
         .find(|layer| layer.layer_id == root.id().0)
         .expect("layer");
@@ -163,7 +157,7 @@ fn transform_origin_changes_affine_transform_pivot() {
         .key("root");
     let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
     let layer = scene
-        .layers
+        .layer_graph
         .iter()
         .find(|layer| layer.layer_id != Scene::ROOT_LAYER_ID)
         .expect("layer");
@@ -190,7 +184,7 @@ fn opacity_and_layer_modifiers_create_compositor_layer() {
         .key("root");
     let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
     let layer = scene
-        .layers
+        .layer_graph
         .iter()
         .find(|layer| layer.layer_id == root.id().0)
         .expect("opacity layer");
@@ -199,7 +193,7 @@ fn opacity_and_layer_modifiers_create_compositor_layer() {
     assert!(layer.offscreen);
     assert!(
         scene
-            .blocks
+            .objects
             .iter()
             .all(|block| block.layer_id == root.id().0)
     );
@@ -216,7 +210,7 @@ fn effect_modifiers_emit_layer_blend_and_effect_stack() {
         .key("root");
     let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
     let layer = scene
-        .layers
+        .layer_graph
         .iter()
         .find(|layer| layer.layer_id == root.id().0)
         .expect("effect layer");

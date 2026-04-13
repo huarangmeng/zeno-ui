@@ -8,7 +8,7 @@ use zeno_core::Platform;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
 #[cfg(feature = "mobile_android")]
 use zeno_scene::{
-    FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer, Scene,
+    FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer, RetainedScene,
 };
 
 use crate::PlatformDescriptor;
@@ -60,14 +60,14 @@ impl AndroidMobilePresenter {
         }
     }
 
-    pub(crate) fn render(
+    pub(crate) fn render_retained(
         &self,
         surface: &RenderSurface,
-        scene: &Scene,
+        scene: &mut RetainedScene,
     ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::SkiaNativeWindow(presenter) => presenter.render(surface, scene),
-            Self::ImpellerNativeWindow(presenter) => presenter.render(surface, scene),
+            Self::SkiaNativeWindow(presenter) => presenter.render_retained(surface, scene),
+            Self::ImpellerNativeWindow(presenter) => presenter.render_retained(surface, scene),
         }
     }
 }
@@ -103,8 +103,12 @@ impl AndroidSkiaNativeWindowPresenter {
         self.renderer.capabilities()
     }
 
-    fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
-        self.renderer.render(surface, scene)
+    fn render_retained(
+        &self,
+        surface: &RenderSurface,
+        scene: &mut RetainedScene,
+    ) -> Result<FrameReport, ZenoError> {
+        self.renderer.render_retained(surface, scene)
     }
 }
 
@@ -132,7 +136,11 @@ impl AndroidImpellerNativeWindowPresenter {
         self.renderer.capabilities()
     }
 
-    fn render(&self, surface: &RenderSurface, scene: &Scene) -> Result<FrameReport, ZenoError> {
-        self.renderer.render(surface, scene)
+    fn render_retained(
+        &self,
+        surface: &RenderSurface,
+        scene: &mut RetainedScene,
+    ) -> Result<FrameReport, ZenoError> {
+        self.renderer.render_retained(surface, scene)
     }
 }

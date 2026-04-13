@@ -5,14 +5,13 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 use zeno_core::{ZenoError, ZenoErrorCode, zeno_frame_log, zeno_session_log, zeno_window_error};
-use zeno_scene::{FrameReport, RenderSceneUpdate};
+use zeno_scene::{FrameReport, RetainedScene, Scene};
 
 use crate::NativeSurface;
 use crate::desktop_session::{BoxedDesktopRenderSession, create_desktop_render_session};
 use crate::session::ResolvedSession;
 use crate::window::{
-    AnimatedFrameContext, AnimatedFrameOutput, BoxedAnimatedSceneCallback, FrameRequest,
-    PointerState,
+    AnimatedFrameContext, BoxedAnimatedSceneCallback, FrameRequest, PointerState,
 };
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +38,7 @@ impl PendingFramePhases {
 }
 
 enum SceneDriver {
-    Static(RenderSceneUpdate),
+    Static(RetainedScene),
     Animated {
         callback: BoxedAnimatedSceneCallback,
         started_at: Instant,
@@ -66,12 +65,12 @@ impl DesktopWindowApp {
     pub(super) fn new(
         resolved_session: ResolvedSession,
         native_surface: NativeSurface,
-        scene_update: RenderSceneUpdate,
+        scene: Scene,
     ) -> Self {
         Self {
             resolved_session,
             native_surface,
-            scene_driver: SceneDriver::Static(scene_update),
+            scene_driver: SceneDriver::Static(RetainedScene::from_scene(scene)),
             session: None,
             phases: PendingFramePhases::default(),
             frame_index: 0,
@@ -131,35 +130,6 @@ impl DesktopWindowApp {
         matches!(self.scene_driver, SceneDriver::Animated { .. })
     }
 
-    fn resolve_frame_output(
-        &mut self,
-        window_size: winit::dpi::PhysicalSize<u32>,
-    ) -> AnimatedFrameOutput {
-        match &mut self.scene_driver {
-            SceneDriver::Static(submit) => AnimatedFrameOutput::wait(submit.clone()),
-            SceneDriver::Animated {
-                callback,
-                started_at,
-                last_frame_at,
-            } => {
-                let now = Instant::now();
-                let delta = last_frame_at
-                    .map(|timestamp| now.saturating_duration_since(timestamp))
-                    .unwrap_or_default();
-                *last_frame_at = Some(now);
-                callback(AnimatedFrameContext {
-                    frame_index: self.frame_index,
-                    elapsed: now.saturating_duration_since(*started_at),
-                    delta,
-                    size: zeno_core::Size::new(window_size.width as f32, window_size.height as f32),
-                    backend: self.resolved_session.backend.backend_kind,
-                    last_report: self.last_report.clone(),
-                    pointer: self.pointer_state.clone(),
-                })
-            }
-        }
-    }
-
     fn draw_scene(&mut self) -> Result<(), ZenoError> {
         let window_size = self
             .session
@@ -173,13 +143,12 @@ impl DesktopWindowApp {
                     "gpu renderer is not available",
                 )
             })?;
-        let output = self.resolve_frame_output(window_size);
-        self.next_frame_request = output.frame_request;
-        self.next_frame_deadline = match output.frame_request {
-            FrameRequest::After(duration) => Some(Instant::now() + duration),
-            _ => None,
-        };
-        let session = self.session.as_mut().ok_or_else(|| {
+        let frame_index = self.frame_index;
+        let backend = self.resolved_session.backend.backend_kind;
+        let last_report = self.last_report.clone();
+        let pointer = self.pointer_state.clone();
+        let phases = self.phases;
+        let mut session = self.session.take().ok_or_else(|| {
             ZenoError::invalid_configuration(
                 ZenoErrorCode::WindowRendererUnavailable,
                 "shell.window",
@@ -187,14 +156,67 @@ impl DesktopWindowApp {
                 "gpu renderer is not available",
             )
         })?;
-        let phases = self.phases;
-        let report = session.submit_scene(&output.scene_update)?;
+        let (frame_request, report, cache) = {
+            let (frame_request, report) = match &mut self.scene_driver {
+                SceneDriver::Static(scene) => (
+                    FrameRequest::Wait,
+                    session.submit_retained_scene(scene, None, 0, 0)?,
+                ),
+                SceneDriver::Animated {
+                    callback,
+                    started_at,
+                    last_frame_at,
+                } => {
+                    let now = Instant::now();
+                    let delta = last_frame_at
+                        .map(|timestamp| now.saturating_duration_since(timestamp))
+                        .unwrap_or_default();
+                    *last_frame_at = Some(now);
+                    let output = callback(
+                        AnimatedFrameContext {
+                            frame_index,
+                            elapsed: now.saturating_duration_since(*started_at),
+                            delta,
+                            size: zeno_core::Size::new(
+                                window_size.width as f32,
+                                window_size.height as f32,
+                            ),
+                            backend,
+                            last_report,
+                            pointer,
+                        },
+                        session.as_mut(),
+                    )?;
+                    let report = output.report.ok_or_else(|| {
+                        ZenoError::invalid_configuration(
+                            ZenoErrorCode::WindowRunAppFailed,
+                            "shell.window",
+                            "animated_callback",
+                            "animated callback must return a submitted frame report",
+                        )
+                    })?;
+                    (output.frame_request, report)
+                }
+            };
+            let cache = if self.resolved_session.frame_stats {
+                Some(session.cache_summary())
+            } else {
+                None
+            };
+            (frame_request, report, cache)
+        };
+        self.session = Some(session);
+        self.next_frame_request = frame_request;
+        self.next_frame_deadline = match self.next_frame_request {
+            FrameRequest::After(duration) => Some(Instant::now() + duration),
+            _ => None,
+        };
         self.frame_index += 1;
         self.last_report = Some(report.clone());
         self.pointer_state.just_pressed = false;
         self.pointer_state.just_released = false;
         if self.resolved_session.frame_stats {
-            let cache = session.cache_summary();
+            let cache = cache.expect("cache summary should exist when frame stats are enabled");
             if cfg!(debug_assertions) {
                 zeno_frame_log!(
                     debug,
@@ -203,6 +225,8 @@ impl DesktopWindowApp {
                     command_count = report.command_count,
                     resource_count = report.resource_count,
                     block_count = report.block_count,
+                    display_item_count = report.display_item_count,
+                    stacking_context_count = report.stacking_context_count,
                     patch_upserts = report.patch_upserts,
                     patch_removes = report.patch_removes,
                     layout = phases.needs_layout,
@@ -239,6 +263,8 @@ impl DesktopWindowApp {
             window_id = ?self.window_id,
             command_count = report.command_count,
             resource_count = report.resource_count,
+            display_item_count = report.display_item_count,
+            stacking_context_count = report.stacking_context_count,
             "window frame rendered"
         );
         self.phases.finish_frame();
