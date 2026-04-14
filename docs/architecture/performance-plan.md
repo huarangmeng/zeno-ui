@@ -174,8 +174,9 @@
 - `Scene` 仍提供 `RenderObject` 快照表达，但桌面与移动端 session 主热路径已经统一按 `DisplayList` 提交模型消费场景。
 - `DisplayList` / `RetainedDisplayList` / `SpatialTree` / `ClipChainStore` / `StackingContext` 已进入运行时主链，`TextRun` 与 `Image` payload 已升级为可直接渲染的数据面；其中图片链路已进一步具备 `ImageSource + ImageResourceKey + ImageResourceTable` 的最小资源模型。
 - `SkiaTextCache` 已具备 typeface/font 缓存与命中统计。
-- 帧统计已输出 `block_count`、`patch_upserts`、`patch_removes`，可直接观察增量提交行为。
-- 下一代关键指标需要扩展到 `damage rect count`、`dirty tile count`、`tile cache hit ratio`、`rasterize time`、`composite time` 与 compositor-only animation frame ratio。
+- 帧统计已输出 `block_count`、`damage_rect_count`、`damage_full`、`dirty_tile_count`、`cached_tile_count`、`reraster_tile_count`、`raster_batch_tile_count`、`composite_tile_count`、`compositor_layer_count`、`offscreen_layer_count`、`tile_content_handle_count`、`compositor_task_count`、`compositor_queue_depth`、`compositor_dropped_frame_count`、`compositor_processed_frame_count`、`released_tile_resource_count`、`evicted_tile_resource_count`、`budget_evicted_tile_resource_count`、`age_evicted_tile_resource_count`、`descriptor_limit_evicted_tile_resource_count`、`reused_tile_resource_count`、`reusable_tile_resource_count`、`reusable_tile_resource_bytes`、`tile_resource_reuse_budget_bytes`、`compositor_worker_threaded`、`compositor_worker_alive`、`composite_executed_layer_count`、`composite_executed_tile_count`、`composite_offscreen_step_count`，可直接观察 compositor frame 的局部/全量提交行为以及当前 raster/composite/layer/effect/scheduler/资源池规划规模；后续可继续补 `tile handle reuse ratio` 与 compositor-only 动画帧占比。
+- `ComposeEngine` 的 paint 增量与可见 layout 增量都已能直接生成 `DamageRegion`，不再只把 layout dirty 一律提升为 full frame。
+- 下一代关键指标需要继续扩展到 `dirty tile count`、`tile cache hit ratio`、`rasterize time`、`composite time` 与 compositor-only animation frame ratio。
 - 根 crate 已提供 `macos`、`linux`、`windows`、`android`、`ios` 平台 preset feature，降低首次接入成本。
 - 移动端已固定 `MobilePresenterInterface`，并为 Android/iOS 建立 platform presenter builder 与 renderer-backed session 适配层。
 - Skia 与 macOS Impeller 主路径都已具备原生 `DisplayList` renderer，并通过 `RenderCapabilities::display_list_submit` 进入正式提交主链。
@@ -185,7 +186,7 @@
 
 ## 当前未完成项
 - layout dirty 已收敛到更小祖先集合，并新增同父结构/顺序脏根合并与最小容器根策略；后续重点转向更复杂 layer/effect tree 下的 patch 类型扩展，而不是继续放大祖先影响面。
-- `DisplayList` 协议层与 backend 原生 renderer 已落地；下一阶段重点不再是“让 backend 吃上 DisplayList”，而是补齐 `DamageTracker`、`TileGrid/TileCache`、独立 compositor 层与 compositor-only 动画。
+- `DisplayList` 协议层与 backend 原生 renderer 已落地；下一阶段重点不再是“让 backend 吃上 DisplayList”，而是补齐 `DamageTracker`、`TileGrid/TileCache`、更完整的 layer/effect graph executor、独立 compositor 层与 compositor-only 动画。
 - 从路线图终局看，当前未完成项已经收敛为“把已落地的 `DisplayList` 协议继续升级为完整 compositor 架构”。
 - Skia 与 macOS Impeller 都已具备 dirty bounds 局部提交路径；当前待补齐的是非 macOS Impeller presenter、更多 effect/filter 组合以及更稳定的缓存与统计体系。
 - 文本主路径已具备 `TextSystem / TextShaper / TextCache` 主干、glyph 级布局数据、Skia glyph-run 分段提交与后端共享缓存；后续重点是更完整的 shaping 覆盖、字体 fallback 策略与更细粒度缓存统计。后续可引入独立 `TextObjectTable`（paragraph input hash / shaping result handle / line break result handle / glyph run handle），让 layout 与 draw 都引用 text handle 而非各自复制文本中间态，以实现 paragraph cache、glyph cache 的跨阶段共享。

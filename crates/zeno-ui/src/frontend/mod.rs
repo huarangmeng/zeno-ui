@@ -9,6 +9,7 @@ mod dirty_table;
 mod object_table;
 
 pub(crate) use dirty_table::{DirtyBits, DirtyTable};
+pub use object_table::ElementId;
 pub(crate) use object_table::{
     FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table,
 };

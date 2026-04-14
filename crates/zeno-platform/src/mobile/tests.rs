@@ -301,7 +301,10 @@ fn create_render_session_builds_android_session() {
     let mut session = create_mobile_render_session(attached).expect("android render session");
     let display_list = test_display_list();
     let report = session
-        .submit_display_list(&display_list, None, 0, 0)
+        .submit_compositor_frame(&zeno_scene::CompositorFrame::full(
+            display_list,
+            0,
+        ))
         .expect("submit display list");
 
     assert_eq!(session.kind(), Backend::Skia);
@@ -337,7 +340,10 @@ fn prepare_render_session_builds_android_skia_session() {
     session.resize(800, 600).expect("resize mobile session");
     let display_list = test_display_list();
     let report = session
-        .submit_display_list(&display_list, None, 0, 0)
+        .submit_compositor_frame(&zeno_scene::CompositorFrame::full(
+            display_list,
+            0,
+        ))
         .expect("submit display list");
 
     assert_eq!(session.kind(), Backend::Skia);

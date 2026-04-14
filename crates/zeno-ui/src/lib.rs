@@ -1,3 +1,4 @@
+mod binding;
 mod frontend;
 pub mod gesture;
 mod image;
@@ -13,13 +14,24 @@ mod tree;
 pub use image::{ImageResourceKey, ImageSource};
 pub use invalidation::{DirtyFlags, DirtyReason};
 pub use modifier::{
-    Alignment, Arrangement, BlendMode, ClipMode, CrossAxisAlignment, DropShadow,
-    HorizontalAlignment, Modifier, Modifiers, TransformOrigin, VerticalAlignment,
+    ActionId, Alignment, Arrangement, BlendMode, ClipMode, CrossAxisAlignment, DropShadow,
+    HorizontalAlignment, InteractionRole, InteractionState, Modifier, Modifiers, TransformOrigin,
+    VerticalAlignment,
+};
+pub use frontend::ElementId;
+#[doc(hidden)]
+pub use binding::{
+    MessageBindings, begin_message_bindings, bind_click_message, bind_toggle_message,
+    finish_message_bindings,
 };
 pub use node::NodeId;
 pub use node::{ImageNode, Node, NodeKind, SpacerNode, TextNode};
-pub use render::{ComposeEngine, ComposeRenderer, ComposeStats, ComposeUpdate, dump_layout};
+pub use render::{
+    ComposeEngine, ComposeRenderer, ComposeStats, ComposeUpdate, InteractionTarget,
+    InteractionTargetFrame, dump_layout,
+};
 pub use style::{Axis, EdgeInsets, Style};
+pub use zeno_core::Color;
 
 #[cfg(test)]
 mod tests;

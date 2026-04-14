@@ -6,5 +6,9 @@ pub mod layout;
 pub mod text;
 
 pub use containers::{r#box, column, container, row, spacer};
+pub use controls::{
+    Button, Checkbox, Switch, SwitchControl, ToggleButton, button, checkbox, r#switch, scroll,
+    switch_control, toggle_button,
+};
 pub use layout::{Arrangement, CrossAxisAlignment, EdgeInsets};
 pub use text::text;

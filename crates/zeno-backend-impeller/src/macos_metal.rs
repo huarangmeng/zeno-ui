@@ -6,6 +6,9 @@ mod scissor;
 mod shaders;
 mod text;
 
+pub use display_list_renderer::CompositeTextureTile;
+pub use offscreen::CompositeParams;
+
 use fontdue::Font;
 use metal::{CommandQueue, CompileOptions, Device, MetalDrawableRef, RenderPipelineState};
 use shaders::SHADERS;
@@ -14,7 +17,12 @@ use zeno_scene::SceneBlendMode;
 use zeno_text::{GlyphRasterCache, load_system_font};
 
 use self::{
-    display_list_renderer::render_display_list_to_drawable_region_with_load,
+    display_list_renderer::{
+        composite_tile_textures_to_drawable_with_load, render_display_list_to_texture_tiles_with_load,
+        render_display_list_to_drawable_region_with_load,
+        render_display_list_to_drawable_tiles_with_load,
+    },
+    draw::make_offscreen_texture,
     pipeline::{create_color_pipeline, create_composite_pipeline, create_text_pipeline},
 };
 
@@ -107,6 +115,86 @@ impl MetalSceneRenderer {
             preserve_contents,
             dirty_bounds,
             &mut self.glyph_cache,
+        )
+    }
+
+    pub fn render_display_list_to_drawable_tiles_with_load(
+        &mut self,
+        drawable: &MetalDrawableRef,
+        display_list: &zeno_scene::DisplayList,
+        clear_color: Option<Color>,
+        preserve_contents: bool,
+        dirty_regions: &[Rect],
+    ) -> Result<(), ZenoError> {
+        render_display_list_to_drawable_tiles_with_load(
+            &self.device,
+            &self.queue,
+            &self.color_pipeline,
+            &self.text_pipeline,
+            &self.composite_pipeline,
+            &self.composite_multiply_pipeline,
+            &self.composite_screen_pipeline,
+            self.font.as_ref(),
+            drawable,
+            display_list,
+            clear_color,
+            preserve_contents,
+            dirty_regions,
+            &mut self.glyph_cache,
+        )
+    }
+
+    pub fn create_tile_texture(&self, width: u32, height: u32) -> metal::Texture {
+        make_offscreen_texture(&self.device, u64::from(width.max(1)), u64::from(height.max(1)))
+    }
+
+    pub fn render_display_list_to_texture_tile(
+        &mut self,
+        texture: &metal::TextureRef,
+        display_list: &zeno_scene::DisplayList,
+        tile_rect: Rect,
+    ) -> Result<(), ZenoError> {
+        render_display_list_to_texture_tiles_with_load(
+            &self.device,
+            &self.queue,
+            &self.color_pipeline,
+            &self.text_pipeline,
+            &self.composite_pipeline,
+            &self.composite_multiply_pipeline,
+            &self.composite_screen_pipeline,
+            self.font.as_ref(),
+            texture,
+            display_list,
+            Some(Color::TRANSPARENT),
+            false,
+            &[Rect::new(0.0, 0.0, tile_rect.size.width, tile_rect.size.height)],
+            zeno_core::Transform2D::translation(-tile_rect.origin.x, -tile_rect.origin.y),
+            tile_rect.size.width.max(1.0),
+            tile_rect.size.height.max(1.0),
+            &mut self.glyph_cache,
+        )
+    }
+
+    pub fn composite_tile_textures_to_drawable(
+        &mut self,
+        drawable: &MetalDrawableRef,
+        clear_color: Option<Color>,
+        tiles: &[CompositeTextureTile<'_>],
+        viewport_width: f32,
+        viewport_height: f32,
+    ) -> Result<(), ZenoError> {
+        composite_tile_textures_to_drawable_with_load(
+            &self.device,
+            &self.queue,
+            &self.composite_pipeline,
+            &self.composite_multiply_pipeline,
+            &self.composite_screen_pipeline,
+            drawable,
+            clear_color,
+            false,
+            tiles,
+            viewport_width,
+            viewport_height,
         )
     }
 }

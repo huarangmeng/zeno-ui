@@ -4,8 +4,8 @@ use zeno_text::FontDescriptor;
 use crate::{
     image::ImageSource,
     modifier::{
-        Alignment, Arrangement, BlendMode, CrossAxisAlignment, DropShadow, Modifier, Modifiers,
-        TransformOrigin,
+        ActionId, Alignment, Arrangement, BlendMode, CrossAxisAlignment, DropShadow, Modifier,
+        Modifiers, TransformOrigin,
     },
     style::{Axis, EdgeInsets, Style},
 };
@@ -44,6 +44,7 @@ pub enum NodeKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Node {
     pub id: NodeId,
+    pub(crate) identity_key: Option<u64>,
     pub kind: NodeKind,
     pub modifiers: Modifiers,
 }
@@ -53,6 +54,7 @@ impl Node {
     pub fn new(id: NodeId, kind: NodeKind) -> Self {
         Self {
             id,
+            identity_key: None,
             kind,
             modifiers: Modifiers::new(),
         }
@@ -65,7 +67,9 @@ impl Node {
 
     #[must_use]
     pub fn key(mut self, key: impl AsRef<str>) -> Self {
-        self.id = NodeId(stable_node_key(key.as_ref().as_bytes()));
+        let key_hash = stable_node_key(key.as_ref().as_bytes());
+        self.id = NodeId(key_hash);
+        self.identity_key = Some(key_hash);
         self
     }
 
@@ -233,6 +237,21 @@ impl Node {
     #[must_use]
     pub fn drop_shadow(self, dx: f32, dy: f32, blur: f32, color: Color) -> Self {
         self.modifier(Modifier::DropShadow(DropShadow::new(dx, dy, blur, color)))
+    }
+
+    #[must_use]
+    pub fn action(self, action_id: ActionId) -> Self {
+        self.modifier(Modifier::Action(action_id))
+    }
+
+    #[must_use]
+    pub fn focusable(self) -> Self {
+        self.modifier(Modifier::Focusable)
+    }
+
+    #[must_use]
+    pub fn accept_text_input(self) -> Self {
+        self.modifier(Modifier::AcceptTextInput)
     }
 }
 

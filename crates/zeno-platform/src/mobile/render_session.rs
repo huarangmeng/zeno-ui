@@ -1,5 +1,8 @@
 use zeno_core::{Backend, Size, ZenoError, ZenoErrorCode};
-use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface};
+use zeno_scene::{
+    CompositorFrame, CompositorSubmission, DisplayList, FrameReport, RenderCapabilities,
+    RenderSession, RenderSurface, TileCache,
+};
 
 use crate::platform;
 
@@ -68,22 +71,35 @@ impl RenderSession for MobileRenderSession {
         }
     }
 
-    fn submit_display_list(
+    fn submit_compositor_frame(
         &mut self,
-        display_list: &DisplayList,
-        _dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
+        frame: &CompositorFrame<DisplayList>,
     ) -> Result<FrameReport, ZenoError> {
+        let display_list = &frame.payload;
         match self {
             Self::Android(session) => {
-                session.submit_display_list(display_list, patch_upserts, patch_removes)
+                session.submit_display_list(
+                    display_list,
+                    frame.damage.rect_count(),
+                    frame.damage.is_full(),
+                    &frame.damage,
+                )
             }
             Self::IosView(session) => {
-                session.submit_display_list(display_list, patch_upserts, patch_removes)
+                session.submit_display_list(
+                    display_list,
+                    frame.damage.rect_count(),
+                    frame.damage.is_full(),
+                    &frame.damage,
+                )
             }
             Self::IosMetalLayer(session) => {
-                session.submit_display_list(display_list, patch_upserts, patch_removes)
+                session.submit_display_list(
+                    display_list,
+                    frame.damage.rect_count(),
+                    frame.damage.is_full(),
+                    &frame.damage,
+                )
             }
         }
     }
@@ -94,6 +110,7 @@ pub(crate) struct AndroidNativeWindowSession {
     attachment: MobilePresenterAttachment,
     surface: RenderSurface,
     presenter: platform::android::AndroidMobilePresenter,
+    tile_cache: TileCache,
 }
 
 impl AndroidNativeWindowSession {
@@ -124,6 +141,7 @@ impl AndroidNativeWindowSession {
             attachment: attached.attachment,
             surface: attached.binding.surface.surface,
             presenter,
+            tile_cache: TileCache::new(),
         })
     }
 
@@ -146,17 +164,20 @@ impl AndroidNativeWindowSession {
     fn submit_display_list(
         &mut self,
         display_list: &DisplayList,
-        patch_upserts: usize,
-        patch_removes: usize,
+        damage_rect_count: usize,
+        damage_full: bool,
+        damage: &zeno_scene::DamageRegion,
     ) -> Result<FrameReport, ZenoError> {
+        let submission = display_list.build_compositor_submission(&mut self.tile_cache, damage);
         submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
             |surface, list| self.presenter.render_display_list(surface, list),
             &self.surface,
             display_list,
-            patch_upserts,
-            patch_removes,
+            damage_rect_count,
+            damage_full,
+            &submission,
         )
     }
 }
@@ -166,6 +187,7 @@ pub(crate) struct IosViewSession {
     attachment: MobilePresenterAttachment,
     surface: RenderSurface,
     presenter: platform::ios::IosMobilePresenter,
+    tile_cache: TileCache,
 }
 
 impl IosViewSession {
@@ -187,6 +209,7 @@ impl IosViewSession {
             attachment: attached.attachment,
             surface: attached.binding.surface.surface,
             presenter,
+            tile_cache: TileCache::new(),
         })
     }
 
@@ -209,17 +232,20 @@ impl IosViewSession {
     fn submit_display_list(
         &mut self,
         display_list: &DisplayList,
-        patch_upserts: usize,
-        patch_removes: usize,
+        damage_rect_count: usize,
+        damage_full: bool,
+        damage: &zeno_scene::DamageRegion,
     ) -> Result<FrameReport, ZenoError> {
+        let submission = display_list.build_compositor_submission(&mut self.tile_cache, damage);
         submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
             |surface, list| self.presenter.render_display_list(surface, list),
             &self.surface,
             display_list,
-            patch_upserts,
-            patch_removes,
+            damage_rect_count,
+            damage_full,
+            &submission,
         )
     }
 }
@@ -229,6 +255,7 @@ pub(crate) struct IosMetalLayerSession {
     attachment: MobilePresenterAttachment,
     surface: RenderSurface,
     presenter: platform::ios::IosMobilePresenter,
+    tile_cache: TileCache,
 }
 
 impl IosMetalLayerSession {
@@ -261,6 +288,7 @@ impl IosMetalLayerSession {
             attachment: attached.attachment,
             surface: attached.binding.surface.surface,
             presenter,
+            tile_cache: TileCache::new(),
         })
     }
 
@@ -283,17 +311,20 @@ impl IosMetalLayerSession {
     fn submit_display_list(
         &mut self,
         display_list: &DisplayList,
-        patch_upserts: usize,
-        patch_removes: usize,
+        damage_rect_count: usize,
+        damage_full: bool,
+        damage: &zeno_scene::DamageRegion,
     ) -> Result<FrameReport, ZenoError> {
+        let submission = display_list.build_compositor_submission(&mut self.tile_cache, damage);
         submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
             |surface, list| self.presenter.render_display_list(surface, list),
             &self.surface,
             display_list,
-            patch_upserts,
-            patch_removes,
+            damage_rect_count,
+            damage_full,
+            &submission,
         )
     }
 }
@@ -327,16 +358,43 @@ fn submit_mobile_display_list(
     render_display_list: impl FnOnce(&RenderSurface, &DisplayList) -> Result<FrameReport, ZenoError>,
     surface: &RenderSurface,
     display_list: &DisplayList,
-    patch_upserts: usize,
-    patch_removes: usize,
+    damage_rect_count: usize,
+    damage_full: bool,
+    submission: &CompositorSubmission,
 ) -> Result<FrameReport, ZenoError> {
     let mut report = render_display_list(surface, display_list)?;
     report.backend = backend;
     report.command_count = display_list.items.len();
     report.display_item_count = display_list.items.len();
     report.stacking_context_count = display_list.stacking_contexts.len();
-    report.patch_upserts = patch_upserts;
-    report.patch_removes = patch_removes;
+    report.damage_rect_count = damage_rect_count;
+    report.damage_full = damage_full;
+    report.dirty_tile_count = submission.tile_plan.stats.reraster_tile_count;
+    report.cached_tile_count = submission.tile_plan.stats.cached_tile_count;
+    report.reraster_tile_count = submission.tile_plan.stats.reraster_tile_count;
+    report.raster_batch_tile_count = submission.raster_batch.tile_count();
+    report.composite_tile_count = submission.composite_pass.tile_count();
+    report.compositor_layer_count = submission.layer_tree.layer_count();
+    report.offscreen_layer_count = submission.layer_tree.offscreen_layer_count();
+    report.tile_content_handle_count = submission.composite_pass.tile_count();
+    report.compositor_task_count = 0;
+    report.compositor_queue_depth = 0;
+    report.compositor_dropped_frame_count = 0;
+    report.compositor_processed_frame_count = 0;
+    report.released_tile_resource_count = 0;
+    report.evicted_tile_resource_count = 0;
+    report.budget_evicted_tile_resource_count = 0;
+    report.age_evicted_tile_resource_count = 0;
+    report.descriptor_limit_evicted_tile_resource_count = 0;
+    report.reused_tile_resource_count = 0;
+    report.reusable_tile_resource_count = 0;
+    report.reusable_tile_resource_bytes = 0;
+    report.tile_resource_reuse_budget_bytes = 0;
+    report.compositor_worker_threaded = false;
+    report.compositor_worker_alive = false;
+    report.composite_executed_layer_count = 0;
+    report.composite_executed_tile_count = 0;
+    report.composite_offscreen_step_count = 0;
     report.surface_id = surface.id.clone();
     let _ = capabilities;
     Ok(report)

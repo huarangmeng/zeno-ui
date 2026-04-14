@@ -1,4 +1,4 @@
-use std::{ffi::CString, num::NonZeroU32, rc::Rc};
+use std::{collections::HashMap, ffi::CString, num::NonZeroU32, rc::Rc};
 
 use glutin::config::{Config, ConfigTemplateBuilder, GlConfig};
 use glutin::context::{
@@ -14,10 +14,14 @@ use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_skia::{
-    SkiaTextCache, render_display_list_region_to_canvas, render_display_list_to_canvas,
+    SkiaTextCache, render_display_list_tile_to_canvas,
 };
 use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
-use zeno_scene::{DisplayList, FrameReport, RenderSurface};
+use zeno_scene::{
+    CompositeExecutor, CompositeLayerJob, CompositorBlendMode, CompositorEffect,
+    CompositorService, DisplayList, FrameReport, RenderSurface, TileCache, TileContentHandle,
+    TileGrid, TileResourcePool,
+};
 
 use super::{default_clear_color, desktop_session_error};
 use crate::NativeSurface;
@@ -30,6 +34,11 @@ pub(super) struct SkiaGlSession {
     gl_surface: Surface<WindowSurface>,
     gr_context: sk::gpu::DirectContext,
     text_cache: SkiaTextCache,
+    tile_cache: TileCache,
+    resource_pool: TileResourcePool,
+    compositor_service: CompositorService,
+    composite_executor: CompositeExecutor,
+    tile_surfaces: HashMap<TileContentHandle, sk::Surface>,
     clear_color: Color,
 }
 
@@ -92,6 +101,11 @@ impl SkiaGlSession {
             gl_surface,
             gr_context,
             text_cache: SkiaTextCache::default(),
+            tile_cache: TileCache::new(),
+            resource_pool: TileResourcePool::new(),
+            compositor_service: CompositorService::new(),
+            composite_executor: CompositeExecutor::new(),
+            tile_surfaces: HashMap::new(),
             clear_color: default_clear_color(config.transparent),
         })
     }
@@ -124,13 +138,49 @@ impl SkiaGlSession {
         Ok(())
     }
 
-    pub(super) fn submit_display_list(
+    pub(super) fn submit_compositor_frame(
         &mut self,
-        display_list: &DisplayList,
-        dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
+        frame: &zeno_scene::CompositorFrame<DisplayList>,
     ) -> Result<FrameReport, ZenoError> {
+        let display_list = &frame.payload;
+        let worker_output = self
+            .compositor_service
+            .submit_frame(
+            frame.generation,
+            display_list.build_compositor_submission(&mut self.tile_cache, &frame.damage),
+        )
+            .map_err(|error| {
+                desktop_session_error(
+                    ZenoErrorCode::SessionCreateRenderSessionFailed,
+                    "compositor_worker",
+                    error,
+                )
+            })?;
+        let scheduled = &worker_output.scheduled;
+        let submission = &scheduled.submission;
+        let scheduler_stats = worker_output.scheduler_stats;
+        let service_stats = self.compositor_service.stats();
+        let tile_grid = TileGrid::for_viewport(display_list.viewport);
+        let composite_plan = self.composite_executor.plan(&submission.composite_pass, tile_grid);
+        let composite_stats = composite_plan.stats;
+        let pool_delta = self.resource_pool.synchronize(&mut self.tile_cache);
+        let eviction_stats = self.tile_cache.eviction_stats();
+        for (handle, descriptor) in &pool_delta.allocated {
+            let size = (
+                i32::try_from(descriptor.width.max(1)).unwrap_or(1),
+                i32::try_from(descriptor.height.max(1)).unwrap_or(1),
+            );
+            self.tile_surfaces.entry(*handle).or_insert_with(|| {
+                sk::surfaces::raster_n32_premul(size).expect("tile offscreen surface should allocate")
+            });
+        }
+        let released_tile_resource_count = pool_delta.released.len();
+        let evicted_tile_resource_count = pool_delta.evicted.len();
+        let reused_tile_resource_count = pool_delta.reused.len();
+        for handle in pool_delta.released {
+            self.tile_surfaces.remove(&handle);
+        }
+        let raster_bounds = submission.raster_batch.bounds();
         let size = self.window.inner_size();
         let (width, height) = (size.width.max(1), size.height.max(1));
         self.resize(width, height)?;
@@ -168,26 +218,125 @@ impl SkiaGlSession {
         })?;
         zeno_session_log!(
             trace,
-            op = "submit_display_list",
+            op = "submit_compositor_frame",
             backend = ?Backend::Skia,
-            mode = if dirty_bounds.is_some() { "patch" } else { "full" },
+            raster_mode = if submission.raster_batch.full_raster { "full" } else { "partial" },
+            composite_mode = if submission.composite_pass.full_present { "full" } else { "partial" },
+            raster_executor = if submission.raster_batch.full_raster { "full-pass" } else { "per-tile" },
             surface = %self.surface.id,
             scale_factor = self.window.scale_factor(),
-            ?dirty_bounds,
-            generation = display_list.generation,
+            ?raster_bounds,
+            dirty_tiles = submission.tile_plan.stats.reraster_tile_count,
+            cached_tiles = submission.tile_plan.stats.cached_tile_count,
+            raster_tiles = submission.raster_batch.tile_count(),
+            composite_layers = submission.composite_pass.layer_count(),
+            composite_tiles = submission.composite_pass.tile_count(),
+            compositor_layers = submission.layer_tree.layer_count(),
+            offscreen_layers = submission.layer_tree.offscreen_layer_count(),
+            tile_handles = self.tile_cache.content_handle_count(),
+            tile_surfaces = self.tile_surfaces.len(),
+            released_tile_resources = released_tile_resource_count,
+            evicted_tile_resources = evicted_tile_resource_count,
+            budget_evicted_tile_resources = eviction_stats.budget_eviction_count,
+            age_evicted_tile_resources = eviction_stats.age_eviction_count,
+            descriptor_limit_evicted_tile_resources = eviction_stats.descriptor_limit_eviction_count,
+            reused_tile_resources = reused_tile_resource_count,
+            reusable_tile_resources = self.tile_cache.reusable_handle_count(),
+            reusable_tile_resource_bytes = self.tile_cache.reusable_byte_count(),
+            tile_resource_reuse_budget_bytes = self.tile_cache.reuse_budget_byte_count(),
+            compositor_tasks = scheduled.tasks.len(),
+            compositor_queue_depth = scheduled.enqueued_frame_count.max(scheduler_stats.pending_frame_count),
+            compositor_stale_frames = scheduled.stale_frame_count,
+            compositor_dropped_frames = scheduled.dropped_frame_count,
+            compositor_submitted_frames = service_stats.submitted_frame_count,
+            compositor_processed_frames = service_stats.processed_frame_count,
+            compositor_worker_threaded = service_stats.worker_threaded,
+            compositor_worker_alive = service_stats.worker_alive,
+            composite_executed_layers = composite_stats.executed_layer_count,
+            composite_executed_tiles = composite_stats.executed_tile_count,
+            composite_offscreen_steps = composite_stats.offscreen_step_count,
+            generation = frame.generation,
             items = display_list.items.len(),
             stacking_contexts = display_list.stacking_contexts.len(),
-            "skia macos display list submit"
+            "skia macos compositor frame submit"
         );
-        if let Some(bounds) = dirty_bounds {
-            render_display_list_region_to_canvas(
+        for raster_tile in &submission.raster_batch.tiles {
+            let slot = self.tile_cache.content_slot(raster_tile.tile_id).ok_or_else(|| {
+                desktop_session_error(
+                    ZenoErrorCode::SessionWrapRenderTargetFailed,
+                    "tile_cache_slot",
+                    "missing tile content slot for raster tile",
+                )
+            })?;
+            let size = (
+                i32::try_from(slot.resource.width.max(1)).unwrap_or(1),
+                i32::try_from(slot.resource.height.max(1)).unwrap_or(1),
+            );
+            if let std::collections::hash_map::Entry::Vacant(entry) =
+                self.tile_surfaces.entry(raster_tile.content_handle)
+            {
+                let surface = sk::surfaces::raster_n32_premul(size)
+                    .expect("tile offscreen surface should allocate");
+                entry.insert(surface);
+            }
+            let surface = self
+                .tile_surfaces
+                .get_mut(&raster_tile.content_handle)
+                .expect("tile surface allocated");
+            render_display_list_tile_to_canvas(
                 surface.canvas(),
                 display_list,
-                bounds,
+                raster_tile.rect,
                 &mut self.text_cache,
             );
+        }
+        if submission.raster_batch.full_raster {
+            surface.canvas().clear(sk::Color::TRANSPARENT);
         } else {
-            render_display_list_to_canvas(surface.canvas(), display_list, &mut self.text_cache);
+            surface.canvas().clear(sk::Color::TRANSPARENT);
+        }
+        for layer in &composite_plan.layer_jobs {
+            let layer_paint = compositor_layer_paint(layer);
+            let draw_direct = !layer.needs_offscreen
+                && layer.opacity >= 0.999
+                && matches!(layer.blend_mode, CompositorBlendMode::Normal)
+                && layer.effects.is_empty();
+            if draw_direct {
+                surface.canvas().save();
+            } else {
+                let bounds = sk::Rect::from_xywh(
+                    layer.effect_bounds.origin.x,
+                    layer.effect_bounds.origin.y,
+                    layer.effect_bounds.size.width,
+                    layer.effect_bounds.size.height,
+                );
+                let layer_rec = sk::canvas::SaveLayerRec::default()
+                    .bounds(&bounds)
+                    .paint(&layer_paint);
+                surface.canvas().save_layer(&layer_rec);
+            }
+            for tile in composite_plan.jobs.iter().filter(|job| job.layer_id == layer.layer_id) {
+                let Some(image) = self
+                    .tile_surfaces
+                    .get_mut(&tile.content_handle)
+                    .map(|tile_surface| tile_surface.image_snapshot())
+                else {
+                    continue;
+                };
+                let dst = sk::Rect::from_xywh(
+                    tile.rect.origin.x,
+                    tile.rect.origin.y,
+                    tile.rect.size.width,
+                    tile.rect.size.height,
+                );
+                if draw_direct {
+                    surface.canvas().draw_image_rect(image, None, dst, &layer_paint);
+                } else {
+                    let draw_paint = sk::Paint::default();
+                    surface.canvas().draw_image_rect(image, None, dst, &draw_paint);
+                }
+            }
+            surface.canvas().restore();
         }
         self.gr_context.flush_and_submit();
         self.gl_surface
@@ -202,12 +351,38 @@ impl SkiaGlSession {
         Ok(FrameReport {
             backend: Backend::Skia,
             command_count: display_list.items.len(),
-            resource_count: 0,
+            resource_count: self.resource_pool.resource_count(),
             block_count: 0,
             display_item_count: display_list.items.len(),
             stacking_context_count: display_list.stacking_contexts.len(),
-            patch_upserts,
-            patch_removes,
+            damage_rect_count: frame.damage.rect_count(),
+            damage_full: frame.damage.is_full(),
+            dirty_tile_count: submission.tile_plan.stats.reraster_tile_count,
+            cached_tile_count: submission.tile_plan.stats.cached_tile_count,
+            reraster_tile_count: submission.tile_plan.stats.reraster_tile_count,
+            raster_batch_tile_count: submission.raster_batch.tile_count(),
+            composite_tile_count: submission.composite_pass.tile_count(),
+            compositor_layer_count: submission.layer_tree.layer_count(),
+            offscreen_layer_count: submission.layer_tree.offscreen_layer_count(),
+            tile_content_handle_count: self.tile_cache.content_handle_count(),
+            compositor_task_count: scheduled.tasks.len(),
+            compositor_queue_depth: scheduled.enqueued_frame_count,
+            compositor_dropped_frame_count: service_stats.dropped_frame_count,
+            compositor_processed_frame_count: service_stats.processed_frame_count,
+            released_tile_resource_count,
+            evicted_tile_resource_count,
+            budget_evicted_tile_resource_count: eviction_stats.budget_eviction_count,
+            age_evicted_tile_resource_count: eviction_stats.age_eviction_count,
+            descriptor_limit_evicted_tile_resource_count: eviction_stats.descriptor_limit_eviction_count,
+            reused_tile_resource_count,
+            reusable_tile_resource_count: self.tile_cache.reusable_handle_count(),
+            reusable_tile_resource_bytes: self.tile_cache.reusable_byte_count(),
+            tile_resource_reuse_budget_bytes: self.tile_cache.reuse_budget_byte_count(),
+            compositor_worker_threaded: service_stats.worker_threaded,
+            compositor_worker_alive: service_stats.worker_alive,
+            composite_executed_layer_count: composite_stats.executed_layer_count,
+            composite_executed_tile_count: composite_stats.executed_tile_count,
+            composite_offscreen_step_count: composite_stats.offscreen_step_count,
             surface_id: self.surface.id.clone(),
         })
     }
@@ -224,6 +399,55 @@ impl SkiaGlSession {
             self.window.scale_factor()
         )
     }
+}
+
+fn compositor_layer_paint(layer: &CompositeLayerJob) -> sk::Paint {
+    let mut paint = sk::Paint::default();
+    paint.set_anti_alias(true);
+    paint.set_alpha_f(layer.opacity.clamp(0.0, 1.0));
+    paint.set_blend_mode(sk_blend_mode(layer.blend_mode));
+    if let Some(filter) = compositor_image_filter(&layer.effects) {
+        paint.set_image_filter(filter);
+    }
+    paint
+}
+
+fn sk_blend_mode(mode: CompositorBlendMode) -> sk::BlendMode {
+    match mode {
+        CompositorBlendMode::Normal => sk::BlendMode::SrcOver,
+        CompositorBlendMode::Multiply => sk::BlendMode::Multiply,
+        CompositorBlendMode::Screen => sk::BlendMode::Screen,
+    }
+}
+
+fn compositor_image_filter(effects: &[CompositorEffect]) -> Option<sk::ImageFilter> {
+    let mut current = None;
+    for effect in effects {
+        current = match effect {
+            CompositorEffect::Blur { sigma } => {
+                sk::image_filters::blur((*sigma, *sigma), None, current, None)
+            }
+            CompositorEffect::DropShadow {
+                dx,
+                dy,
+                blur,
+                color,
+            } => sk::image_filters::drop_shadow(
+                (*dx, *dy),
+                (*blur, *blur),
+                sk::Color4f::new(
+                    f32::from(color.red) / 255.0,
+                    f32::from(color.green) / 255.0,
+                    f32::from(color.blue) / 255.0,
+                    f32::from(color.alpha) / 255.0,
+                ),
+                None,
+                current,
+                None,
+            ),
+        };
+    }
+    current
 }
 
 fn create_not_current_context(

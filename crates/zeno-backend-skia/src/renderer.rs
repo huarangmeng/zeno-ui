@@ -1,6 +1,6 @@
 use skia_safe as sk;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
-use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSurface, Renderer};
+use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSurface, Renderer, TileGrid};
 
 use crate::canvas::{SkiaTextCache, render_display_list_to_canvas};
 
@@ -48,8 +48,38 @@ impl Renderer for SkiaRenderer {
             block_count: 0,
             display_item_count: display_list.items.len(),
             stacking_context_count: display_list.stacking_contexts.len(),
-            patch_upserts: 0,
-            patch_removes: 0,
+            damage_rect_count: 0,
+            damage_full: true,
+            dirty_tile_count: TileGrid::for_viewport(display_list.viewport).tile_count(),
+            cached_tile_count: 0,
+            reraster_tile_count: TileGrid::for_viewport(display_list.viewport).tile_count(),
+            raster_batch_tile_count: TileGrid::for_viewport(display_list.viewport).tile_count(),
+            composite_tile_count: TileGrid::for_viewport(display_list.viewport).tile_count(),
+            compositor_layer_count: display_list.stacking_contexts.len() + 1,
+            offscreen_layer_count: display_list
+                .stacking_contexts
+                .iter()
+                .filter(|context| context.needs_offscreen)
+                .count(),
+            tile_content_handle_count: 0,
+            compositor_task_count: 0,
+            compositor_queue_depth: 0,
+            compositor_dropped_frame_count: 0,
+            compositor_processed_frame_count: 0,
+            released_tile_resource_count: 0,
+            evicted_tile_resource_count: 0,
+            budget_evicted_tile_resource_count: 0,
+            age_evicted_tile_resource_count: 0,
+            descriptor_limit_evicted_tile_resource_count: 0,
+            reused_tile_resource_count: 0,
+            reusable_tile_resource_count: 0,
+            reusable_tile_resource_bytes: 0,
+            tile_resource_reuse_budget_bytes: 0,
+            compositor_worker_threaded: false,
+            compositor_worker_alive: false,
+            composite_executed_layer_count: 0,
+            composite_executed_tile_count: 0,
+            composite_offscreen_step_count: 0,
             surface_id: "skia-raster".to_string(),
         })
     }

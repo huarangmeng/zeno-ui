@@ -161,6 +161,12 @@ impl Style {
             Modifier::DropShadow(shadow) => {
                 self.drop_shadow = Some(*shadow);
             }
+            Modifier::InteractionRole(_) => {}
+            Modifier::Action(_) => {}
+            Modifier::Checked(_) => {}
+            Modifier::Enabled(_) => {}
+            Modifier::Focusable => {}
+            Modifier::AcceptTextInput => {}
         }
     }
 

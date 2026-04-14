@@ -5,7 +5,7 @@ use winit::event_loop::ActiveEventLoop;
 #[cfg(feature = "desktop_winit")]
 use winit::window::Window;
 use zeno_core::{Backend, Color, ZenoError, ZenoErrorCode};
-use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface};
+use zeno_scene::{CompositorFrame, DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface};
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
 mod impeller_metal;
@@ -135,27 +135,14 @@ impl RenderSession for DesktopRenderSession {
         }
     }
 
-    fn submit_display_list(
+    fn submit_compositor_frame(
         &mut self,
-        display_list: &DisplayList,
-        dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
+        frame: &CompositorFrame<DisplayList>,
     ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::Skia(session) => session.submit_display_list(
-                display_list,
-                dirty_bounds,
-                patch_upserts,
-                patch_removes,
-            ),
+            Self::Skia(session) => session.submit_compositor_frame(frame),
             #[cfg(target_os = "macos")]
-            Self::Impeller(session) => session.submit_display_list(
-                display_list,
-                dirty_bounds,
-                patch_upserts,
-                patch_removes,
-            ),
+            Self::Impeller(session) => session.submit_compositor_frame(frame),
         }
     }
 }

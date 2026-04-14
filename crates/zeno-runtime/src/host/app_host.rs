@@ -5,14 +5,15 @@ use zeno_platform::presenter::{
 };
 use zeno_scene::{DisplayList, FrameReport, RenderSession};
 use zeno_text::{FallbackTextSystem, TextSystem};
+use zeno_ui::{MessageBindings, begin_message_bindings, finish_message_bindings};
 
-use super::UiSceneUpdate;
 use crate::{App, AppFrame, AppView, PointerState, UiRuntime};
 
 pub struct AppHost<A> {
     app: A,
     runtime: UiRuntime<'static>,
     platform: Platform,
+    bindings: MessageBindings,
 }
 
 impl<A> AppHost<A>
@@ -25,6 +26,7 @@ where
             app,
             runtime: UiRuntime::new(text_system),
             platform,
+            bindings: MessageBindings::default(),
         }
     }
 
@@ -44,41 +46,45 @@ where
             last_report,
             pointer: PointerState {
                 position: raw.pointer.position,
+                press_position: raw.pointer.press_position,
+                release_position: raw.pointer.release_position,
                 pressed: raw.pointer.pressed,
                 just_pressed: raw.pointer.just_pressed,
                 just_released: raw.pointer.just_released,
             },
+            touches: raw.touches,
+            keyboard: raw.keyboard,
+            text_input: raw.text_input,
         };
+        for event in self.runtime.dispatch_events(&frame) {
+            match &event {
+                crate::UiEvent::Click { action_id } => {
+                    if let Some(message) = self.bindings.resolve_click::<A::Message>(*action_id) {
+                        self.app.update(&frame, message);
+                    }
+                }
+                crate::UiEvent::ToggleChanged { action_id, checked } => {
+                    if let Some(message) =
+                        self.bindings.resolve_toggle::<A::Message>(*action_id, *checked)
+                    {
+                        self.app.update(&frame, message);
+                    }
+                }
+                _ => {}
+            }
+            self.app.on_ui_event(&frame, &event);
+        }
+        begin_message_bindings();
         let view = self.app.render(&frame);
+        self.bindings = finish_message_bindings();
         let report = match view {
             AppView::Compose(root) => {
                 self.runtime.resize(frame.size);
                 self.runtime.set_root(root);
                 if let Some(ui_frame) = self.runtime.prepare_frame()? {
-                    match ui_frame.scene_update {
-                        UiSceneUpdate::Full { display_list, .. } => {
-                            let mut report =
-                                session.submit_display_list(&display_list, None, 0, 0)?;
-                            apply_display_list_stats(&mut report, &display_list);
-                            report
-                        }
-                        UiSceneUpdate::Delta {
-                            dirty_bounds,
-                            patch_upserts,
-                            patch_removes,
-                            display_list,
-                            ..
-                        } => {
-                            let mut report = session.submit_display_list(
-                                &display_list,
-                                dirty_bounds,
-                                patch_upserts,
-                                patch_removes,
-                            )?;
-                            apply_display_list_stats(&mut report, &display_list);
-                            report
-                        }
-                    }
+                    let mut report = session.submit_compositor_frame(&ui_frame.compositor_frame)?;
+                    apply_display_list_stats(&mut report, ui_frame.display_list());
+                    report
                 } else {
                     frame.last_report.clone().ok_or_else(|| {
                         ZenoError::invalid_configuration(
@@ -172,6 +178,8 @@ mod tests {
     struct StaticApp;
 
     impl App for StaticApp {
+        type Message = ();
+
         fn render(&mut self, _frame: &AppFrame) -> AppView {
             AppView::Compose(
                 zeno_ui::Node::new(
@@ -204,6 +212,9 @@ mod tests {
                     backend: zeno_core::Backend::Skia,
                     last_report: None,
                     pointer: zeno_platform::event::PointerState::default(),
+                    touches: Vec::new(),
+                    keyboard: Vec::new(),
+                    text_input: Vec::new(),
                 },
                 &mut DummyRenderSession,
             )
@@ -232,22 +243,54 @@ mod tests {
         fn resize(&mut self, _width: u32, _height: u32) -> Result<(), ZenoError> {
             Ok(())
         }
-        fn submit_display_list(
+        fn submit_compositor_frame(
             &mut self,
-            display_list: &zeno_scene::DisplayList,
-            _dirty_bounds: Option<zeno_core::Rect>,
-            _patch_upserts: usize,
-            _patch_removes: usize,
+            frame: &zeno_scene::CompositorFrame<zeno_scene::DisplayList>,
         ) -> Result<zeno_scene::FrameReport, ZenoError> {
             Ok(zeno_scene::FrameReport {
                 backend: zeno_core::Backend::Skia,
-                command_count: display_list.items.len(),
+                command_count: frame.payload.items.len(),
                 resource_count: 0,
                 block_count: 0,
-                display_item_count: display_list.items.len(),
-                stacking_context_count: display_list.stacking_contexts.len(),
-                patch_upserts: 0,
-                patch_removes: 0,
+                display_item_count: frame.payload.items.len(),
+                stacking_context_count: frame.payload.stacking_contexts.len(),
+                damage_rect_count: frame.damage.rect_count(),
+                damage_full: frame.damage.is_full(),
+                dirty_tile_count: zeno_scene::TileGrid::for_viewport(frame.payload.viewport)
+                    .dirty_tile_count(&frame.damage),
+                cached_tile_count: 0,
+                reraster_tile_count: zeno_scene::TileGrid::for_viewport(frame.payload.viewport)
+                    .dirty_tile_count(&frame.damage),
+                raster_batch_tile_count: zeno_scene::TileGrid::for_viewport(frame.payload.viewport)
+                    .dirty_tile_count(&frame.damage),
+                composite_tile_count: zeno_scene::TileGrid::for_viewport(frame.payload.viewport)
+                    .tile_count(),
+                compositor_layer_count: frame.payload.stacking_contexts.len() + 1,
+                offscreen_layer_count: frame
+                    .payload
+                    .stacking_contexts
+                    .iter()
+                    .filter(|context| context.needs_offscreen)
+                    .count(),
+                tile_content_handle_count: 0,
+                compositor_task_count: 0,
+                compositor_queue_depth: 0,
+                compositor_dropped_frame_count: 0,
+                compositor_processed_frame_count: 0,
+                released_tile_resource_count: 0,
+                evicted_tile_resource_count: 0,
+                budget_evicted_tile_resource_count: 0,
+                age_evicted_tile_resource_count: 0,
+                descriptor_limit_evicted_tile_resource_count: 0,
+                reused_tile_resource_count: 0,
+                reusable_tile_resource_count: 0,
+                reusable_tile_resource_bytes: 0,
+                tile_resource_reuse_budget_bytes: 0,
+                compositor_worker_threaded: false,
+                compositor_worker_alive: false,
+                composite_executed_layer_count: 0,
+                composite_executed_tile_count: 0,
+                composite_offscreen_step_count: 0,
                 surface_id: "dummy".into(),
             })
         }

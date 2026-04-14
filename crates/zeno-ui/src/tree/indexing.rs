@@ -5,7 +5,7 @@ use std::sync::Arc;
 use zeno_core::Size;
 
 use crate::frontend::FrontendObjectTable;
-use crate::{DirtyFlags, NodeId};
+use crate::{DirtyFlags, ElementId, NodeId};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct DenseNodeStore {
@@ -38,6 +38,11 @@ impl DenseNodeStore {
     #[must_use]
     pub fn index_of(&self, node_id: NodeId) -> Option<usize> {
         self.object_table.index_of(node_id)
+    }
+
+    #[must_use]
+    pub fn index_of_element(&self, element_id: ElementId) -> Option<usize> {
+        self.object_table.index_of_element(element_id)
     }
 
     #[must_use]

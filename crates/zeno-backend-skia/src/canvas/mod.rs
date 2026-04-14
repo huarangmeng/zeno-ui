@@ -47,6 +47,21 @@ pub fn render_display_list_region_to_canvas(
     canvas.restore();
 }
 
+pub fn render_display_list_tile_to_canvas(
+    canvas: &sk::Canvas,
+    display_list: &DisplayList,
+    tile_rect: Rect,
+    text_cache: &mut SkiaTextCache,
+) {
+    let local_clip = sk::Rect::from_xywh(0.0, 0.0, tile_rect.size.width, tile_rect.size.height);
+    canvas.clear(sk::Color::TRANSPARENT);
+    canvas.save();
+    canvas.clip_rect(local_clip, None, Some(false));
+    canvas.translate((-tile_rect.origin.x, -tile_rect.origin.y));
+    render_display_list_scope(canvas, display_list, None, Some(tile_rect), text_cache);
+    canvas.restore();
+}
+
 fn render_display_list_scope(
     canvas: &sk::Canvas,
     display_list: &DisplayList,

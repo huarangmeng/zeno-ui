@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/zeno-compositor",
     "crates/zeno-ui",
     "crates/zeno-core",
     "crates/zeno-foundation",

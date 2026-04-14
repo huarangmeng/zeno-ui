@@ -2,12 +2,12 @@
 
 use super::*;
 use crate::frontend::{
-    FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table,
+    ElementId, FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table,
 };
 
 pub(super) fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &Node) {
     let previous_root = retained.root().clone();
-    if previous_root.id() != root.id() {
+    if previous_root.id() != root.id() && previous_root.identity_key != root.identity_key {
         retained.mark_dirty(DirtyReason::Structure);
         return;
     }
@@ -15,27 +15,27 @@ pub(super) fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &N
     let current_objects = compile_object_table(root);
     let previous_objects = retained.objects().clone();
 
-    let previous_by_id: HashMap<NodeId, (usize, &FrontendObject)> = previous_objects
+    let previous_by_id: HashMap<ElementId, (usize, &FrontendObject)> = previous_objects
         .objects
         .iter()
         .enumerate()
-        .map(|(index, object)| (object.node_id, (index, object)))
+        .map(|(index, object)| (object.element_id, (index, object)))
         .collect();
-    let current_by_id: HashMap<NodeId, (usize, &FrontendObject)> = current_objects
+    let current_by_id: HashMap<ElementId, (usize, &FrontendObject)> = current_objects
         .objects
         .iter()
         .enumerate()
-        .map(|(index, object)| (object.node_id, (index, object)))
+        .map(|(index, object)| (object.element_id, (index, object)))
         .collect();
 
-    for node_id in previous_by_id.keys() {
-        if !current_by_id.contains_key(node_id) {
-            retained.mark_node_dirty(*node_id, DirtyReason::Structure);
+    for element_id in previous_by_id.keys() {
+        if !current_by_id.contains_key(element_id) {
+            retained.mark_element_dirty(*element_id, DirtyReason::Structure);
         }
     }
 
-    for (node_id, (current_index, current_object)) in &current_by_id {
-        match previous_by_id.get(node_id).copied() {
+    for (element_id, (current_index, current_object)) in &current_by_id {
+        match previous_by_id.get(element_id).copied() {
             Some((previous_index, previous_object)) => {
                 if let Some(reason) = local_change_reason(
                     &previous_objects,
@@ -45,7 +45,7 @@ pub(super) fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &N
                     *current_index,
                     current_object,
                 ) {
-                    retained.mark_node_dirty(*node_id, reason);
+                    retained.mark_element_dirty(*element_id, reason);
                 }
             }
             None => mark_inserted_object_dirty(retained, &current_objects, *current_index),
@@ -61,14 +61,14 @@ fn mark_inserted_object_dirty(
     let object = current_objects.object(current_index);
     let mut current = object.parent;
     while let Some(parent_index) = current {
-        let parent_id = current_objects.object(parent_index).node_id;
+        let parent_id = current_objects.object(parent_index).element_id;
         if retained
             .layout()
             .object_table()
-            .index_of(parent_id)
+            .index_of_element(parent_id)
             .is_some()
         {
-            retained.mark_node_dirty(parent_id, DirtyReason::Structure);
+            retained.mark_element_dirty(parent_id, DirtyReason::Structure);
             return;
         }
         current = current_objects.object(parent_index).parent;
@@ -84,7 +84,7 @@ fn local_change_reason(
     current_index: usize,
     current: &FrontendObject,
 ) -> Option<DirtyReason> {
-    if previous.node_id != current.node_id {
+    if previous.element_id != current.element_id {
         return Some(DirtyReason::Structure);
     }
 
@@ -194,19 +194,19 @@ fn style_change_reason(
     None
 }
 
-fn child_ids(objects: &FrontendObjectTable, index: usize) -> Vec<NodeId> {
+fn child_ids(objects: &FrontendObjectTable, index: usize) -> Vec<ElementId> {
     objects
         .child_indices(index)
         .iter()
-        .map(|child_index| objects.object(*child_index).node_id)
+        .map(|child_index| objects.object(*child_index).element_id)
         .collect()
 }
 
-fn same_child_members(previous: &[NodeId], current: &[NodeId]) -> bool {
+fn same_child_members(previous: &[ElementId], current: &[ElementId]) -> bool {
     if previous.len() != current.len() {
         return false;
     }
-    let previous_ids: HashSet<NodeId> = previous.iter().copied().collect();
-    let current_ids: HashSet<NodeId> = current.iter().copied().collect();
+    let previous_ids: HashSet<ElementId> = previous.iter().copied().collect();
+    let current_ids: HashSet<ElementId> = current.iter().copied().collect();
     previous_ids == current_ids
 }

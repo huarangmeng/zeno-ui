@@ -1,4 +1,4 @@
-use metal::{Device, MTLPrimitiveType, RenderPipelineState, Texture};
+use metal::{Device, MTLPrimitiveType, RenderPipelineState, TextureRef};
 use zeno_core::Rect;
 use zeno_scene::SceneBlendMode;
 #[cfg(test)]
@@ -9,8 +9,8 @@ use super::draw::color_to_f32;
 use super::draw::{CompositeVertex, build_composite_vertices, new_buffer};
 
 #[repr(C, align(16))]
-#[derive(Clone, Copy)]
-pub(super) struct CompositeParams {
+#[derive(Debug, Default, Clone, Copy)]
+pub struct CompositeParams {
     pub inv_texture_size: [f32; 2],
     pub blur_sigma: f32,
     pub shadow_blur: f32,
@@ -33,7 +33,7 @@ pub(super) fn draw_composited_texture(
     device: &Device,
     composite_pipeline: &RenderPipelineState,
     encoder: &metal::RenderCommandEncoderRef,
-    texture: &Texture,
+    texture: &TextureRef,
     rect: Rect,
     opacity: f32,
     viewport_width: f32,

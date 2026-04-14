@@ -112,6 +112,45 @@ impl DropShadow {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ActionId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteractionRole {
+    Button,
+    ToggleButton,
+    Checkbox,
+    Switch,
+    Scroll,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InteractionState {
+    pub role: Option<InteractionRole>,
+    pub action: Option<ActionId>,
+    pub checked: Option<bool>,
+    pub enabled: bool,
+    pub focusable: bool,
+    pub accepts_text_input: bool,
+}
+
+impl InteractionState {
+    #[must_use]
+    pub const fn is_interactive(self) -> bool {
+        self.enabled
+            && (self.role.is_some()
+            || self.action.is_some()
+            || self.focusable
+            || self.accepts_text_input
+            || self.checked.is_some())
+    }
+
+    #[must_use]
+    pub const fn is_focusable(self) -> bool {
+        self.enabled && (self.focusable || self.action.is_some() || self.accepts_text_input)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Modifier {
     Padding(EdgeInsets),
@@ -137,6 +176,12 @@ pub enum Modifier {
     BlendMode(BlendMode),
     Blur(f32),
     DropShadow(DropShadow),
+    InteractionRole(InteractionRole),
+    Action(ActionId),
+    Checked(bool),
+    Enabled(bool),
+    Focusable,
+    AcceptTextInput,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -164,5 +209,26 @@ impl Modifiers {
     #[must_use]
     pub fn resolve_style(&self) -> Style {
         Style::from_modifiers(self)
+    }
+
+    #[must_use]
+    pub fn resolve_interaction(&self) -> InteractionState {
+        let mut state = InteractionState::default();
+        state.enabled = true;
+        for modifier in self.iter() {
+            match modifier {
+                Modifier::InteractionRole(role) => state.role = Some(*role),
+                Modifier::Action(action) => state.action = Some(*action),
+                Modifier::Checked(checked) => state.checked = Some(*checked),
+                Modifier::Enabled(enabled) => state.enabled = *enabled,
+                Modifier::Focusable => state.focusable = true,
+                Modifier::AcceptTextInput => {
+                    state.accepts_text_input = true;
+                    state.focusable = true;
+                }
+                _ => {}
+            }
+        }
+        state
     }
 }

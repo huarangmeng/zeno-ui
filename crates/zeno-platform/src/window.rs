@@ -1,11 +1,12 @@
 use std::time::Duration;
 
 use zeno_core::{
-    AppConfig, Backend, Platform, Point, Size, WindowConfig, ZenoError, ZenoErrorCode,
+    AppConfig, Backend, Platform, Size, WindowConfig, ZenoError, ZenoErrorCode,
 };
 use zeno_scene::{DisplayList, FrameReport, RenderSession};
 
 use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
+use crate::event::{KeyboardEvent, PointerState, TextInputEvent, TouchEvent};
 #[cfg(feature = "desktop_winit")]
 mod runtime;
 #[cfg(feature = "desktop_winit")]
@@ -28,25 +29,6 @@ pub struct ResolvedWindowRun {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct PointerState {
-    pub position: Option<Point>,
-    pub pressed: bool,
-    pub just_pressed: bool,
-    pub just_released: bool,
-}
-
-impl Default for PointerState {
-    fn default() -> Self {
-        Self {
-            position: None,
-            pressed: false,
-            just_pressed: false,
-            just_released: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
 pub struct AnimatedFrameContext {
     pub frame_index: u64,
     pub elapsed: Duration,
@@ -55,6 +37,9 @@ pub struct AnimatedFrameContext {
     pub backend: Backend,
     pub last_report: Option<FrameReport>,
     pub pointer: PointerState,
+    pub touches: Vec<TouchEvent>,
+    pub keyboard: Vec<KeyboardEvent>,
+    pub text_input: Vec<TextInputEvent>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

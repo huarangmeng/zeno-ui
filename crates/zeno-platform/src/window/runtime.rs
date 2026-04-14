@@ -1,16 +1,21 @@
 use std::time::Instant;
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event::{ElementState, Ime, MouseButton, TouchPhase as WinitTouchPhase, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
+use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use winit::window::WindowId;
 use zeno_core::{ZenoError, ZenoErrorCode, zeno_frame_log, zeno_session_log, zeno_window_error};
-use zeno_scene::{DisplayList, FrameReport};
+use zeno_scene::{CompositorFrame, DisplayList, FrameReport};
 
+use crate::event::{
+    Key, KeyState, KeyboardEvent, KeyboardModifiers, PointerState, TextInputEvent, TouchEvent,
+    TouchPhase,
+};
 use crate::NativeSurface;
 use crate::desktop_session::{BoxedDesktopRenderSession, create_desktop_render_session};
 use crate::session::ResolvedSession;
-use crate::window::{AnimatedFrameContext, BoxedAnimatedSceneCallback, FrameRequest, PointerState};
+use crate::window::{AnimatedFrameContext, BoxedAnimatedSceneCallback, FrameRequest};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct PendingFramePhases {
@@ -55,6 +60,10 @@ pub(super) struct DesktopWindowApp {
     window_id: Option<WindowId>,
     creation_error: Option<ZenoError>,
     pointer_state: PointerState,
+    touch_events: Vec<TouchEvent>,
+    keyboard_events: Vec<KeyboardEvent>,
+    text_input_events: Vec<TextInputEvent>,
+    modifiers: KeyboardModifiers,
     next_frame_request: FrameRequest,
     next_frame_deadline: Option<Instant>,
 }
@@ -76,6 +85,10 @@ impl DesktopWindowApp {
             window_id: None,
             creation_error: None,
             pointer_state: PointerState::default(),
+            touch_events: Vec::new(),
+            keyboard_events: Vec::new(),
+            text_input_events: Vec::new(),
+            modifiers: KeyboardModifiers::default(),
             next_frame_request: FrameRequest::Wait,
             next_frame_deadline: None,
         }
@@ -101,6 +114,10 @@ impl DesktopWindowApp {
             window_id: None,
             creation_error: None,
             pointer_state: PointerState::default(),
+            touch_events: Vec::new(),
+            keyboard_events: Vec::new(),
+            text_input_events: Vec::new(),
+            modifiers: KeyboardModifiers::default(),
             next_frame_request: FrameRequest::NextFrame,
             next_frame_deadline: None,
         }
@@ -145,6 +162,9 @@ impl DesktopWindowApp {
         let backend = self.resolved_session.backend.backend_kind;
         let last_report = self.last_report.clone();
         let pointer = self.pointer_state.clone();
+        let touches = self.touch_events.clone();
+        let keyboard = self.keyboard_events.clone();
+        let text_input = self.text_input_events.clone();
         let phases = self.phases;
         let mut session = self.session.take().ok_or_else(|| {
             ZenoError::invalid_configuration(
@@ -158,7 +178,10 @@ impl DesktopWindowApp {
             let (frame_request, report) = match &mut self.scene_driver {
                 SceneDriver::Static(display_list) => (
                     FrameRequest::Wait,
-                    session.submit_display_list(display_list, None, 0, 0)?,
+                    session.submit_compositor_frame(&CompositorFrame::full(
+                        display_list.clone(),
+                        display_list.generation,
+                    ))?,
                 ),
                 SceneDriver::Animated {
                     callback,
@@ -182,6 +205,9 @@ impl DesktopWindowApp {
                             backend,
                             last_report,
                             pointer,
+                            touches,
+                            keyboard,
+                            text_input,
                         },
                         session.as_mut(),
                     )?;
@@ -213,6 +239,11 @@ impl DesktopWindowApp {
         self.last_report = Some(report.clone());
         self.pointer_state.just_pressed = false;
         self.pointer_state.just_released = false;
+        self.pointer_state.press_position = None;
+        self.pointer_state.release_position = None;
+        self.touch_events.clear();
+        self.keyboard_events.clear();
+        self.text_input_events.clear();
         if self.resolved_session.frame_stats {
             let cache = cache.expect("cache summary should exist when frame stats are enabled");
             if cfg!(debug_assertions) {
@@ -225,8 +256,34 @@ impl DesktopWindowApp {
                     block_count = report.block_count,
                     display_item_count = report.display_item_count,
                     stacking_context_count = report.stacking_context_count,
-                    patch_upserts = report.patch_upserts,
-                    patch_removes = report.patch_removes,
+                    damage_rect_count = report.damage_rect_count,
+                    damage_full = report.damage_full,
+                    dirty_tile_count = report.dirty_tile_count,
+                    cached_tile_count = report.cached_tile_count,
+                    reraster_tile_count = report.reraster_tile_count,
+                    raster_batch_tile_count = report.raster_batch_tile_count,
+                    composite_tile_count = report.composite_tile_count,
+                    compositor_layer_count = report.compositor_layer_count,
+                    offscreen_layer_count = report.offscreen_layer_count,
+                    tile_content_handle_count = report.tile_content_handle_count,
+                    compositor_task_count = report.compositor_task_count,
+                    compositor_queue_depth = report.compositor_queue_depth,
+                    compositor_dropped_frame_count = report.compositor_dropped_frame_count,
+                    compositor_processed_frame_count = report.compositor_processed_frame_count,
+                    released_tile_resource_count = report.released_tile_resource_count,
+                    evicted_tile_resource_count = report.evicted_tile_resource_count,
+                    budget_evicted_tile_resource_count = report.budget_evicted_tile_resource_count,
+                    age_evicted_tile_resource_count = report.age_evicted_tile_resource_count,
+                    descriptor_limit_evicted_tile_resource_count = report.descriptor_limit_evicted_tile_resource_count,
+                    reused_tile_resource_count = report.reused_tile_resource_count,
+                    reusable_tile_resource_count = report.reusable_tile_resource_count,
+                    reusable_tile_resource_bytes = report.reusable_tile_resource_bytes,
+                    tile_resource_reuse_budget_bytes = report.tile_resource_reuse_budget_bytes,
+                    compositor_worker_threaded = report.compositor_worker_threaded,
+                    compositor_worker_alive = report.compositor_worker_alive,
+                    composite_executed_layer_count = report.composite_executed_layer_count,
+                    composite_executed_tile_count = report.composite_executed_tile_count,
+                    composite_offscreen_step_count = report.composite_offscreen_step_count,
                     layout = phases.needs_layout,
                     paint = phases.needs_paint,
                     present = phases.needs_present,
@@ -242,8 +299,34 @@ impl DesktopWindowApp {
                     command_count = report.command_count,
                     resource_count = report.resource_count,
                     block_count = report.block_count,
-                    patch_upserts = report.patch_upserts,
-                    patch_removes = report.patch_removes,
+                    damage_rect_count = report.damage_rect_count,
+                    damage_full = report.damage_full,
+                    dirty_tile_count = report.dirty_tile_count,
+                    cached_tile_count = report.cached_tile_count,
+                    reraster_tile_count = report.reraster_tile_count,
+                    raster_batch_tile_count = report.raster_batch_tile_count,
+                    composite_tile_count = report.composite_tile_count,
+                    compositor_layer_count = report.compositor_layer_count,
+                    offscreen_layer_count = report.offscreen_layer_count,
+                    tile_content_handle_count = report.tile_content_handle_count,
+                    compositor_task_count = report.compositor_task_count,
+                    compositor_queue_depth = report.compositor_queue_depth,
+                    compositor_dropped_frame_count = report.compositor_dropped_frame_count,
+                    compositor_processed_frame_count = report.compositor_processed_frame_count,
+                    released_tile_resource_count = report.released_tile_resource_count,
+                    evicted_tile_resource_count = report.evicted_tile_resource_count,
+                    budget_evicted_tile_resource_count = report.budget_evicted_tile_resource_count,
+                    age_evicted_tile_resource_count = report.age_evicted_tile_resource_count,
+                    descriptor_limit_evicted_tile_resource_count = report.descriptor_limit_evicted_tile_resource_count,
+                    reused_tile_resource_count = report.reused_tile_resource_count,
+                    reusable_tile_resource_count = report.reusable_tile_resource_count,
+                    reusable_tile_resource_bytes = report.reusable_tile_resource_bytes,
+                    tile_resource_reuse_budget_bytes = report.tile_resource_reuse_budget_bytes,
+                    compositor_worker_threaded = report.compositor_worker_threaded,
+                    compositor_worker_alive = report.compositor_worker_alive,
+                    composite_executed_layer_count = report.composite_executed_layer_count,
+                    composite_executed_tile_count = report.composite_executed_tile_count,
+                    composite_offscreen_step_count = report.composite_offscreen_step_count,
                     layout = phases.needs_layout,
                     paint = phases.needs_paint,
                     present = phases.needs_present,
@@ -263,6 +346,32 @@ impl DesktopWindowApp {
             resource_count = report.resource_count,
             display_item_count = report.display_item_count,
             stacking_context_count = report.stacking_context_count,
+            dirty_tile_count = report.dirty_tile_count,
+            cached_tile_count = report.cached_tile_count,
+            reraster_tile_count = report.reraster_tile_count,
+            raster_batch_tile_count = report.raster_batch_tile_count,
+            composite_tile_count = report.composite_tile_count,
+            compositor_layer_count = report.compositor_layer_count,
+            offscreen_layer_count = report.offscreen_layer_count,
+            tile_content_handle_count = report.tile_content_handle_count,
+            compositor_task_count = report.compositor_task_count,
+            compositor_queue_depth = report.compositor_queue_depth,
+            compositor_dropped_frame_count = report.compositor_dropped_frame_count,
+            compositor_processed_frame_count = report.compositor_processed_frame_count,
+            released_tile_resource_count = report.released_tile_resource_count,
+            evicted_tile_resource_count = report.evicted_tile_resource_count,
+            budget_evicted_tile_resource_count = report.budget_evicted_tile_resource_count,
+            age_evicted_tile_resource_count = report.age_evicted_tile_resource_count,
+            descriptor_limit_evicted_tile_resource_count = report.descriptor_limit_evicted_tile_resource_count,
+            reused_tile_resource_count = report.reused_tile_resource_count,
+            reusable_tile_resource_count = report.reusable_tile_resource_count,
+            reusable_tile_resource_bytes = report.reusable_tile_resource_bytes,
+            tile_resource_reuse_budget_bytes = report.tile_resource_reuse_budget_bytes,
+            compositor_worker_threaded = report.compositor_worker_threaded,
+            compositor_worker_alive = report.compositor_worker_alive,
+            composite_executed_layer_count = report.composite_executed_layer_count,
+            composite_executed_tile_count = report.composite_executed_tile_count,
+            composite_offscreen_step_count = report.composite_offscreen_step_count,
             "window frame rendered"
         );
         self.phases.finish_frame();
@@ -353,13 +462,70 @@ impl ApplicationHandler for DesktopWindowApp {
                     ElementState::Pressed if !self.pointer_state.pressed => {
                         self.pointer_state.pressed = true;
                         self.pointer_state.just_pressed = true;
+                        self.pointer_state.press_position = self.pointer_state.position;
                     }
                     ElementState::Released if self.pointer_state.pressed => {
                         self.pointer_state.pressed = false;
                         self.pointer_state.just_released = true;
+                        self.pointer_state.release_position = self.pointer_state.position;
                     }
                     _ => {}
                 }
+                if self.is_animated()
+                    && let Some(session) = self.session.as_ref()
+                {
+                    session.window().request_redraw();
+                }
+            }
+            WindowEvent::Touch(touch) => {
+                self.touch_events.push(TouchEvent {
+                    id: touch.id,
+                    phase: match touch.phase {
+                        WinitTouchPhase::Started => TouchPhase::Started,
+                        WinitTouchPhase::Moved => TouchPhase::Moved,
+                        WinitTouchPhase::Ended => TouchPhase::Ended,
+                        WinitTouchPhase::Cancelled => TouchPhase::Cancelled,
+                    },
+                    position: zeno_core::Point::new(
+                        touch.location.x as f32,
+                        touch.location.y as f32,
+                    ),
+                    force: touch.force.map(|force| match force {
+                        winit::event::Force::Calibrated {
+                            force,
+                            max_possible_force,
+                            ..
+                        } => (force / max_possible_force.max(f64::EPSILON)) as f32,
+                        winit::event::Force::Normalized(force) => force as f32,
+                    }),
+                });
+                if self.is_animated()
+                    && let Some(session) = self.session.as_ref()
+                {
+                    session.window().request_redraw();
+                }
+            }
+            WindowEvent::ModifiersChanged(modifiers) => {
+                self.modifiers = modifiers_state_to_keyboard_modifiers(modifiers.state());
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                self.keyboard_events.push(KeyboardEvent {
+                    key: map_winit_key(&event.logical_key),
+                    state: match event.state {
+                        ElementState::Pressed => KeyState::Pressed,
+                        ElementState::Released => KeyState::Released,
+                    },
+                    repeat: event.repeat,
+                    modifiers: self.modifiers,
+                });
+                if self.is_animated()
+                    && let Some(session) = self.session.as_ref()
+                {
+                    session.window().request_redraw();
+                }
+            }
+            WindowEvent::Ime(Ime::Commit(text)) if !text.is_empty() => {
+                self.text_input_events.push(TextInputEvent { text });
                 if self.is_animated()
                     && let Some(session) = self.session.as_ref()
                 {
@@ -401,5 +567,44 @@ impl ApplicationHandler for DesktopWindowApp {
                 session.window().request_redraw();
             }
         }
+    }
+}
+
+fn modifiers_state_to_keyboard_modifiers(modifiers: ModifiersState) -> KeyboardModifiers {
+    KeyboardModifiers {
+        shift: modifiers.shift_key(),
+        control: modifiers.control_key(),
+        alt: modifiers.alt_key(),
+        meta: modifiers.super_key(),
+    }
+}
+
+fn map_winit_key(key: &WinitKey) -> Key {
+    match key {
+        WinitKey::Character(text) => {
+            if text == " " {
+                Key::Space
+            } else {
+                Key::Character(text.to_string())
+            }
+        }
+        WinitKey::Named(named) => match named {
+            NamedKey::Enter => Key::Enter,
+            NamedKey::Space => Key::Space,
+            NamedKey::Tab => Key::Tab,
+            NamedKey::Escape => Key::Escape,
+            NamedKey::Backspace => Key::Backspace,
+            NamedKey::Delete => Key::Delete,
+            NamedKey::ArrowUp => Key::ArrowUp,
+            NamedKey::ArrowDown => Key::ArrowDown,
+            NamedKey::ArrowLeft => Key::ArrowLeft,
+            NamedKey::ArrowRight => Key::ArrowRight,
+            NamedKey::Home => Key::Home,
+            NamedKey::End => Key::End,
+            NamedKey::PageUp => Key::PageUp,
+            NamedKey::PageDown => Key::PageDown,
+            other => Key::Unknown(format!("{other:?}")),
+        },
+        other => Key::Unknown(format!("{other:?}")),
     }
 }

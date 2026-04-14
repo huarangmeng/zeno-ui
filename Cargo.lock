@@ -2680,6 +2680,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zeno-compositor"
+version = "0.1.0"
+dependencies = [
+ "zeno-core",
+]
+
+[[package]]
 name = "zeno-core"
 version = "0.1.0"
 dependencies = [
@@ -2730,6 +2737,7 @@ dependencies = [
 name = "zeno-scene"
 version = "0.1.0"
 dependencies = [
+ "zeno-compositor",
  "zeno-core",
  "zeno-text",
 ]

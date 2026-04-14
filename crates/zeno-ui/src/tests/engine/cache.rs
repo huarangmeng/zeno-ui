@@ -1,4 +1,5 @@
 use super::super::*;
+use zeno_scene::DamageRegion;
 
 #[test]
 fn compose_engine_reuses_retained_display_list_until_invalidated() {
@@ -58,11 +59,13 @@ fn compose_submit_reconciles_keyed_rebuild_as_paint_patch() {
         snapshot_outputs(engine.compose_update(&second, Size::new(320.0, 240.0)));
 
     if let ComposeUpdate::Delta {
+        damage,
         patch_upserts,
         patch_removes,
         ..
     } = submit
     {
+        assert!(matches!(damage, DamageRegion::Rects(_)));
         assert!(patch_upserts <= 1);
         assert_eq!(patch_removes, 0);
     }
@@ -86,7 +89,19 @@ fn compose_submit_reconciles_keyed_layout_change_as_layout_work() {
         snapshot_outputs(engine.compose_update(&second, Size::new(320.0, 240.0)));
 
     assert!(!display_list.items.is_empty());
-    assert!(matches!(submit, ComposeUpdate::Full { .. }));
+    match submit {
+        ComposeUpdate::Delta {
+            damage,
+            patch_upserts,
+            patch_removes,
+            ..
+        } => {
+            assert!(matches!(damage, DamageRegion::Rects(_)));
+            assert!(patch_upserts <= 1);
+            assert_eq!(patch_removes, 0);
+        }
+        ComposeUpdate::Full { .. } => panic!("layout change should now produce delta damage"),
+    }
     assert_eq!(engine.stats().layout_passes, 2);
 }
 

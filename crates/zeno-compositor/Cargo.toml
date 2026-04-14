@@ -1,10 +1,8 @@
 [package]
-name = "zeno-scene"
+name = "zeno-compositor"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-zeno-compositor = { path = "../zeno-compositor" }
 zeno-core = { path = "../zeno-core" }
-zeno-text = { path = "../zeno-text" }

@@ -67,8 +67,8 @@ impl FragmentStore {
             let Some(range) = maybe_range else {
                 continue;
             };
-            let node_id = old_object_table.node_ids()[old_index];
-            if let Some(new_index) = new_object_table.index_of(node_id) {
+            let element_id = old_object_table.element_ids()[old_index];
+            if let Some(new_index) = new_object_table.index_of_element(element_id) {
                 remapped[new_index] = Some(range);
             }
         }

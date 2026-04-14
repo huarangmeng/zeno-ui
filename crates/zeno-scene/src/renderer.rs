@@ -1,4 +1,5 @@
 use zeno_core::{Backend, Platform, ZenoError};
+use zeno_compositor::CompositorFrame;
 
 use crate::{BackendProbe, DisplayList, FrameReport, RenderCapabilities, RenderSurface};
 
@@ -23,12 +24,9 @@ pub trait RenderSession {
 
     fn resize(&mut self, width: u32, height: u32) -> Result<(), ZenoError>;
 
-    fn submit_display_list(
+    fn submit_compositor_frame(
         &mut self,
-        display_list: &DisplayList,
-        dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
+        frame: &CompositorFrame<DisplayList>,
     ) -> Result<FrameReport, ZenoError>;
 }
 

@@ -4,10 +4,13 @@ use zeno_core::{
     AppConfig, Backend, BackendPreference, Color, DebugConfig, Point, Rect, RendererConfig, Size,
     WindowConfig, zeno_session_log,
 };
-use zeno_foundation::{column, container, row, spacer, text};
+use zeno_foundation::{
+    button, checkbox, column, container, r#switch, row, scroll, spacer, switch_control,
+    text, toggle_button,
+};
 use zeno_runtime::{App, AppFrame, AppView, run_app_with_text_system};
 use zeno_text::SystemTextSystem;
-use zeno_ui::{EdgeInsets, Node};
+use zeno_ui::{Axis, EdgeInsets, Node};
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 use zeno_platform::{MinimalShell, Shell};
@@ -125,6 +128,21 @@ struct AppState {
     fps_counter: FpsCounter,
     world: BallWorld,
     text_system: &'static SystemTextSystem,
+    controls_toggle: bool,
+    controls_checkbox: bool,
+    controls_switch: bool,
+    controls_switch_only: bool,
+    controls_button_presses: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum AppMessage {
+    Nav(DemoKind),
+    ShowcaseButtonPressed,
+    ShowcaseToggleChanged(bool),
+    ShowcaseCheckboxChanged(bool),
+    ShowcaseSwitchChanged(bool),
+    ShowcaseSwitchOnlyChanged(bool),
 }
 
 impl AppState {
@@ -135,19 +153,43 @@ impl AppState {
             fps_counter: FpsCounter::default(),
             world: BallWorld::new(BALL_COUNT),
             text_system,
+            controls_toggle: true,
+            controls_checkbox: false,
+            controls_switch: true,
+            controls_switch_only: false,
+            controls_button_presses: 0,
         }
     }
 }
 
 impl App for AppState {
+    type Message = AppMessage;
+
+    fn update(&mut self, _frame: &AppFrame, message: Self::Message) {
+        match message {
+            AppMessage::Nav(demo) => {
+                self.active_demo = demo;
+            }
+            AppMessage::ShowcaseButtonPressed => {
+                self.controls_button_presses = self.controls_button_presses.saturating_add(1);
+            }
+            AppMessage::ShowcaseToggleChanged(checked) => {
+                self.controls_toggle = checked;
+            }
+            AppMessage::ShowcaseCheckboxChanged(checked) => {
+                self.controls_checkbox = checked;
+            }
+            AppMessage::ShowcaseSwitchChanged(checked) => {
+                self.controls_switch = checked;
+            }
+            AppMessage::ShowcaseSwitchOnlyChanged(checked) => {
+                self.controls_switch_only = checked;
+            }
+        }
+    }
+
     fn render(&mut self, frame: &AppFrame) -> AppView {
         self.fps_counter.record(frame.delta);
-        if let Some(pointer) = frame.pointer.position
-            && frame.pointer.just_released
-            && let Some(target) = hit_test_demo_button(pointer, frame.size)
-        {
-            self.active_demo = target;
-        }
         match self.active_demo {
             DemoKind::Physics => {
                 let delta_seconds = frame.delta.as_secs_f32().clamp(0.0, 1.0 / 30.0);
@@ -159,6 +201,11 @@ impl App for AppState {
                     frame.elapsed.as_secs_f32(),
                     self.active_demo,
                     hovered_demo(frame.pointer.position, frame.size),
+                    self.controls_button_presses,
+                    self.controls_toggle,
+                    self.controls_checkbox,
+                    self.controls_switch,
+                    self.controls_switch_only,
                 ))
             }
             DemoKind::Compose => AppView::Compose(build_compose_root(
@@ -168,6 +215,11 @@ impl App for AppState {
                 frame.elapsed.as_secs_f32(),
                 self.active_demo,
                 hovered_demo(frame.pointer.position, frame.size),
+                self.controls_button_presses,
+                self.controls_toggle,
+                self.controls_checkbox,
+                self.controls_switch,
+                self.controls_switch_only,
             )),
             DemoKind::Compositor => AppView::Compose(build_compose_root(
                 frame.size,
@@ -176,6 +228,11 @@ impl App for AppState {
                 frame.elapsed.as_secs_f32(),
                 self.active_demo,
                 hovered_demo(frame.pointer.position, frame.size),
+                self.controls_button_presses,
+                self.controls_toggle,
+                self.controls_checkbox,
+                self.controls_switch,
+                self.controls_switch_only,
             )),
         }
     }
@@ -295,6 +352,11 @@ fn build_compose_root(
     elapsed: f32,
     active_demo: DemoKind,
     hover_demo: Option<DemoKind>,
+    button_presses: u32,
+    controls_toggle: bool,
+    controls_checkbox: bool,
+    controls_switch: bool,
+    controls_switch_only: bool,
 ) -> Node {
     let content_width = (viewport.width - VIEWPORT_PADDING * 2.0).max(840.0);
     let card_width = ((content_width - COMPOSE_CARD_GAP) * 0.5).max(320.0);
@@ -325,6 +387,15 @@ fn build_compose_root(
             ])
             .spacing(COMPOSE_CARD_GAP)
             .key("compose-row-2"),
+            controls_card(
+                content_width,
+                elapsed,
+                button_presses,
+                controls_toggle,
+                controls_checkbox,
+                controls_switch,
+                controls_switch_only,
+            ),
         ])
         .spacing(COMPOSE_CARD_GAP)
         .key("compose-content"),
@@ -350,18 +421,15 @@ fn demo_nav_row(viewport: Size, active_demo: DemoKind, hover_demo: Option<DemoKi
             } else {
                 Color::rgba(49, 58, 82, 255)
             };
-            container(
-                text(demo.label())
-                    .key(format!("nav-label-{}", demo.label()))
-                    .font_size(16.0)
-                    .foreground(Color::WHITE),
+            Node::from(
+                button(text(demo.label()).font_size(16.0).foreground(Color::WHITE))
+                    .on_click(nav_action(demo))
+                    .padding(EdgeInsets::horizontal_vertical(18.0, 12.0))
+                    .background(background)
+                    .corner_radius(16.0)
+                    .width(NAV_WIDTH)
+                    .height(NAV_HEIGHT),
             )
-            .key(format!("nav-{}", demo.label()))
-            .padding(EdgeInsets::horizontal_vertical(18.0, 12.0))
-            .background(background)
-            .corner_radius(16.0)
-            .width(NAV_WIDTH)
-            .height(NAV_HEIGHT)
         })
         .collect::<Vec<_>>();
     let title_width =
@@ -553,6 +621,119 @@ fn backend_card(width: f32, backend: Backend, fps: f32, submit_mode: &str) -> No
     .drop_shadow(0.0, 10.0, 18.0, Color::rgba(18, 24, 46, 140))
 }
 
+fn controls_card(
+    width: f32,
+    elapsed: f32,
+    button_presses: u32,
+    controls_toggle: bool,
+    controls_checkbox: bool,
+    controls_switch: bool,
+    controls_switch_only: bool,
+) -> Node {
+    let viewport_offset = ((elapsed * 28.0).sin() + 1.0) * 28.0;
+    let selected_label = if controls_toggle {
+        text("Selected").foreground(Color::WHITE)
+    } else {
+        text("Selected").foreground(Color::rgba(31, 41, 55, 255))
+    };
+    let scroll_content = column([
+        chip_node("Controls"),
+        chip_node("Slot"),
+        chip_node("Toggle"),
+        chip_node("Switch"),
+        chip_node("Viewport"),
+        chip_node("Action"),
+    ])
+    .spacing(10.0)
+    .key("controls-scroll-content");
+
+    container(
+        column([
+            text("Foundation Controls")
+                .key("controls-title")
+                .font_size(24.0)
+                .foreground(Color::WHITE),
+            text("button / toggle_button / checkbox / switch / switch_control / scroll")
+                .key("controls-body")
+                .font_size(17.0)
+                .foreground(Color::rgba(220, 232, 255, 255)),
+            spacer(0.0, 14.0).key("controls-gap-1"),
+            row(vec![
+                Node::from(button(text("Primary Action")).on_click(AppMessage::ShowcaseButtonPressed)),
+                Node::from(
+                    toggle_button(selected_label)
+                        .selected(controls_toggle)
+                        .on_toggle(AppMessage::ShowcaseToggleChanged),
+                ),
+            ])
+            .spacing(14.0)
+            .key("controls-row-1"),
+            spacer(0.0, 10.0).key("controls-gap-2"),
+            row(vec![
+                Node::from(
+                    checkbox(text("Enable sync"))
+                        .checked(controls_checkbox)
+                        .on_checked_change(AppMessage::ShowcaseCheckboxChanged),
+                ),
+                Node::from(
+                    r#switch(text("Wi-Fi"))
+                        .checked(controls_switch)
+                        .on_checked_change(AppMessage::ShowcaseSwitchChanged),
+                ),
+                Node::from(
+                    switch_control()
+                        .checked(controls_switch_only)
+                        .on_checked_change(AppMessage::ShowcaseSwitchOnlyChanged),
+                ),
+            ])
+            .spacing(18.0)
+            .cross_axis_alignment(zeno_foundation::CrossAxisAlignment::Center)
+            .key("controls-row-2"),
+            spacer(0.0, 12.0).key("controls-gap-3"),
+            row([
+                status_pill(
+                    "Pressed",
+                    &button_presses.to_string(),
+                    Color::rgba(82, 176, 255, 255),
+                ),
+                status_pill(
+                    "Checkbox",
+                    if controls_checkbox { "on" } else { "off" },
+                    Color::rgba(80, 198, 150, 255),
+                ),
+                status_pill(
+                    "Switch",
+                    if controls_switch { "on" } else { "off" },
+                    Color::rgba(255, 170, 86, 255),
+                ),
+            ])
+            .spacing(12.0)
+            .key("controls-status-row"),
+            spacer(0.0, 14.0).key("controls-gap-4"),
+            container(
+                scroll(Axis::Vertical, viewport_offset, scroll_content)
+                    .fixed_size(180.0, 96.0)
+                    .background(Color::rgba(18, 30, 54, 220))
+                    .corner_radius(18.0),
+            )
+            .key("controls-scroll-shell")
+            .padding_all(10.0)
+            .background(Color::rgba(12, 20, 38, 180))
+            .corner_radius(22.0),
+        ])
+        .spacing(0.0)
+        .key("controls-card-content"),
+    )
+    .key("controls-card")
+    .padding(EdgeInsets::horizontal_vertical(22.0, 20.0))
+    .background(Color::rgba(46, 60, 102, 255))
+    .corner_radius(24.0)
+    .width(width)
+    .layer()
+    .drop_shadow(0.0, 12.0, 18.0, Color::rgba(20, 28, 56, 150))
+}
+
+
 fn metric_pill(label: &str, value: &str, color: Color) -> Node {
     container(
         column(vec![
@@ -597,6 +778,27 @@ fn chip_node(label: &'static str) -> Node {
     .corner_radius(999.0)
 }
 
+fn status_pill(label: &str, value: &str, color: Color) -> Node {
+    container(
+        column([
+            text(label)
+                .key(format!("status-{label}-label"))
+                .font_size(12.0)
+                .foreground(Color::rgba(220, 228, 255, 255)),
+            text(value)
+                .key(format!("status-{label}-value"))
+                .font_size(16.0)
+                .foreground(Color::WHITE),
+        ])
+        .spacing(4.0)
+        .key(format!("status-{label}-content")),
+    )
+    .key(format!("status-pill-{label}"))
+    .padding(EdgeInsets::horizontal_vertical(12.0, 10.0))
+    .background(color)
+    .corner_radius(16.0)
+}
+
 fn reordered_labels(order_shift: usize) -> Vec<&'static str> {
     let mut labels = vec!["Patch", "Layer", "Text", "Backend"];
     let len = labels.len();
@@ -626,6 +828,10 @@ fn demo_button_rect(viewport: Size, demo: DemoKind) -> Rect {
         NAV_WIDTH,
         NAV_HEIGHT,
     )
+}
+
+fn nav_action(demo: DemoKind) -> AppMessage {
+    AppMessage::Nav(demo)
 }
 
 fn hit_test_demo_button(point: Point, viewport: Size) -> Option<DemoKind> {
@@ -791,6 +997,9 @@ mod tests {
             backend: Backend::Impeller,
             last_report: None,
             pointer: zeno_runtime::PointerState::default(),
+            touches: Vec::new(),
+            keyboard: Vec::new(),
+            text_input: Vec::new(),
         };
         let initial_position = app.world.balls[0].position;
         let _ = <AppState as App>::render(&mut app, &first_context);
@@ -807,6 +1016,9 @@ mod tests {
             backend: Backend::Impeller,
             last_report: None,
             pointer: zeno_runtime::PointerState::default(),
+            touches: Vec::new(),
+            keyboard: Vec::new(),
+            text_input: Vec::new(),
         };
         let _ = <AppState as App>::render(&mut app, &second_context);
         assert_eq!(app.world.balls[0].position, advanced_position);
@@ -823,6 +1035,11 @@ mod tests {
             1.2,
             DemoKind::Compositor,
             None,
+            0,
+            true,
+            false,
+            true,
+            false,
         );
     }
 }

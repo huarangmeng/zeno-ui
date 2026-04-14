@@ -1,4 +1,4 @@
-use zeno_core::{Point, Size};
+use zeno_core::{Point, Size, zeno_session_log};
 use zeno_text::TextSystem;
 
 use crate::Node;
@@ -23,6 +23,16 @@ pub(crate) fn relayout_layout(
     if retained.dirty().requires_structure_rebuild()
         || !same_index_order(retained.layout().object_table().as_ref(), &objects)
     {
+        // #region debug-point render-fps-drop-relayout
+        zeno_session_log!(
+            info,
+            point = "render-fps-drop-relayout",
+            structure_rebuild = retained.dirty().requires_structure_rebuild(),
+            previous_len = retained.layout().object_table().len(),
+            current_len = objects.len(),
+            "relayout fell back to full measurement"
+        );
+        // #endregion
         return measure_layout_with_objects(&objects, origin, available, text_system);
     }
 
@@ -69,5 +79,5 @@ fn same_index_order(previous: &FrontendObjectTable, current: &FrontendObjectTabl
     if previous.len() != current.len() {
         return false;
     }
-    (0..previous.len()).all(|index| previous.node_id_at(index) == current.node_id_at(index))
+    (0..previous.len()).all(|index| previous.element_id_at(index) == current.element_id_at(index))
 }

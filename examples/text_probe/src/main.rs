@@ -37,7 +37,7 @@ fn main() {
     for index in 0..iterations {
         last_root = build_root(&variant, index);
         runtime.set_root(last_root.clone());
-        if let Some(mut frame) = runtime.prepare_frame().expect("text probe frame") {
+        if let Some(frame) = runtime.prepare_frame().expect("text probe frame") {
             if frame.is_full() {
                 full_frames += 1;
             } else {

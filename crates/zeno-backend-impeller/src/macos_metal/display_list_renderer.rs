@@ -1,11 +1,12 @@
 use fontdue::Font;
 use metal::{
     CommandQueue, Device, MTLLoadAction, MTLScissorRect, MTLStoreAction, MetalDrawableRef,
-    RenderPassDescriptor, RenderPipelineState,
+    RenderPassDescriptor, RenderPipelineState, TextureRef,
 };
 use zeno_core::{Color, Rect, Transform2D, ZenoError, ZenoErrorCode, zeno_session_log};
 use zeno_scene::{
-    BlendMode, ClipRegion, DisplayItemPayload, DisplayList, Effect, StackingContextId,
+    BlendMode, ClipRegion, DisplayItemPayload, DisplayList, Effect, SceneBlendMode,
+    StackingContextId,
 };
 use zeno_text::GlyphRasterCache;
 
@@ -21,6 +22,14 @@ use super::{
 
 // A native DisplayList renderer for the Impeller Metal backend.
 // This drives the existing Metal pipelines directly from DisplayList semantics.
+
+pub struct CompositeTextureTile<'a> {
+    pub texture: &'a TextureRef,
+    pub rect: Rect,
+    pub opacity: f32,
+    pub blend_mode: SceneBlendMode,
+    pub params: CompositeParams,
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_display_list_to_drawable_region_with_load(
@@ -39,6 +48,87 @@ pub(super) fn render_display_list_to_drawable_region_with_load(
     dirty_bounds: Option<Rect>,
     glyph_cache: &GlyphRasterCache,
 ) -> Result<(), ZenoError> {
+    let dirty_regions = dirty_bounds.into_iter().collect::<Vec<_>>();
+    render_display_list_to_drawable_tiles_with_load(
+        device,
+        queue,
+        color_pipeline,
+        text_pipeline,
+        composite_pipeline,
+        composite_multiply_pipeline,
+        composite_screen_pipeline,
+        font,
+        drawable,
+        display_list,
+        clear_color,
+        preserve_contents,
+        &dirty_regions,
+        glyph_cache,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_display_list_to_drawable_tiles_with_load(
+    device: &Device,
+    queue: &CommandQueue,
+    color_pipeline: &RenderPipelineState,
+    text_pipeline: &RenderPipelineState,
+    composite_pipeline: &RenderPipelineState,
+    composite_multiply_pipeline: &RenderPipelineState,
+    composite_screen_pipeline: &RenderPipelineState,
+    font: Option<&Font>,
+    drawable: &MetalDrawableRef,
+    display_list: &DisplayList,
+    clear_color: Option<Color>,
+    preserve_contents: bool,
+    dirty_regions: &[Rect],
+    glyph_cache: &GlyphRasterCache,
+) -> Result<(), ZenoError> {
+    render_display_list_to_texture_tiles_with_load(
+        device,
+        queue,
+        color_pipeline,
+        text_pipeline,
+        composite_pipeline,
+        composite_multiply_pipeline,
+        composite_screen_pipeline,
+        font,
+        drawable.texture(),
+        display_list,
+        clear_color,
+        preserve_contents,
+        dirty_regions,
+        Transform2D::identity(),
+        display_list.viewport.width.max(1.0),
+        display_list.viewport.height.max(1.0),
+        glyph_cache,
+    )?;
+    let command_buffer = queue.new_command_buffer();
+    command_buffer.present_drawable(drawable);
+    command_buffer.commit();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_display_list_to_texture_tiles_with_load(
+    device: &Device,
+    queue: &CommandQueue,
+    color_pipeline: &RenderPipelineState,
+    text_pipeline: &RenderPipelineState,
+    composite_pipeline: &RenderPipelineState,
+    composite_multiply_pipeline: &RenderPipelineState,
+    composite_screen_pipeline: &RenderPipelineState,
+    font: Option<&Font>,
+    target_texture: &TextureRef,
+    display_list: &DisplayList,
+    clear_color: Option<Color>,
+    preserve_contents: bool,
+    dirty_regions: &[Rect],
+    root_transform: Transform2D,
+    viewport_width: f32,
+    viewport_height: f32,
+    glyph_cache: &GlyphRasterCache,
+) -> Result<(), ZenoError> {
     let render_pass = RenderPassDescriptor::new();
     let attachment = render_pass
         .color_attachments()
@@ -48,6 +138,98 @@ pub(super) fn render_display_list_to_drawable_region_with_load(
                 ZenoErrorCode::BackendImpellerRenderPassAttachmentMissing,
                 "backend.impeller",
                 "render_display_list",
+                "missing metal color attachment",
+            )
+        })?;
+    attachment.set_texture(Some(target_texture));
+    attachment.set_load_action(if preserve_contents {
+        MTLLoadAction::Load
+    } else {
+        MTLLoadAction::Clear
+    });
+    attachment.set_store_action(MTLStoreAction::Store);
+    if !preserve_contents {
+        let clear = clear_color.unwrap_or(Color::TRANSPARENT);
+        attachment.set_clear_color(metal::MTLClearColor::new(
+            f64::from(clear.red) / 255.0,
+            f64::from(clear.green) / 255.0,
+            f64::from(clear.blue) / 255.0,
+            f64::from(clear.alpha) / 255.0,
+        ));
+    }
+
+    let command_buffer = queue.new_command_buffer();
+    let encoder = command_buffer.new_render_command_encoder(&render_pass);
+    let root_regions = if dirty_regions.is_empty() {
+        vec![Rect::new(0.0, 0.0, viewport_width, viewport_height)]
+    } else {
+        dirty_regions.to_vec()
+    };
+
+    zeno_session_log!(
+        trace,
+        op = "impeller_display_list_encoder_root",
+        preserve_contents,
+        dirty_region_count = root_regions.len(),
+        items = display_list.items.len(),
+        contexts = display_list.stacking_contexts.len(),
+        "impeller display list root encoder"
+    );
+
+    for dirty_region in root_regions {
+        let root_scissor = effective_root_scissor(Some(dirty_region), viewport_width, viewport_height);
+        encoder.set_scissor_rect(root_scissor);
+        // Render stacking contexts in a single pass by grouping draw ops per context.
+        // Root scope is `None` stacking context.
+        render_scope(
+            device,
+            queue,
+            color_pipeline,
+            text_pipeline,
+            composite_pipeline,
+            composite_multiply_pipeline,
+            composite_screen_pipeline,
+            font,
+            encoder,
+            display_list,
+            None,
+            root_transform,
+            1.0,
+            root_scissor,
+            viewport_width,
+            viewport_height,
+            glyph_cache,
+        );
+    }
+
+    encoder.end_encoding();
+    command_buffer.commit();
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn composite_tile_textures_to_drawable_with_load(
+    device: &Device,
+    queue: &CommandQueue,
+    composite_pipeline: &RenderPipelineState,
+    composite_multiply_pipeline: &RenderPipelineState,
+    composite_screen_pipeline: &RenderPipelineState,
+    drawable: &MetalDrawableRef,
+    clear_color: Option<Color>,
+    preserve_contents: bool,
+    tiles: &[CompositeTextureTile<'_>],
+    viewport_width: f32,
+    viewport_height: f32,
+) -> Result<(), ZenoError> {
+    let render_pass = RenderPassDescriptor::new();
+    let attachment = render_pass
+        .color_attachments()
+        .object_at(0)
+        .ok_or_else(|| {
+            ZenoError::invalid_configuration(
+                ZenoErrorCode::BackendImpellerRenderPassAttachmentMissing,
+                "backend.impeller",
+                "composite_tile_textures",
                 "missing metal color attachment",
             )
         })?;
@@ -67,46 +249,27 @@ pub(super) fn render_display_list_to_drawable_region_with_load(
             f64::from(clear.alpha) / 255.0,
         ));
     }
-
     let command_buffer = queue.new_command_buffer();
     let encoder = command_buffer.new_render_command_encoder(&render_pass);
-    let viewport_width = display_list.viewport.width.max(1.0);
-    let viewport_height = display_list.viewport.height.max(1.0);
-    let root_scissor = effective_root_scissor(dirty_bounds, viewport_width, viewport_height);
-    encoder.set_scissor_rect(root_scissor);
-
-    zeno_session_log!(
-        trace,
-        op = "impeller_display_list_encoder_root",
-        preserve_contents,
-        ?dirty_bounds,
-        items = display_list.items.len(),
-        contexts = display_list.stacking_contexts.len(),
-        "impeller display list root encoder"
-    );
-
-    // Render stacking contexts in a single pass by grouping draw ops per context.
-    // Root scope is `None` stacking context.
-    render_scope(
-        device,
-        queue,
-        color_pipeline,
-        text_pipeline,
-        composite_pipeline,
-        composite_multiply_pipeline,
-        composite_screen_pipeline,
-        font,
-        encoder,
-        display_list,
-        None,
-        Transform2D::identity(),
-        1.0,
-        root_scissor,
-        viewport_width,
-        viewport_height,
-        glyph_cache,
-    );
-
+    for tile in tiles {
+        let pipeline = composite_pipeline_for_blend(
+            tile.blend_mode,
+            composite_pipeline,
+            composite_multiply_pipeline,
+            composite_screen_pipeline,
+        );
+        draw_composited_texture(
+            device,
+            pipeline,
+            encoder,
+            tile.texture,
+            tile.rect,
+            tile.opacity,
+            viewport_width,
+            viewport_height,
+            tile.params,
+        );
+    }
     encoder.end_encoding();
     command_buffer.present_drawable(drawable);
     command_buffer.commit();

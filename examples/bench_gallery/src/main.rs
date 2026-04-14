@@ -41,7 +41,7 @@ fn main() {
 
         for iteration in 0..iterations {
             runtime.set_root(scenario.build(iteration));
-            if let Some(mut frame) = runtime.prepare_frame().expect("bench gallery frame") {
+            if let Some(frame) = runtime.prepare_frame().expect("bench gallery frame") {
                 if frame.is_full() {
                     full_frames += 1;
                 } else {

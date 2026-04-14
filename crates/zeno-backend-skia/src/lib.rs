@@ -9,7 +9,7 @@ mod stub;
 #[cfg(feature = "native_skia")]
 pub use canvas::{
     SkiaTextCache, SkiaTextCacheStats, render_display_list_region_to_canvas,
-    render_display_list_to_canvas,
+    render_display_list_tile_to_canvas, render_display_list_to_canvas,
 };
 
 pub use backend::SkiaBackend;

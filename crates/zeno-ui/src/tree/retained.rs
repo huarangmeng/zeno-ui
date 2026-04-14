@@ -5,7 +5,7 @@ use zeno_scene::RetainedDisplayList;
 
 use crate::frontend::{DirtyBits, DirtyTable, FrontendObjectTable, compile_object_table};
 use crate::image::ImageResourceTable;
-use crate::{DirtyFlags, DirtyReason, Node, NodeId, layout::LayoutArena};
+use crate::{DirtyFlags, DirtyReason, ElementId, Node, NodeId, layout::LayoutArena};
 
 use super::indexing::DenseNodeStore;
 
@@ -114,6 +114,18 @@ impl RetainedComposeTree {
         let Some(node_index) = self.dense_nodes.index_of(node_id) else {
             return;
         };
+        self.mark_index_dirty(node_index, reason);
+    }
+
+    pub fn mark_element_dirty(&mut self, element_id: ElementId, reason: DirtyReason) {
+        self.dirty.mark(reason);
+        let Some(node_index) = self.dense_nodes.index_of_element(element_id) else {
+            return;
+        };
+        self.mark_index_dirty(node_index, reason);
+    }
+
+    fn mark_index_dirty(&mut self, node_index: usize, reason: DirtyReason) {
         if reason == DirtyReason::Paint {
             self.mark_dirty_bits_at(node_index, dirty_bits_for_reason(reason));
             return;

@@ -1,3 +1,15 @@
+pub use zeno_compositor::{
+    CompositeExecutionPlan, CompositeExecutionStats, CompositeExecutor, CompositeLayerJob,
+    CompositeLayerPass, CompositePass, CompositeTileJob, CompositeTileRef, CompositorBlendMode,
+    CompositorEffect, CompositorFrame, CompositorFrameStats, CompositorLayer, CompositorLayerId, CompositorLayerTree, CompositorScheduler,
+    CompositorSchedulerStats, CompositorSubmission, CompositorService, CompositorServiceStats,
+    CompositorTask, CompositorWorker, CompositorWorkerOutput, CompositorWorkerStats,
+    DamageRegion, DamageTracker, RasterBatch, RasterTile, ScheduledCompositorFrame,
+    ThreadedCompositorWorker, TileCache, TileCacheStats, TileContentHandle, TileContentSlot,
+    TileContentState, TileGrid, TileId, TilePlan, TileResourceDescriptor, TileResourceKind,
+    TileResourcePool, TileResourcePoolDelta,
+};
+
 mod capabilities;
 mod display_list;
 mod renderer;
