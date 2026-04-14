@@ -1,7 +1,7 @@
+use crate::session::ResolvedSession;
 use zeno_core::{
     Backend, BackendUnavailableReason, Platform, Size, WindowConfig, ZenoError, ZenoErrorCode,
 };
-use crate::session::ResolvedSession;
 
 use crate::{
     platform,

@@ -2,15 +2,11 @@ use std::{collections::VecDeque, env, time::Duration};
 
 use zeno_core::{
     AppConfig, Backend, BackendPreference, Color, DebugConfig, Point, Rect, RendererConfig, Size,
-    Transform2D, WindowConfig, zeno_session_log,
+    WindowConfig, zeno_session_log,
 };
 use zeno_foundation::{column, container, row, spacer, text};
 use zeno_runtime::{App, AppFrame, AppView, run_app_with_text_system};
-use zeno_scene::{
-    Brush, DrawCommand, LayerObject, RenderObject, Scene, SceneBlendMode, SceneClip,
-    SceneEffect, Shape,
-};
-use zeno_text::{FontDescriptor, SystemTextSystem, TextParagraph, TextSystem};
+use zeno_text::SystemTextSystem;
 use zeno_ui::{EdgeInsets, Node};
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -156,12 +152,11 @@ impl App for AppState {
             DemoKind::Physics => {
                 let delta_seconds = frame.delta.as_secs_f32().clamp(0.0, 1.0 / 30.0);
                 self.world.step(frame.size, delta_seconds);
-                AppView::Scene(build_physics_scene(
-                    &self.world,
-                    self.text_system,
+                AppView::Compose(build_compose_root(
                     frame.size,
                     frame.backend,
                     self.fps_counter.fps(),
+                    frame.elapsed.as_secs_f32(),
                     self.active_demo,
                     hovered_demo(frame.pointer.position, frame.size),
                 ))
@@ -174,8 +169,7 @@ impl App for AppState {
                 self.active_demo,
                 hovered_demo(frame.pointer.position, frame.size),
             )),
-            DemoKind::Compositor => AppView::Scene(build_compositor_scene(
-                self.text_system,
+            DemoKind::Compositor => AppView::Compose(build_compose_root(
                 frame.size,
                 frame.backend,
                 self.fps_counter.fps(),
@@ -294,72 +288,6 @@ impl BallWorld {
     }
 }
 
-fn build_physics_scene(
-    world: &BallWorld,
-    text_system: &dyn TextSystem,
-    viewport: Size,
-    backend: Backend,
-    fps: f32,
-    active_demo: DemoKind,
-    hover_demo: Option<DemoKind>,
-) -> Scene {
-    let mut commands = chrome_commands(
-        text_system,
-        viewport,
-        active_demo,
-        hover_demo,
-        backend,
-        fps,
-        "Physics Playground",
-        "实时动画、粒子碰撞、FPS 与后端选择观测",
-    );
-    let arena = content_rect(viewport);
-    commands.push(DrawCommand::Fill {
-        shape: Shape::RoundedRect {
-            rect: arena,
-            radius: 28.0,
-        },
-        brush: Brush::Solid(Color::rgba(16, 22, 34, 255)),
-    });
-    for ball in &world.balls {
-        let diameter = ball.radius * 2.0;
-        commands.push(DrawCommand::Fill {
-            shape: Shape::RoundedRect {
-                rect: Rect::new(
-                    ball.position.x - ball.radius,
-                    ball.position.y - ball.radius,
-                    diameter,
-                    diameter,
-                ),
-                radius: ball.radius,
-            },
-            brush: Brush::Solid(ball.color),
-        });
-    }
-    push_text(
-        &mut commands,
-        text_system,
-        Point::new(arena.origin.x + 24.0, arena.origin.y + 28.0),
-        18.0,
-        Color::rgba(214, 225, 255, 255),
-        &format!("{BALL_COUNT} balls  |  click tabs to switch demo"),
-        420.0,
-    );
-    Scene::from_objects(
-        viewport,
-        Some(Color::rgba(9, 13, 21, 255)),
-        vec![RenderObject::new(
-            1,
-            Scene::ROOT_LAYER_ID,
-            1,
-            Rect::new(0.0, 0.0, viewport.width, viewport.height),
-            Transform2D::identity(),
-            None,
-            commands,
-        )],
-    )
-}
-
 fn build_compose_root(
     viewport: Size,
     backend: Backend,
@@ -411,258 +339,7 @@ fn build_compose_root(
     .height(viewport.height)
 }
 
-fn build_compositor_scene(
-    text_system: &dyn TextSystem,
-    viewport: Size,
-    backend: Backend,
-    fps: f32,
-    elapsed: f32,
-    active_demo: DemoKind,
-    hover_demo: Option<DemoKind>,
-) -> Scene {
-    let panel_size = Size::new(400.0, 260.0);
-    let orbit_size = Size::new(280.0, 280.0);
-    let stream_size = Size::new(420.0, 260.0);
-    let panel_position = Point::new(VIEWPORT_PADDING, HEADER_HEIGHT + VIEWPORT_PADDING + 20.0);
-    let orbit_position = Point::new(viewport.width * 0.5 - orbit_size.width * 0.5, 250.0);
-    let stream_position = Point::new(
-        viewport.width - stream_size.width - VIEWPORT_PADDING,
-        viewport.height - stream_size.height - VIEWPORT_PADDING,
-    );
-    let panel_transform = translated_transform(panel_position);
-    let orbit_transform = centered_transform(
-        orbit_position,
-        orbit_size,
-        (elapsed * 32.0).sin() * 10.0,
-        0.96 + (elapsed * 1.7).sin() * 0.04,
-    );
-    let stream_transform = translated_transform(stream_position);
-    let panel_bounds =
-        panel_transform.map_rect(Rect::new(0.0, 0.0, panel_size.width, panel_size.height));
-    let orbit_bounds =
-        orbit_transform.map_rect(Rect::new(0.0, 0.0, orbit_size.width, orbit_size.height));
-    let stream_bounds =
-        stream_transform.map_rect(Rect::new(0.0, 0.0, stream_size.width, stream_size.height));
-    let layers = vec![
-        LayerObject::root(viewport),
-        LayerObject::new(
-            100,
-            100,
-            Some(Scene::ROOT_LAYER_ID),
-            1,
-            Rect::new(0.0, 0.0, panel_size.width, panel_size.height),
-            panel_bounds,
-            panel_transform,
-            Some(SceneClip::RoundedRect {
-                rect: Rect::new(0.0, 0.0, panel_size.width, panel_size.height),
-                radius: 28.0,
-            }),
-            0.96,
-            SceneBlendMode::Normal,
-            vec![SceneEffect::DropShadow {
-                dx: 0.0,
-                dy: 16.0,
-                blur: 28.0,
-                color: Color::rgba(15, 25, 52, 140),
-            }],
-            true,
-        ),
-        LayerObject::new(
-            200,
-            200,
-            Some(Scene::ROOT_LAYER_ID),
-            2,
-            Rect::new(0.0, 0.0, orbit_size.width, orbit_size.height),
-            orbit_bounds,
-            orbit_transform,
-            None,
-            0.9,
-            SceneBlendMode::Screen,
-            vec![SceneEffect::Blur { sigma: 2.0 }],
-            true,
-        ),
-        LayerObject::new(
-            300,
-            300,
-            Some(Scene::ROOT_LAYER_ID),
-            3,
-            Rect::new(0.0, 0.0, stream_size.width, stream_size.height),
-            stream_bounds,
-            stream_transform,
-            Some(SceneClip::RoundedRect {
-                rect: Rect::new(0.0, 0.0, stream_size.width, stream_size.height),
-                radius: 26.0,
-            }),
-            0.95,
-            SceneBlendMode::Multiply,
-            vec![SceneEffect::DropShadow {
-                dx: 0.0,
-                dy: 12.0,
-                blur: 20.0,
-                color: Color::rgba(18, 28, 54, 120),
-            }],
-            true,
-        ),
-    ];
-    let blocks = vec![
-        RenderObject::new(
-            1,
-            Scene::ROOT_LAYER_ID,
-            1,
-            Rect::new(0.0, 0.0, viewport.width, viewport.height),
-            Transform2D::identity(),
-            None,
-            background_commands(viewport),
-        ),
-        RenderObject::new(
-            2,
-            Scene::ROOT_LAYER_ID,
-            2,
-            Rect::new(
-                VIEWPORT_PADDING,
-                VIEWPORT_PADDING,
-                viewport.width - VIEWPORT_PADDING * 2.0,
-                HEADER_HEIGHT,
-            ),
-            Transform2D::identity(),
-            None,
-            chrome_commands(
-                text_system,
-                viewport,
-                active_demo,
-                hover_demo,
-                backend,
-                fps,
-                "Compositor Gallery",
-                "结构化 SceneLayer / SceneBlock、clip、blend、effect 与 transform",
-            ),
-        ),
-        RenderObject::new(
-            3,
-            100,
-            3,
-            panel_bounds,
-            Transform2D::identity(),
-            None,
-            glass_panel_commands(text_system, panel_size, backend, fps),
-        ),
-        RenderObject::new(
-            4,
-            200,
-            4,
-            orbit_bounds,
-            Transform2D::identity(),
-            None,
-            orbit_commands(text_system, orbit_size, elapsed),
-        ),
-        RenderObject::new(
-            5,
-            300,
-            5,
-            stream_bounds,
-            Transform2D::identity(),
-            None,
-            stream_commands(text_system, stream_size, elapsed),
-        ),
-    ];
-    Scene::from_layers_and_objects(viewport, Some(Color::rgba(7, 10, 18, 255)), layers, blocks)
-}
-
-fn chrome_commands(
-    text_system: &dyn TextSystem,
-    viewport: Size,
-    active_demo: DemoKind,
-    hover_demo: Option<DemoKind>,
-    backend: Backend,
-    fps: f32,
-    title: &str,
-    subtitle: &str,
-) -> Vec<DrawCommand> {
-    let mut commands = vec![
-        DrawCommand::Fill {
-            shape: Shape::Rect(Rect::new(0.0, 0.0, viewport.width, viewport.height)),
-            brush: Brush::Solid(Color::rgba(9, 13, 21, 255)),
-        },
-        DrawCommand::Fill {
-            shape: Shape::RoundedRect {
-                rect: Rect::new(
-                    VIEWPORT_PADDING,
-                    VIEWPORT_PADDING,
-                    viewport.width - VIEWPORT_PADDING * 2.0,
-                    HEADER_HEIGHT,
-                ),
-                radius: 26.0,
-            },
-            brush: Brush::Solid(Color::rgba(28, 34, 52, 228)),
-        },
-    ];
-    push_text(
-        &mut commands,
-        text_system,
-        Point::new(VIEWPORT_PADDING + 22.0, VIEWPORT_PADDING + 22.0),
-        32.0,
-        Color::WHITE,
-        title,
-        420.0,
-    );
-    push_text(
-        &mut commands,
-        text_system,
-        Point::new(VIEWPORT_PADDING + 22.0, VIEWPORT_PADDING + 58.0),
-        17.0,
-        Color::rgba(210, 220, 248, 255),
-        subtitle,
-        760.0,
-    );
-    push_text(
-        &mut commands,
-        text_system,
-        Point::new(viewport.width - 380.0, VIEWPORT_PADDING + 24.0),
-        17.0,
-        Color::rgba(168, 255, 208, 255),
-        &format!("Backend {:?}  |  FPS {:.1}", backend, fps),
-        340.0,
-    );
-    push_text(
-        &mut commands,
-        text_system,
-        Point::new(viewport.width - 520.0, VIEWPORT_PADDING + 56.0),
-        15.0,
-        Color::rgba(196, 206, 231, 255),
-        "点击按钮切换 demo，仍支持 ZENO_DEMO_BACKEND 环境变量",
-        480.0,
-    );
-    for demo in DemoKind::all() {
-        let rect = demo_button_rect(viewport, demo);
-        let background = if active_demo == demo {
-            Color::rgba(84, 122, 255, 255)
-        } else if hover_demo == Some(demo) {
-            Color::rgba(66, 82, 124, 255)
-        } else {
-            Color::rgba(49, 58, 82, 255)
-        };
-        commands.push(DrawCommand::Fill {
-            shape: Shape::RoundedRect { rect, radius: 16.0 },
-            brush: Brush::Solid(background),
-        });
-        push_text(
-            &mut commands,
-            text_system,
-            Point::new(rect.origin.x + 16.0, rect.origin.y + 12.0),
-            16.0,
-            Color::WHITE,
-            demo.label(),
-            rect.size.width - 32.0,
-        );
-    }
-    commands
-}
-
-fn demo_nav_row(
-    viewport: Size,
-    active_demo: DemoKind,
-    hover_demo: Option<DemoKind>,
-) -> Node {
+fn demo_nav_row(viewport: Size, active_demo: DemoKind, hover_demo: Option<DemoKind>) -> Node {
     let buttons = DemoKind::all()
         .into_iter()
         .map(|demo| {
@@ -927,183 +604,6 @@ fn reordered_labels(order_shift: usize) -> Vec<&'static str> {
     labels
 }
 
-fn background_commands(viewport: Size) -> Vec<DrawCommand> {
-    let mut commands = vec![DrawCommand::Fill {
-        shape: Shape::Rect(Rect::new(0.0, 0.0, viewport.width, viewport.height)),
-        brush: Brush::Solid(Color::rgba(7, 10, 18, 255)),
-    }];
-    for index in 0..10 {
-        let y = HEADER_HEIGHT + VIEWPORT_PADDING + index as f32 * 64.0;
-        commands.push(DrawCommand::Fill {
-            shape: Shape::Rect(Rect::new(
-                VIEWPORT_PADDING,
-                y,
-                viewport.width - VIEWPORT_PADDING * 2.0,
-                1.0,
-            )),
-            brush: Brush::Solid(Color::rgba(25, 34, 54, 255)),
-        });
-    }
-    commands
-}
-
-fn glass_panel_commands(
-    text_system: &dyn TextSystem,
-    size: Size,
-    backend: Backend,
-    fps: f32,
-) -> Vec<DrawCommand> {
-    let mut commands = vec![DrawCommand::Fill {
-        shape: Shape::RoundedRect {
-            rect: Rect::new(0.0, 0.0, size.width, size.height),
-            radius: 28.0,
-        },
-        brush: Brush::Solid(Color::rgba(40, 58, 104, 220)),
-    }];
-    commands.push(text_command(
-        text_system,
-        Point::new(24.0, 28.0),
-        28.0,
-        Color::WHITE,
-        "Glass Panel",
-        size.width - 48.0,
-    ));
-    commands.push(text_command(
-        text_system,
-        Point::new(24.0, 66.0),
-        16.0,
-        Color::rgba(213, 222, 252, 255),
-        &format!("backend {:?}  |  fps {:.1}", backend, fps),
-        size.width - 48.0,
-    ));
-    for (index, width) in [0.82f32, 0.64, 0.91, 0.57].into_iter().enumerate() {
-        let y = 118.0 + index as f32 * 28.0;
-        commands.push(DrawCommand::Fill {
-            shape: Shape::RoundedRect {
-                rect: Rect::new(24.0, y, (size.width - 48.0) * width, 16.0),
-                radius: 8.0,
-            },
-            brush: Brush::Solid(Color::rgba(120 + index as u8 * 20, 185, 255, 255)),
-        });
-    }
-    commands
-}
-
-fn orbit_commands(text_system: &dyn TextSystem, size: Size, elapsed: f32) -> Vec<DrawCommand> {
-    let mut commands = vec![DrawCommand::Fill {
-        shape: Shape::RoundedRect {
-            rect: Rect::new(0.0, 0.0, size.width, size.height),
-            radius: 42.0,
-        },
-        brush: Brush::Solid(Color::rgba(35, 18, 62, 220)),
-    }];
-    let offset = ((elapsed * 2.0).sin() + 1.0) * 18.0;
-    let cards = [
-        (
-            Color::rgba(255, 155, 122, 255),
-            Rect::new(34.0 + offset, 42.0, 92.0, 120.0),
-        ),
-        (
-            Color::rgba(111, 221, 255, 255),
-            Rect::new(136.0, 82.0 + offset * 0.4, 110.0, 140.0),
-        ),
-        (
-            Color::rgba(146, 255, 184, 255),
-            Rect::new(84.0, 164.0 - offset * 0.35, 122.0, 72.0),
-        ),
-    ];
-    for (color, rect) in cards {
-        commands.push(DrawCommand::Fill {
-            shape: Shape::RoundedRect { rect, radius: 24.0 },
-            brush: Brush::Solid(color),
-        });
-    }
-    commands.push(text_command(
-        text_system,
-        Point::new(28.0, 24.0),
-        22.0,
-        Color::WHITE,
-        "Layer Transform + Screen Blend",
-        size.width - 56.0,
-    ));
-    commands
-}
-
-fn stream_commands(text_system: &dyn TextSystem, size: Size, elapsed: f32) -> Vec<DrawCommand> {
-    let mut commands = vec![DrawCommand::Fill {
-        shape: Shape::RoundedRect {
-            rect: Rect::new(0.0, 0.0, size.width, size.height),
-            radius: 26.0,
-        },
-        brush: Brush::Solid(Color::rgba(18, 42, 50, 255)),
-    }];
-    commands.push(text_command(
-        text_system,
-        Point::new(24.0, 24.0),
-        24.0,
-        Color::WHITE,
-        "Clip + Scroll Stream",
-        size.width - 48.0,
-    ));
-    let scroll = (elapsed * 140.0) % 220.0;
-    for index in 0..9 {
-        let y = 76.0 + index as f32 * 30.0 - scroll;
-        commands.push(DrawCommand::Fill {
-            shape: Shape::RoundedRect {
-                rect: Rect::new(24.0, y, size.width - 48.0, 18.0),
-                radius: 9.0,
-            },
-            brush: Brush::Solid(Color::rgba(
-                84 + index as u8 * 10,
-                190,
-                170 + index as u8 * 6,
-                255,
-            )),
-        });
-    }
-    commands
-}
-
-fn text_command(
-    text_system: &dyn TextSystem,
-    origin: Point,
-    font_size: f32,
-    color: Color,
-    content: &str,
-    max_width: f32,
-) -> DrawCommand {
-    let layout = text_system.layout(TextParagraph {
-        text: content.to_string(),
-        font: FontDescriptor::default(),
-        font_size,
-        max_width,
-    });
-    DrawCommand::Text {
-        position: Point::new(origin.x, origin.y + layout.metrics.ascent),
-        layout,
-        color,
-    }
-}
-
-fn push_text(
-    commands: &mut Vec<DrawCommand>,
-    text_system: &dyn TextSystem,
-    origin: Point,
-    font_size: f32,
-    color: Color,
-    content: &str,
-    max_width: f32,
-) {
-    commands.push(text_command(
-        text_system,
-        origin,
-        font_size,
-        color,
-        content,
-        max_width,
-    ));
-}
-
 fn content_rect(viewport: Size) -> Rect {
     Rect::new(
         VIEWPORT_PADDING,
@@ -1143,19 +643,6 @@ fn point_in_rect(point: Point, rect: Rect) -> bool {
         && point.x <= rect.right()
         && point.y >= rect.origin.y
         && point.y <= rect.bottom()
-}
-
-fn translated_transform(position: Point) -> Transform2D {
-    Transform2D::translation(position.x, position.y)
-}
-
-fn centered_transform(position: Point, size: Size, rotation: f32, scale: f32) -> Transform2D {
-    let pivot = Point::new(size.width * 0.5, size.height * 0.5);
-    Transform2D::translation(-pivot.x, -pivot.y)
-        .then(Transform2D::scale(scale, scale))
-        .then(Transform2D::rotation_degrees(rotation))
-        .then(Transform2D::translation(pivot.x, pivot.y))
-        .then(Transform2D::translation(position.x, position.y))
 }
 
 fn bounce_against_bounds(ball: &mut Ball, arena: Rect) {
@@ -1327,8 +814,9 @@ mod tests {
 
     #[test]
     fn compositor_scene_contains_multiple_layers() {
-        let scene = build_compositor_scene(
-            &SystemTextSystem,
+        // The compositor demo is now a Compose-driven view; retained scene graph is no longer a
+        // public runtime output.
+        let _root = build_compose_root(
             Size::new(1280.0, 800.0),
             Backend::Impeller,
             60.0,
@@ -1336,6 +824,5 @@ mod tests {
             DemoKind::Compositor,
             None,
         );
-        assert!(scene.layer_graph.len() >= 4);
     }
 }

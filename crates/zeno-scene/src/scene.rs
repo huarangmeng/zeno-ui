@@ -1,6 +1,7 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use crate::display_list::DisplayImage;
 use zeno_core::{Color, Point, Rect, Size, Transform2D};
 use zeno_text::TextLayout;
 
@@ -27,12 +28,21 @@ pub enum Shape {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DrawCommand {
-    Fill { shape: Shape, brush: Brush },
-    Stroke { shape: Shape, stroke: Stroke },
+    Fill {
+        shape: Shape,
+        brush: Brush,
+    },
+    Stroke {
+        shape: Shape,
+        stroke: Stroke,
+    },
     Text {
         position: Point,
         layout: TextLayout,
         color: Color,
+    },
+    Image {
+        image: DisplayImage,
     },
     Clear(Color),
 }
@@ -93,41 +103,6 @@ pub struct RenderObject {
     staged_packets: Option<Vec<DrawCommand>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct RenderObjectDelta {
-    pub size: Size,
-    pub packets: Vec<DrawCommand>,
-    pub base_layer_count: usize,
-    pub base_object_count: usize,
-    pub layer_upserts: Vec<LayerObject>,
-    pub layer_reorders: Vec<LayerOrder>,
-    pub layer_removes: Vec<u64>,
-    pub object_upserts: Vec<RenderObject>,
-    pub object_reorders: Vec<RenderObjectOrder>,
-    pub object_removes: Vec<u64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LayerOrder {
-    pub layer_id: u64,
-    pub order: u32,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct RenderObjectOrder {
-    pub object_id: u64,
-    pub order: u32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RenderSceneUpdate {
-    Full(Scene),
-    Delta {
-        delta: RenderObjectDelta,
-        current: Scene,
-    },
-}
-
 pub type SceneTransform = Transform2D;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -145,7 +120,9 @@ pub enum SceneClip {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SceneEffect {
-    Blur { sigma: f32 },
+    Blur {
+        sigma: f32,
+    },
     DropShadow {
         dx: f32,
         dy: f32,
@@ -196,7 +173,10 @@ impl Scene {
         packets: Vec<DrawCommand>,
         objects: Vec<RenderObject>,
     ) -> Self {
-        if !layers.iter().any(|layer| layer.layer_id == Self::ROOT_LAYER_ID) {
+        if !layers
+            .iter()
+            .any(|layer| layer.layer_id == Self::ROOT_LAYER_ID)
+        {
             layers.push(LayerObject::root(size));
         }
         layers.sort_by_key(|layer| layer.order);
@@ -236,7 +216,8 @@ impl Scene {
 
     #[must_use]
     pub fn packet_count(&self) -> usize {
-        self.packets.len() + usize::from(self.clear_color.is_some() && self.clear_packet().is_none())
+        self.packets.len()
+            + usize::from(self.clear_color.is_some() && self.clear_packet().is_none())
     }
 
     #[must_use]
@@ -261,149 +242,6 @@ impl Scene {
     }
 
     #[must_use]
-    pub fn apply_delta(&self, delta: &RenderObjectDelta) -> Self {
-        let mut layers: Vec<LayerObject> = self
-            .layer_graph
-            .iter()
-            .filter(|layer| !delta.layer_removes.contains(&layer.layer_id))
-            .cloned()
-            .collect();
-        for upsert in &delta.layer_upserts {
-            if let Some(existing) = layers.iter_mut().find(|layer| layer.layer_id == upsert.layer_id) {
-                *existing = upsert.clone();
-            } else {
-                layers.push(upsert.clone());
-            }
-        }
-        for reorder in &delta.layer_reorders {
-            if let Some(existing) = layers.iter_mut().find(|layer| layer.layer_id == reorder.layer_id) {
-                existing.order = reorder.order;
-            }
-        }
-        layers.sort_by_key(|layer| layer.order);
-
-        let mut objects: Vec<(RenderObject, bool)> = self
-            .objects
-            .iter()
-            .filter(|object| !delta.object_removes.contains(&object.object_id))
-            .cloned()
-            .map(|object| (object, false))
-            .collect();
-
-        for upsert in &delta.object_upserts {
-            if let Some(existing) = objects
-                .iter_mut()
-                .find(|(object, _)| object.object_id == upsert.object_id)
-            {
-                *existing = (upsert.clone(), true);
-            } else {
-                objects.push((upsert.clone(), true));
-            }
-        }
-        for reorder in &delta.object_reorders {
-            if let Some(existing) = objects
-                .iter_mut()
-                .find(|(object, _)| object.object_id == reorder.object_id)
-            {
-                existing.0.order = reorder.order;
-            }
-        }
-
-        objects.sort_by_key(|(object, _)| object.order);
-        let mut packets = Vec::new();
-        let rebuilt_objects = objects
-            .into_iter()
-            .map(|(object, from_delta)| {
-                let object_packets = if from_delta {
-                    delta.packets_for_object(&object).to_vec()
-                } else {
-                    self.packets_for_object(&object).to_vec()
-                };
-                let start = packets.len();
-                packets.extend_from_slice(&object_packets);
-                object.with_normalized_packets(DrawPacketRange {
-                    start,
-                    len: object_packets.len(),
-                })
-            })
-            .collect();
-        Self::from_layers_and_objects_with_packets(
-            delta.size,
-            self.clear_color,
-            layers,
-            packets,
-            rebuilt_objects,
-        )
-    }
-
-    #[must_use]
-    pub fn dirty_bounds_for_objects(&self, object_ids: &[u64]) -> Option<Rect> {
-        self.objects
-            .iter()
-            .filter(|object| object_ids.contains(&object.object_id))
-            .filter_map(|object| self.effective_bounds_for_object(object))
-            .reduce(|acc, bounds| acc.union(&bounds))
-    }
-
-    #[must_use]
-    pub fn dirty_bounds_for_layers(&self, layer_ids: &[u64]) -> Option<Rect> {
-        self.layer_graph
-            .iter()
-            .filter(|layer| layer_ids.contains(&layer.layer_id))
-            .filter_map(|layer| self.effective_bounds_for_layer(layer.layer_id))
-            .reduce(|acc, bounds| acc.union(&bounds))
-    }
-
-    #[must_use]
-    pub fn effective_bounds_for_layer(&self, layer_id: u64) -> Option<Rect> {
-        let layer = self.layer_graph.iter().find(|layer| layer.layer_id == layer_id)?;
-        self.effective_clip_bounds_for_layer(layer_id)
-            .map_or(Some(layer.bounds), |clip_bounds| rect_intersection(layer.bounds, clip_bounds))
-    }
-
-    #[must_use]
-    pub fn effective_bounds_for_object(&self, object: &RenderObject) -> Option<Rect> {
-        let clipped = self
-            .effective_clip_bounds_for_layer(object.layer_id)
-            .map_or(Some(object.bounds), |clip_bounds| {
-                rect_intersection(object.bounds, clip_bounds)
-            })?;
-        object.clip.map_or(Some(clipped), |clip| {
-            let layer_transform = self.layer_world_transform(object.layer_id)?;
-            rect_intersection(clipped, layer_transform.map_rect(scene_clip_bounds(clip)))
-        })
-    }
-
-    #[must_use]
-    pub fn effective_clip_bounds_for_layer(&self, layer_id: u64) -> Option<Rect> {
-        let mut current_layer_id = Some(layer_id);
-        let mut clip_bounds = None;
-        while let Some(id) = current_layer_id {
-            let layer = self.layer_graph.iter().find(|layer| layer.layer_id == id)?;
-            if let Some(clip) = layer.clip {
-                let world_bounds = self.layer_world_transform(id)?.map_rect(scene_clip_bounds(clip));
-                clip_bounds = match clip_bounds {
-                    Some(existing) => rect_intersection(existing, world_bounds),
-                    None => Some(world_bounds),
-                };
-            }
-            current_layer_id = layer.parent_layer_id;
-        }
-        clip_bounds
-    }
-
-    fn layer_world_transform(&self, layer_id: u64) -> Option<Transform2D> {
-        let layer = self.layer_graph.iter().find(|layer| layer.layer_id == layer_id)?;
-        layer.parent_layer_id.map_or_else(
-            || Some(layer.transform),
-            |parent_id| {
-                self.layer_world_transform(parent_id)
-                    .map(|transform| transform.then(layer.transform))
-            },
-        )
-    }
-
-    #[must_use]
     pub fn compact_objects(objects: Vec<RenderObject>) -> (Vec<DrawCommand>, Vec<RenderObject>) {
         let mut packets = Vec::new();
         let normalized = objects
@@ -420,24 +258,6 @@ impl Scene {
             .collect();
         (packets, normalized)
     }
-}
-
-fn scene_clip_bounds(clip: SceneClip) -> Rect {
-    match clip {
-        SceneClip::Rect(rect) => rect,
-        SceneClip::RoundedRect { rect, .. } => rect,
-    }
-}
-
-fn rect_intersection(a: Rect, b: Rect) -> Option<Rect> {
-    if !a.intersects(&b) {
-        return None;
-    }
-    let left = a.origin.x.max(b.origin.x);
-    let top = a.origin.y.max(b.origin.y);
-    let right = a.right().min(b.right());
-    let bottom = a.bottom().min(b.bottom());
-    Some(Rect::new(left, top, right - left, bottom - top))
 }
 
 fn packet_signature(packets: &[DrawCommand]) -> u64 {
@@ -469,6 +289,13 @@ fn packet_signature(packets: &[DrawCommand]) -> u64 {
             DrawCommand::Clear(color) => {
                 4u8.hash(&mut hasher);
                 hash_color(*color, &mut hasher);
+            }
+            DrawCommand::Image { image } => {
+                5u8.hash(&mut hasher);
+                hash_rect(image.dest_rect, &mut hasher);
+                image.width.hash(&mut hasher);
+                image.height.hash(&mut hasher);
+                image.rgba8.hash(&mut hasher);
             }
         }
     }
@@ -630,7 +457,10 @@ impl RenderObject {
     ) -> Self {
         let packet_count = packets.len();
         let packet_signature = packet_signature(&packets);
-        let resource_keys = packets.iter().filter_map(DrawCommand::resource_key).collect();
+        let resource_keys = packets
+            .iter()
+            .filter_map(DrawCommand::resource_key)
+            .collect();
         Self {
             object_id,
             layer_id,
@@ -655,112 +485,6 @@ impl RenderObject {
         self.packet_count = range.len;
         self.staged_packets = None;
         self
-    }
-}
-
-impl RenderObjectDelta {
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.layer_upserts.is_empty()
-            && self.layer_reorders.is_empty()
-            && self.layer_removes.is_empty()
-            && self.object_upserts.is_empty()
-            && self.object_reorders.is_empty()
-            && self.object_removes.is_empty()
-    }
-
-    #[must_use]
-    pub fn dirty_bounds(&self, previous: Option<&Scene>) -> Option<Rect> {
-        let upsert_bounds = self
-            .object_upserts
-            .iter()
-            .map(|object| object.bounds)
-            .reduce(|acc, bounds| acc.union(&bounds));
-        let affected_layer_bounds = previous.and_then(|scene| {
-            let mut layer_ids: Vec<u64> = self
-                .object_upserts
-                .iter()
-                .map(|object| object.layer_id)
-                .filter(|layer_id| *layer_id != Scene::ROOT_LAYER_ID)
-                .collect();
-            layer_ids.extend(
-                scene
-                    .objects
-                    .iter()
-                    .filter(|object| self.object_removes.contains(&object.object_id))
-                    .map(|object| object.layer_id)
-                    .filter(|layer_id| *layer_id != Scene::ROOT_LAYER_ID),
-            );
-            layer_ids.sort_unstable();
-            layer_ids.dedup();
-            scene.dirty_bounds_for_layers(&layer_ids)
-        });
-        let previous_upsert_bounds = previous.and_then(|scene| {
-            let object_ids: Vec<u64> = self.object_upserts.iter().map(|object| object.object_id).collect();
-            scene.dirty_bounds_for_objects(&object_ids)
-        });
-        let remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_objects(&self.object_removes));
-        let reorder_bounds = previous.and_then(|scene| {
-            let object_ids: Vec<u64> = self
-                .object_reorders
-                .iter()
-                .map(|reorder| reorder.object_id)
-                .collect();
-            scene.dirty_bounds_for_objects(&object_ids)
-        });
-        let layer_upsert_bounds = self
-            .layer_upserts
-            .iter()
-            .map(|layer| layer.bounds)
-            .reduce(|acc, bounds| acc.union(&bounds));
-        let layer_reorder_bounds = previous.and_then(|scene| {
-            let layer_ids: Vec<u64> = self
-                .layer_reorders
-                .iter()
-                .map(|reorder| reorder.layer_id)
-                .collect();
-            scene.dirty_bounds_for_layers(&layer_ids)
-        });
-        let previous_layer_bounds = previous.and_then(|scene| {
-            let layer_ids: Vec<u64> = self.layer_upserts.iter().map(|layer| layer.layer_id).collect();
-            scene.dirty_bounds_for_layers(&layer_ids)
-        });
-        let layer_remove_bounds = previous.and_then(|scene| scene.dirty_bounds_for_layers(&self.layer_removes));
-        [
-            upsert_bounds,
-            affected_layer_bounds,
-            previous_upsert_bounds,
-            remove_bounds,
-            reorder_bounds,
-            layer_upsert_bounds,
-            layer_reorder_bounds,
-            previous_layer_bounds,
-            layer_remove_bounds,
-        ]
-        .into_iter()
-        .flatten()
-        .reduce(|acc, bounds| acc.union(&bounds))
-    }
-
-    #[must_use]
-    pub fn packets_for_object<'a>(&'a self, object: &'a RenderObject) -> &'a [DrawCommand] {
-        if let Some(packets) = object.staged_packets.as_ref() {
-            return packets.as_slice();
-        }
-        &self.packets[object.packets.start..object.packets.start + object.packets.len]
-    }
-}
-
-impl RenderSceneUpdate {
-    #[must_use]
-    pub fn snapshot(&self, previous: Option<&Scene>) -> Option<Scene> {
-        match self {
-            Self::Full(scene) => Some(scene.clone()),
-            Self::Delta { delta, current } => previous.map_or_else(
-                || Some(current.clone()),
-                |scene| Some(scene.apply_delta(delta)),
-            ),
-        }
     }
 }
 

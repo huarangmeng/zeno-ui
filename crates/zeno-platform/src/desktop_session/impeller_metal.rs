@@ -10,10 +10,9 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_impeller::MetalSceneRenderer;
 use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
-use zeno_scene::{DisplayList, FrameReport, RenderSurface, RetainedScene};
+use zeno_scene::{DisplayList, FrameReport, RenderSurface};
 
-use super::desktop_session_error;
-use super::scene::default_clear_color;
+use super::{default_clear_color, desktop_session_error};
 use crate::NativeSurface;
 
 pub(super) struct ImpellerMetalSession {
@@ -85,55 +84,6 @@ impl ImpellerMetalSession {
         Ok(())
     }
 
-    pub(super) fn submit_retained_scene(
-        &mut self,
-        scene: &mut RetainedScene,
-        dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
-    ) -> Result<FrameReport, ZenoError> {
-        let drawable = self.layer.next_drawable().ok_or_else(|| {
-            desktop_session_error(
-                ZenoErrorCode::SessionNextDrawableUnavailable,
-                "next_drawable",
-                "metal layer did not provide a drawable",
-            )
-        })?;
-        scene.clear_color = Some(self.clear_color);
-        zeno_session_log!(
-            trace,
-            op = "submit_retained_scene",
-            backend = ?Backend::Impeller,
-            mode = if dirty_bounds.is_some() { "patch" } else { "full" },
-            surface = %self.surface.id,
-            scale_factor = self.window.scale_factor(),
-            clear = ?self.clear_color,
-            ?dirty_bounds,
-            "impeller macos retained scene submit"
-        );
-        if let Some(bounds) = dirty_bounds {
-            self.renderer.render_retained_to_drawable_region_with_load(
-                drawable,
-                scene,
-                true,
-                Some(bounds),
-            )?;
-        } else {
-            self.renderer.render_retained_to_drawable(drawable, scene)?;
-        }
-        Ok(FrameReport {
-            backend: Backend::Impeller,
-            command_count: scene.packet_count(),
-            resource_count: scene.resource_key_count(),
-            block_count: scene.live_object_count(),
-            display_item_count: 0,
-            stacking_context_count: 0,
-            patch_upserts,
-            patch_removes,
-            surface_id: self.surface.id.clone(),
-        })
-    }
-
     pub(super) fn submit_display_list(
         &mut self,
         display_list: &DisplayList,
@@ -162,16 +112,20 @@ impl ImpellerMetalSession {
             "impeller macos native display list submit"
         );
         if let Some(bounds) = dirty_bounds {
-            self.renderer.render_display_list_to_drawable_region_with_load(
+            self.renderer
+                .render_display_list_to_drawable_region_with_load(
+                    drawable,
+                    display_list,
+                    Some(self.clear_color),
+                    true,
+                    Some(bounds),
+                )?;
+        } else {
+            self.renderer.render_display_list_to_drawable(
                 drawable,
                 display_list,
                 Some(self.clear_color),
-                true,
-                Some(bounds),
             )?;
-        } else {
-            self.renderer
-                .render_display_list_to_drawable(drawable, display_list, Some(self.clear_color))?;
         }
         Ok(FrameReport {
             backend: Backend::Impeller,

@@ -1,8 +1,8 @@
-use std::ops::Range;
- 
+use std::{ops::Range, sync::Arc};
+
 use zeno_core::{Color, Point, Rect, Size, Transform2D};
 use zeno_text::TextLayout;
- 
+
 /// DisplayList is the paint-stage output. It describes what to draw, not how to render.
 /// This module intentionally does not provide any compatibility/bridge APIs to legacy scene types.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,19 +14,19 @@ pub struct DisplayList {
     pub stacking_contexts: Vec<StackingContext>,
     pub generation: u64,
 }
- 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DisplayItemId(pub u32);
- 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SpatialNodeId(pub u32);
- 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClipChainId(pub u32);
- 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StackingContextId(pub u32);
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayItem {
     pub item_id: DisplayItemId,
@@ -36,11 +36,18 @@ pub struct DisplayItem {
     pub visual_rect: Rect,
     pub payload: DisplayItemPayload,
 }
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DisplayItemPayload {
-    FillRect { rect: Rect, color: Color },
-    FillRoundedRect { rect: Rect, radius: f32, color: Color },
+    FillRect {
+        rect: Rect,
+        color: Color,
+    },
+    FillRoundedRect {
+        rect: Rect,
+        radius: f32,
+        color: Color,
+    },
     TextRun(DisplayTextRun),
     Image(DisplayImage),
     Custom,
@@ -58,12 +65,18 @@ pub struct DisplayImage {
     pub dest_rect: Rect,
     pub width: u32,
     pub height: u32,
-    pub rgba8: Vec<u8>,
+    pub rgba8: Arc<[u8]>,
 }
 
 impl DisplayImage {
     #[must_use]
-    pub fn new_rgba8(dest_rect: Rect, width: u32, height: u32, rgba8: Vec<u8>) -> Self {
+    pub fn new_rgba8(
+        dest_rect: Rect,
+        width: u32,
+        height: u32,
+        rgba8: impl Into<Arc<[u8]>>,
+    ) -> Self {
+        let rgba8 = rgba8.into();
         debug_assert_eq!(
             rgba8.len(),
             (width as usize) * (height as usize) * 4,
@@ -77,18 +90,18 @@ impl DisplayImage {
         }
     }
 }
- 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextCacheKey(pub u64);
- 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImageCacheKey(pub u64);
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpatialTree {
     pub nodes: Vec<SpatialNode>,
 }
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpatialNode {
     pub id: SpatialNodeId,
@@ -97,12 +110,12 @@ pub struct SpatialNode {
     pub world_transform: Transform2D,
     pub dirty: bool,
 }
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipChainStore {
     pub chains: Vec<ClipChain>,
 }
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipChain {
     pub id: ClipChainId,
@@ -110,13 +123,13 @@ pub struct ClipChain {
     pub clip: ClipRegion,
     pub parent: Option<ClipChainId>,
 }
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClipRegion {
     Rect(Rect),
     RoundedRect { rect: Rect, radius: f32 },
 }
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StackingContext {
     pub id: StackingContextId,
@@ -126,17 +139,19 @@ pub struct StackingContext {
     pub effects: Vec<Effect>,
     pub needs_offscreen: bool,
 }
- 
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlendMode {
     Normal,
     Multiply,
     Screen,
 }
- 
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Effect {
-    Blur { sigma: f32 },
+    Blur {
+        sigma: f32,
+    },
     DropShadow {
         dx: f32,
         dy: f32,
@@ -144,7 +159,7 @@ pub enum Effect {
         color: Color,
     },
 }
- 
+
 /// A retained (incrementally updatable) DisplayList data model for paint-stage caching.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetainedDisplayList {
@@ -261,6 +276,30 @@ impl RetainedDisplayList {
         }
     }
 
+    #[must_use]
+    pub fn bounds_for_object_indices(
+        &self,
+        object_indices: impl IntoIterator<Item = usize>,
+    ) -> Option<Rect> {
+        let mut bounds: Option<Rect> = None;
+        for object_index in object_indices {
+            let Some(range) = self
+                .object_item_ranges
+                .get(object_index)
+                .and_then(|range| range.clone())
+            else {
+                continue;
+            };
+            for item in &self.items[range] {
+                bounds = Some(match bounds {
+                    Some(current) => current.union(&item.visual_rect),
+                    None => item.visual_rect,
+                });
+            }
+        }
+        bounds
+    }
+
     fn compact_items(&mut self) {
         let mut rebuilt = Vec::new();
         let mut rebuilt_ranges = vec![None; self.object_item_ranges.len()];
@@ -281,8 +320,8 @@ impl RetainedDisplayList {
 #[cfg(test)]
 mod tests {
     use super::{
-        ClipChainStore, ClipChainId, DisplayItem, DisplayItemId, DisplayItemPayload, RetainedDisplayList,
-        SpatialNodeId, SpatialTree,
+        ClipChainId, ClipChainStore, DisplayItem, DisplayItemId, DisplayItemPayload,
+        RetainedDisplayList, SpatialNodeId, SpatialTree,
     };
     use zeno_core::{Color, Rect, Size};
 
@@ -334,4 +373,3 @@ mod tests {
         assert_eq!(snapshot.items[0].item_id, DisplayItemId(2));
     }
 }
- 

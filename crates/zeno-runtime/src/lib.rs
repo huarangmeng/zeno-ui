@@ -1,14 +1,12 @@
-mod app;
 pub mod animation;
+mod app;
 mod host;
 pub mod input;
 pub mod lifecycle;
 mod scheduler;
 
 pub use app::{App, AppFrame, AppView, PointerState};
-pub use host::{
-    AppHost, UiFrame, UiRuntime, run_app, run_app_with_text_system,
-};
+pub use host::{AppHost, UiFrame, UiRuntime, run_app, run_app_with_text_system};
 pub use scheduler::{FramePhases, FrameScheduler};
 
 #[cfg(test)]

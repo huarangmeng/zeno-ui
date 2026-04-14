@@ -1,62 +1,8 @@
 use skia_safe as sk;
 use zeno_core::Rect;
-use zeno_scene::{BlendMode, Effect, LayerObject, SceneBlendMode, SceneEffect, StackingContext};
+use zeno_scene::{BlendMode, Effect, StackingContext};
 
 use crate::canvas::mapping::sk_color;
-
-pub(crate) fn needs_save_layer(layer: &LayerObject) -> bool {
-    layer.offscreen
-        || layer.opacity < 1.0
-        || layer.blend_mode != SceneBlendMode::Normal
-        || !layer.effects.is_empty()
-}
-
-pub(crate) fn layer_paint(layer: &LayerObject) -> sk::Paint {
-    let mut paint = sk::Paint::default();
-    paint.set_anti_alias(true);
-    paint.set_alpha_f(layer.opacity.clamp(0.0, 1.0));
-    paint.set_blend_mode(sk_blend_mode(layer.blend_mode));
-    if let Some(filter) = layer_image_filter(layer) {
-        paint.set_image_filter(filter);
-    }
-    paint
-}
-
-fn sk_blend_mode(mode: SceneBlendMode) -> sk::BlendMode {
-    match mode {
-        SceneBlendMode::Normal => sk::BlendMode::SrcOver,
-        SceneBlendMode::Multiply => sk::BlendMode::Multiply,
-        SceneBlendMode::Screen => sk::BlendMode::Screen,
-    }
-}
-
-fn layer_image_filter(layer: &LayerObject) -> Option<sk::ImageFilter> {
-    let mut current = None;
-    for effect in &layer.effects {
-        current = match effect {
-            SceneEffect::Blur { sigma } => sk::image_filters::blur((*sigma, *sigma), None, current, None),
-            SceneEffect::DropShadow {
-                dx,
-                dy,
-                blur,
-                color,
-            } => sk::image_filters::drop_shadow(
-                (*dx, *dy),
-                (*blur, *blur),
-                sk::Color4f::from(sk_color(*color)),
-                None,
-                current,
-                None,
-            ),
-        };
-    }
-    current
-}
-
-pub(crate) fn layer_effect_bounds(layer: &LayerObject) -> sk::Rect {
-    let local_bounds = effect_bounds_for_scene_effects(layer.local_bounds, &layer.effects);
-    rect_to_sk(local_bounds)
-}
 
 pub(crate) fn needs_save_layer_for_context(context: &StackingContext) -> bool {
     context.needs_offscreen
@@ -87,30 +33,6 @@ fn rect_to_sk(bounds: Rect) -> sk::Rect {
         bounds.size.width,
         bounds.size.height,
     )
-}
-
-fn effect_bounds_for_scene_effects(bounds: Rect, effects: &[SceneEffect]) -> Rect {
-    let mut visual_bounds = bounds;
-    for effect in effects {
-        match effect {
-            SceneEffect::Blur { sigma } => {
-                visual_bounds = expand_rect(visual_bounds, sigma * 3.0);
-            }
-            SceneEffect::DropShadow { dx, dy, blur, .. } => {
-                let shadow_bounds = expand_rect(
-                    Rect::new(
-                        visual_bounds.origin.x + dx,
-                        visual_bounds.origin.y + dy,
-                        visual_bounds.size.width,
-                        visual_bounds.size.height,
-                    ),
-                    blur * 3.0,
-                );
-                visual_bounds = visual_bounds.union(&shadow_bounds);
-            }
-        }
-    }
-    visual_bounds
 }
 
 fn effect_bounds_for_display_effects(bounds: Rect, effects: &[Effect]) -> Rect {

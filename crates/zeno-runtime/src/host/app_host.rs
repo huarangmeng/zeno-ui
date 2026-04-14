@@ -3,11 +3,11 @@ use zeno_platform::desktop::DesktopShell;
 use zeno_platform::presenter::{
     AnimatedFrameContext, AnimatedFrameOutput, FrameRequest, ResolvedWindowRun,
 };
-use zeno_scene::{DisplayList, FrameReport, RenderSession, RetainedScene};
+use zeno_scene::{DisplayList, FrameReport, RenderSession};
 use zeno_text::{FallbackTextSystem, TextSystem};
 
-use crate::{App, AppFrame, AppView, PointerState, UiRuntime};
 use super::UiSceneUpdate;
+use crate::{App, AppFrame, AppView, PointerState, UiRuntime};
 
 pub struct AppHost<A> {
     app: A,
@@ -55,41 +55,26 @@ where
                 self.runtime.resize(frame.size);
                 self.runtime.set_root(root);
                 if let Some(ui_frame) = self.runtime.prepare_frame()? {
-                    let supports_display_list_submit = session.capabilities().display_list_submit;
                     match ui_frame.scene_update {
-                        UiSceneUpdate::Full { scene, display_list, .. } => {
-                            let mut report = if supports_display_list_submit {
-                                session.submit_display_list(&display_list, None, 0, 0)?
-                            } else {
-                                session.submit_retained_scene(scene, None, 0, 0)?
-                            };
+                        UiSceneUpdate::Full { display_list, .. } => {
+                            let mut report =
+                                session.submit_display_list(&display_list, None, 0, 0)?;
                             apply_display_list_stats(&mut report, &display_list);
                             report
                         }
                         UiSceneUpdate::Delta {
-                            scene,
-                            delta,
                             dirty_bounds,
+                            patch_upserts,
+                            patch_removes,
                             display_list,
                             ..
                         } => {
-                            let patch_upserts = delta.object_upserts.len() + delta.layer_upserts.len();
-                            let patch_removes = delta.object_removes.len() + delta.layer_removes.len();
-                            let mut report = if supports_display_list_submit {
-                                session.submit_display_list(
-                                    &display_list,
-                                    dirty_bounds,
-                                    patch_upserts,
-                                    patch_removes,
-                                )?
-                            } else {
-                                session.submit_retained_scene(
-                                    scene,
-                                    dirty_bounds,
-                                    patch_upserts,
-                                    patch_removes,
-                                )?
-                            };
+                            let mut report = session.submit_display_list(
+                                &display_list,
+                                dirty_bounds,
+                                patch_upserts,
+                                patch_removes,
+                            )?;
                             apply_display_list_stats(&mut report, &display_list);
                             report
                         }
@@ -104,10 +89,6 @@ where
                         )
                     })?
                 }
-            }
-            AppView::Scene(scene) => {
-                let mut retained = RetainedScene::from_scene(scene);
-                session.submit_retained_scene(&mut retained, None, 0, 0)?
             }
         };
         let frame_request = match self.app.animation_interval(&frame) {
@@ -192,7 +173,17 @@ mod tests {
 
     impl App for StaticApp {
         fn render(&mut self, _frame: &AppFrame) -> AppView {
-            AppView::Scene(zeno_scene::Scene::new(zeno_core::Size::new(1.0, 1.0)))
+            AppView::Compose(
+                zeno_ui::Node::new(
+                    zeno_ui::NodeId(1),
+                    zeno_ui::NodeKind::Spacer(zeno_ui::SpacerNode {
+                        width: 1.0,
+                        height: 1.0,
+                    }),
+                )
+                .width(1.0)
+                .height(1.0),
+            )
         }
 
         fn animation_interval(&self, _frame: &AppFrame) -> Option<Duration> {
@@ -206,13 +197,13 @@ mod tests {
         let output = host
             .frame(
                 AnimatedFrameContext {
-            frame_index: 0,
-            elapsed: Duration::from_millis(16),
-            delta: Duration::from_millis(16),
-            size: zeno_core::Size::new(320.0, 240.0),
-            backend: zeno_core::Backend::Skia,
-            last_report: None,
-            pointer: zeno_platform::event::PointerState::default(),
+                    frame_index: 0,
+                    elapsed: Duration::from_millis(16),
+                    delta: Duration::from_millis(16),
+                    size: zeno_core::Size::new(320.0, 240.0),
+                    backend: zeno_core::Backend::Skia,
+                    last_report: None,
+                    pointer: zeno_platform::event::PointerState::default(),
                 },
                 &mut DummyRenderSession,
             )
@@ -223,7 +214,9 @@ mod tests {
     struct DummyRenderSession;
 
     impl zeno_scene::RenderSession for DummyRenderSession {
-        fn kind(&self) -> zeno_core::Backend { zeno_core::Backend::Skia }
+        fn kind(&self) -> zeno_core::Backend {
+            zeno_core::Backend::Skia
+        }
         fn capabilities(&self) -> zeno_scene::RenderCapabilities {
             zeno_scene::RenderCapabilities {
                 gpu_compositing: true,
@@ -233,26 +226,11 @@ mod tests {
                 display_list_submit: true,
             }
         }
-        fn surface(&self) -> &zeno_scene::RenderSurface { panic!("unused") }
-        fn resize(&mut self, _width: u32, _height: u32) -> Result<(), ZenoError> { Ok(()) }
-        fn submit_retained_scene(
-            &mut self,
-            _scene: &mut zeno_scene::RetainedScene,
-            _dirty_bounds: Option<zeno_core::Rect>,
-            _patch_upserts: usize,
-            _patch_removes: usize,
-        ) -> Result<zeno_scene::FrameReport, ZenoError> {
-            Ok(zeno_scene::FrameReport {
-                backend: zeno_core::Backend::Skia,
-                command_count: 0,
-                resource_count: 0,
-                block_count: 0,
-                display_item_count: 0,
-                stacking_context_count: 0,
-                patch_upserts: 0,
-                patch_removes: 0,
-                surface_id: "dummy".into(),
-            })
+        fn surface(&self) -> &zeno_scene::RenderSurface {
+            panic!("unused")
+        }
+        fn resize(&mut self, _width: u32, _height: u32) -> Result<(), ZenoError> {
+            Ok(())
         }
         fn submit_display_list(
             &mut self,

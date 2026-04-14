@@ -1,5 +1,5 @@
 use zeno_core::{Backend, ZenoError};
-use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSurface, Renderer, RetainedScene};
+use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSurface, Renderer};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ImpellerRenderer;
@@ -17,24 +17,6 @@ impl Renderer for ImpellerRenderer {
             offscreen_rendering: true,
             display_list_submit: true,
         }
-    }
-
-    fn render_retained(
-        &self,
-        surface: &RenderSurface,
-        scene: &mut RetainedScene,
-    ) -> Result<FrameReport, ZenoError> {
-        Ok(FrameReport {
-            backend: self.kind(),
-            command_count: scene.packet_count(),
-            resource_count: scene.resource_key_count(),
-            block_count: scene.live_object_count(),
-            display_item_count: 0,
-            stacking_context_count: 0,
-            patch_upserts: 0,
-            patch_removes: 0,
-            surface_id: surface.id.clone(),
-        })
     }
 
     fn render_display_list(

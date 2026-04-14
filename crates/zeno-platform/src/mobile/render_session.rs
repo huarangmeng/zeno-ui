@@ -1,7 +1,5 @@
 use zeno_core::{Backend, Size, ZenoError, ZenoErrorCode};
-use zeno_scene::{
-    DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface, RetainedScene,
-};
+use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface};
 
 use crate::platform;
 
@@ -70,32 +68,24 @@ impl RenderSession for MobileRenderSession {
         }
     }
 
-    fn submit_retained_scene(
+    fn submit_display_list(
         &mut self,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
         _dirty_bounds: Option<zeno_core::Rect>,
         patch_upserts: usize,
         patch_removes: usize,
     ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::Android(session) => session.submit_retained_scene(scene, patch_upserts, patch_removes),
-            Self::IosView(session) => session.submit_retained_scene(scene, patch_upserts, patch_removes),
-            Self::IosMetalLayer(session) => session.submit_retained_scene(scene, patch_upserts, patch_removes),
+            Self::Android(session) => {
+                session.submit_display_list(display_list, patch_upserts, patch_removes)
+            }
+            Self::IosView(session) => {
+                session.submit_display_list(display_list, patch_upserts, patch_removes)
+            }
+            Self::IosMetalLayer(session) => {
+                session.submit_display_list(display_list, patch_upserts, patch_removes)
+            }
         }
-    }
-
-    fn submit_display_list(
-        &mut self,
-        _display_list: &DisplayList,
-        _dirty_bounds: Option<zeno_core::Rect>,
-        _patch_upserts: usize,
-        _patch_removes: usize,
-    ) -> Result<FrameReport, ZenoError> {
-        Err(mobile_session_error(
-            ZenoErrorCode::WindowRendererUnavailable,
-            "submit_display_list",
-            "display list submit is not implemented for mobile sessions",
-        ))
     }
 }
 
@@ -153,18 +143,18 @@ impl AndroidNativeWindowSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_retained_scene(
+    fn submit_display_list(
         &mut self,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
         patch_upserts: usize,
         patch_removes: usize,
     ) -> Result<FrameReport, ZenoError> {
-        submit_mobile_retained_scene(
+        submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
-            |surface, snapshot| self.presenter.render(surface, snapshot),
+            |surface, list| self.presenter.render_display_list(surface, list),
             &self.surface,
-            scene,
+            display_list,
             patch_upserts,
             patch_removes,
         )
@@ -216,18 +206,18 @@ impl IosViewSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_retained_scene(
+    fn submit_display_list(
         &mut self,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
         patch_upserts: usize,
         patch_removes: usize,
     ) -> Result<FrameReport, ZenoError> {
-        submit_mobile_retained_scene(
+        submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
-            |surface, snapshot| self.presenter.render(surface, snapshot),
+            |surface, list| self.presenter.render_display_list(surface, list),
             &self.surface,
-            scene,
+            display_list,
             patch_upserts,
             patch_removes,
         )
@@ -290,18 +280,18 @@ impl IosMetalLayerSession {
         resize_mobile_surface(&mut self.surface, width, height)
     }
 
-    fn submit_retained_scene(
+    fn submit_display_list(
         &mut self,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
         patch_upserts: usize,
         patch_removes: usize,
     ) -> Result<FrameReport, ZenoError> {
-        submit_mobile_retained_scene(
+        submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
-            |surface, snapshot| self.presenter.render(surface, snapshot),
+            |surface, list| self.presenter.render_display_list(surface, list),
             &self.surface,
-            scene,
+            display_list,
             patch_upserts,
             patch_removes,
         )
@@ -331,23 +321,20 @@ fn resize_mobile_surface(
     Ok(())
 }
 
-fn submit_mobile_retained_scene(
+fn submit_mobile_display_list(
     backend: Backend,
     capabilities: RenderCapabilities,
-    render_scene: impl FnOnce(
-        &RenderSurface,
-        &mut RetainedScene,
-    ) -> Result<FrameReport, ZenoError>,
+    render_display_list: impl FnOnce(&RenderSurface, &DisplayList) -> Result<FrameReport, ZenoError>,
     surface: &RenderSurface,
-    scene: &mut RetainedScene,
+    display_list: &DisplayList,
     patch_upserts: usize,
     patch_removes: usize,
 ) -> Result<FrameReport, ZenoError> {
-    let mut report = render_scene(surface, scene)?;
+    let mut report = render_display_list(surface, display_list)?;
     report.backend = backend;
-    report.command_count = scene.packet_count();
-    report.resource_count = scene.resource_key_count();
-    report.block_count = scene.live_object_count();
+    report.command_count = display_list.items.len();
+    report.display_item_count = display_list.items.len();
+    report.stacking_context_count = display_list.stacking_contexts.len();
     report.patch_upserts = patch_upserts;
     report.patch_removes = patch_removes;
     report.surface_id = surface.id.clone();

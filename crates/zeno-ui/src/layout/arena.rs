@@ -3,7 +3,9 @@ use std::sync::Arc;
 use zeno_core::{Point, Rect, Size};
 use zeno_text::{TextLayout, TextSystem};
 
-use crate::frontend::{compile_object_table, FrontendObjectTable};
+use crate::frontend::FrontendObjectTable;
+#[cfg(test)]
+use crate::frontend::compile_object_table;
 use crate::{Node, NodeId, NodeKind};
 
 use super::work_queue::measure_layout_workqueue;
@@ -21,6 +23,7 @@ pub(crate) struct LayoutArena {
 }
 
 impl LayoutArena {
+    #[cfg(test)]
     #[must_use]
     pub fn from_measured(root: &Node, _measured: &MeasuredNode) -> Self {
         let table = Arc::new(compile_object_table(root));
@@ -31,7 +34,9 @@ impl LayoutArena {
 
     #[must_use]
     pub fn slot(&self, node_id: NodeId) -> Option<&LayoutSlot> {
-        self.object_table.index_of(node_id).map(|index| &self.slots[index])
+        self.object_table
+            .index_of(node_id)
+            .map(|index| &self.slots[index])
     }
 
     #[must_use]
@@ -48,7 +53,8 @@ impl LayoutArena {
     #[must_use]
     #[allow(dead_code)]
     pub fn text_layout(&self, node_id: NodeId) -> Option<&TextLayout> {
-        self.slot(node_id).and_then(|slot| slot.text_layout.as_ref())
+        self.slot(node_id)
+            .and_then(|slot| slot.text_layout.as_ref())
     }
 
     #[must_use]
@@ -83,6 +89,7 @@ impl LayoutArena {
         );
     }
 
+    #[cfg(test)]
     fn collect(&mut self, node: &Node, index: usize) {
         self.slots[index] = LayoutSlot {
             frame: Rect::new(0.0, 0.0, 0.0, 0.0),
@@ -123,6 +130,7 @@ pub(crate) struct MeasuredNode {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum MeasuredKind {
     Text(TextLayout),
+    Image,
     Single(Box<MeasuredNode>),
     Multiple(Vec<MeasuredNode>),
     Spacer,
@@ -150,6 +158,7 @@ fn measured_from_layout_at(node: &Node, index: usize, arena: &LayoutArena) -> Me
                 .clone()
                 .expect("text layout should exist for text node"),
         ),
+        NodeKind::Image(_) => MeasuredKind::Image,
         NodeKind::Container(child) => MeasuredKind::Single(Box::new(measured_from_layout_at(
             child,
             arena.object_table.child_indices(index)[0],
@@ -169,4 +178,3 @@ fn measured_from_layout_at(node: &Node, index: usize, arena: &LayoutArena) -> Me
         kind,
     }
 }
-

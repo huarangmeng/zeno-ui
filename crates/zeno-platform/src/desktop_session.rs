@@ -1,18 +1,15 @@
 use crate::NativeSurface;
+use crate::session::ResolvedSession;
 #[cfg(feature = "desktop_winit")]
 use winit::event_loop::ActiveEventLoop;
 #[cfg(feature = "desktop_winit")]
 use winit::window::Window;
-use zeno_core::{Backend, ZenoError, ZenoErrorCode};
-use zeno_scene::{
-    DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface, RetainedScene,
-};
-use crate::session::ResolvedSession;
+use zeno_core::{Backend, Color, ZenoError, ZenoErrorCode};
+use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface};
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
 mod impeller_metal;
 mod session_plan;
-mod scene;
 #[cfg(feature = "desktop_winit")]
 mod skia_gl;
 
@@ -38,6 +35,14 @@ pub(crate) fn desktop_session_error(
     message: impl Into<String>,
 ) -> ZenoError {
     ZenoError::invalid_configuration(code, "shell.desktop_session", operation, message)
+}
+
+pub(crate) fn default_clear_color(transparent: bool) -> Color {
+    if transparent {
+        Color::TRANSPARENT
+    } else {
+        Color::WHITE
+    }
 }
 
 #[cfg(feature = "desktop_winit")]
@@ -130,24 +135,6 @@ impl RenderSession for DesktopRenderSession {
         }
     }
 
-    fn submit_retained_scene(
-        &mut self,
-        scene: &mut RetainedScene,
-        dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
-    ) -> Result<FrameReport, ZenoError> {
-        match self {
-            Self::Skia(session) => {
-                session.submit_retained_scene(scene, dirty_bounds, patch_upserts, patch_removes)
-            }
-            #[cfg(target_os = "macos")]
-            Self::Impeller(session) => {
-                session.submit_retained_scene(scene, dirty_bounds, patch_upserts, patch_removes)
-            }
-        }
-    }
-
     fn submit_display_list(
         &mut self,
         display_list: &DisplayList,
@@ -156,9 +143,12 @@ impl RenderSession for DesktopRenderSession {
         patch_removes: usize,
     ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::Skia(session) => {
-                session.submit_display_list(display_list, dirty_bounds, patch_upserts, patch_removes)
-            }
+            Self::Skia(session) => session.submit_display_list(
+                display_list,
+                dirty_bounds,
+                patch_upserts,
+                patch_removes,
+            ),
             #[cfg(target_os = "macos")]
             Self::Impeller(session) => session.submit_display_list(
                 display_list,

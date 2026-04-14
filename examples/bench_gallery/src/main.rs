@@ -47,8 +47,8 @@ fn main() {
                 } else {
                     patch_frames += 1;
                 }
-                total_commands += frame.scene_mut().packet_count();
-                total_blocks += frame.scene().live_object_count();
+                total_commands += frame.display_list().items.len();
+                total_blocks += frame.display_list().items.len();
             }
         }
 

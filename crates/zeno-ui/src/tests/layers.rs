@@ -15,10 +15,9 @@ fn layer_creating_paint_change_emits_direct_layer_patch() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
-    let display_list = snapshot_display_list(
-        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
-    );
+    let _ = engine.compose_update(&first, Size::new(320.0, 240.0));
+    let display_list =
+        snapshot_display_list(engine.compose_update(&second, Size::new(320.0, 240.0)));
 
     assert_eq!(display_list.stacking_contexts.len(), 1);
     let context = &display_list.stacking_contexts[0];
@@ -43,10 +42,9 @@ fn adding_layer_rehomes_descendant_blocks_in_patch() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
-    let display_list = snapshot_display_list(
-        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
-    );
+    let _ = engine.compose_update(&first, Size::new(320.0, 240.0));
+    let display_list =
+        snapshot_display_list(engine.compose_update(&second, Size::new(320.0, 240.0)));
 
     assert_eq!(display_list.stacking_contexts.len(), 1);
     let text_item = display_list
@@ -73,10 +71,9 @@ fn removing_layer_rehomes_descendant_blocks_in_patch() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
-    let display_list = snapshot_display_list(
-        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
-    );
+    let _ = engine.compose_update(&first, Size::new(320.0, 240.0));
+    let display_list =
+        snapshot_display_list(engine.compose_update(&second, Size::new(320.0, 240.0)));
 
     let text_item = display_list
         .items
@@ -105,12 +102,14 @@ fn layer_effect_change_emits_direct_layer_upsert() {
         .key("root");
     let mut engine = ComposeEngine::new(&FallbackTextSystem);
 
-    let _ = snapshot_submit(engine.compose_submit_retained(&first, Size::new(320.0, 240.0)));
-    let display_list = snapshot_display_list(
-        engine.compose_submit_retained(&second, Size::new(320.0, 240.0)),
-    );
+    let _ = engine.compose_update(&first, Size::new(320.0, 240.0));
+    let display_list =
+        snapshot_display_list(engine.compose_update(&second, Size::new(320.0, 240.0)));
 
-    let context = display_list.stacking_contexts.first().expect("stacking context");
+    let context = display_list
+        .stacking_contexts
+        .first()
+        .expect("stacking context");
     assert_eq!(context.blend_mode, zeno_scene::BlendMode::Multiply);
     assert_eq!(
         context.effects,

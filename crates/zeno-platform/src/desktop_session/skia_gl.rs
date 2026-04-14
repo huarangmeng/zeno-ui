@@ -15,13 +15,11 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_skia::{
     SkiaTextCache, render_display_list_region_to_canvas, render_display_list_to_canvas,
-    render_retained_scene_region_to_canvas, render_retained_scene_to_canvas,
 };
 use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
-use zeno_scene::{DisplayList, FrameReport, RenderSurface, RetainedScene};
+use zeno_scene::{DisplayList, FrameReport, RenderSurface};
 
-use super::desktop_session_error;
-use super::scene::default_clear_color;
+use super::{default_clear_color, desktop_session_error};
 use crate::NativeSurface;
 
 pub(super) struct SkiaGlSession {
@@ -124,92 +122,6 @@ impl SkiaGlSession {
         self.gl_surface.resize(&self.gl_context, width, height);
         self.surface.size = Size::new(width.get() as f32, height.get() as f32);
         Ok(())
-    }
-
-    pub(super) fn submit_retained_scene(
-        &mut self,
-        scene: &mut RetainedScene,
-        dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
-    ) -> Result<FrameReport, ZenoError> {
-        let size = self.window.inner_size();
-        let (width, height) = (size.width.max(1), size.height.max(1));
-        self.resize(width, height)?;
-
-        let mut framebuffer_binding = 0;
-        unsafe {
-            gl::GetIntegerv(gl::FRAMEBUFFER_BINDING, &mut framebuffer_binding);
-        }
-
-        let framebuffer_info = sk::gpu::gl::FramebufferInfo {
-            fboid: framebuffer_binding as u32,
-            format: gl::RGBA8,
-            protected: sk::gpu::Protected::No,
-        };
-        let backend_render_target = sk::gpu::backend_render_targets::make_gl(
-            (width as i32, height as i32),
-            self.gl_config.num_samples() as usize,
-            self.gl_config.stencil_size() as usize,
-            framebuffer_info,
-        );
-        let mut surface = sk::gpu::surfaces::wrap_backend_render_target(
-            &mut self.gr_context,
-            &backend_render_target,
-            sk::gpu::SurfaceOrigin::BottomLeft,
-            sk::ColorType::RGBA8888,
-            None,
-            None,
-        )
-        .ok_or_else(|| {
-            desktop_session_error(
-                ZenoErrorCode::SessionWrapRenderTargetFailed,
-                "render_retained_scene",
-                "failed to wrap GL render target",
-            )
-        })?;
-        zeno_session_log!(
-            trace,
-            op = "submit_retained_scene",
-            backend = ?Backend::Skia,
-            mode = if dirty_bounds.is_some() { "patch" } else { "full" },
-            surface = %self.surface.id,
-            scale_factor = self.window.scale_factor(),
-            clear = ?self.clear_color,
-            ?dirty_bounds,
-            "skia macos retained scene submit"
-        );
-        if let Some(bounds) = dirty_bounds {
-            render_retained_scene_region_to_canvas(
-                surface.canvas(),
-                scene,
-                bounds,
-                &mut self.text_cache,
-            );
-        } else {
-            render_retained_scene_to_canvas(surface.canvas(), scene, &mut self.text_cache);
-        }
-        self.gr_context.flush_and_submit();
-        self.gl_surface
-            .swap_buffers(&self.gl_context)
-            .map_err(|error| {
-                desktop_session_error(
-                    ZenoErrorCode::SessionSwapBuffersFailed,
-                    "swap_buffers",
-                    error.to_string(),
-                )
-            })?;
-        Ok(FrameReport {
-            backend: Backend::Skia,
-            command_count: scene.packet_count(),
-            resource_count: scene.resource_key_count(),
-            block_count: scene.live_object_count(),
-            display_item_count: 0,
-            stacking_context_count: 0,
-            patch_upserts,
-            patch_removes,
-            surface_id: self.surface.id.clone(),
-        })
     }
 
     pub(super) fn submit_display_list(

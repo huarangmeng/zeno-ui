@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use zeno_ui::Node;
 use zeno_core::{Backend, Platform, Point, Size};
-use zeno_scene::{FrameReport, Scene};
+use zeno_scene::FrameReport;
+use zeno_ui::Node;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PointerState {
@@ -38,7 +38,6 @@ pub struct AppFrame {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppView {
     Compose(Node),
-    Scene(Scene),
 }
 
 pub trait App {

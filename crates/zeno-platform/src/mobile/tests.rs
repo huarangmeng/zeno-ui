@@ -1,10 +1,12 @@
 use std::num::NonZeroUsize;
 
+use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
 use zeno_core::{
     AppConfig, Backend, Color, Platform, RendererConfig, Size, WindowConfig, ZenoErrorCode,
 };
-use zeno_scene::{RetainedScene, Scene};
-use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
+use zeno_scene::{
+    ClipChainId, DisplayItem, DisplayItemId, DisplayItemPayload, DisplayList, Scene, SpatialNodeId,
+};
 
 use super::{
     AndroidAttachContext, IosMetalLayerAttachContext, IosViewAttachContext, MobileAttachContext,
@@ -21,6 +23,23 @@ fn test_scene() -> Scene {
     let mut scene = Scene::new(Size::new(120.0, 80.0));
     scene.clear_color = Some(Color::WHITE);
     scene
+}
+
+fn test_display_list() -> DisplayList {
+    let size = Size::new(120.0, 80.0);
+    let mut display_list = DisplayList::empty(size);
+    display_list.items.push(DisplayItem {
+        item_id: DisplayItemId(1),
+        spatial_id: SpatialNodeId(0),
+        clip_chain_id: ClipChainId(0),
+        stacking_context: None,
+        visual_rect: zeno_core::Rect::new(0.0, 0.0, size.width, size.height),
+        payload: DisplayItemPayload::FillRect {
+            rect: zeno_core::Rect::new(0.0, 0.0, size.width, size.height),
+            color: Color::WHITE,
+        },
+    });
+    display_list
 }
 
 #[test]
@@ -280,10 +299,10 @@ fn create_render_session_builds_android_session() {
         )
         .expect("android attached session");
     let mut session = create_mobile_render_session(attached).expect("android render session");
-    let mut scene = RetainedScene::from_scene(test_scene());
+    let display_list = test_display_list();
     let report = session
-        .submit_retained_scene(&mut scene, None, 0, 0)
-        .expect("submit scene");
+        .submit_display_list(&display_list, None, 0, 0)
+        .expect("submit display list");
 
     assert_eq!(session.kind(), Backend::Skia);
     assert_eq!(
@@ -316,10 +335,10 @@ fn prepare_render_session_builds_android_skia_session() {
         )
         .expect("android render session");
     session.resize(800, 600).expect("resize mobile session");
-    let mut scene = RetainedScene::from_scene(test_scene());
+    let display_list = test_display_list();
     let report = session
-        .submit_retained_scene(&mut scene, None, 0, 0)
-        .expect("submit scene");
+        .submit_display_list(&display_list, None, 0, 0)
+        .expect("submit display list");
 
     assert_eq!(session.kind(), Backend::Skia);
     assert_eq!(session.surface().size.width, 800.0);

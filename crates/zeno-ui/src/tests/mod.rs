@@ -6,14 +6,12 @@ mod modifiers;
 mod smoke;
 
 use crate::{
-    Alignment, Arrangement, BlendMode, ComposeEngine, ComposeRenderer, CrossAxisAlignment, DirtyReason,
-    EdgeInsets, Modifier, Node, NodeId, NodeKind, SpacerNode, TextNode, compose_scene,
-    dump_layout, dump_scene, RetainedComposeUpdate,
+    Alignment, Arrangement, BlendMode, ComposeEngine, ComposeRenderer, ComposeUpdate,
+    CrossAxisAlignment, DirtyReason, EdgeInsets, ImageNode, Modifier, Node, NodeId, NodeKind,
+    SpacerNode, TextNode, dump_layout,
 };
 use zeno_core::{Color, Point, Size, Transform2D};
-use zeno_scene::{
-    DisplayList, RenderSceneUpdate, Scene, SceneBlendMode, SceneClip, SceneEffect,
-};
+use zeno_scene::{ClipRegion, DisplayList, Effect};
 use zeno_text::FallbackTextSystem;
 
 // Local test helpers to avoid depending on zeno-foundation in this crate's tests,
@@ -23,7 +21,8 @@ mod helpers {
 
     use zeno_text::FontDescriptor;
 
-    use super::{Node, NodeId, NodeKind, SpacerNode, TextNode};
+    use super::{ImageNode, Node, NodeId, NodeKind, SpacerNode, TextNode};
+    use crate::ImageSource;
     use crate::style::Axis;
 
     static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
@@ -47,6 +46,19 @@ mod helpers {
         Node::new(
             next_node_id(),
             NodeKind::Spacer(SpacerNode { width, height }),
+        )
+    }
+
+    pub fn image_rgba8(width: f32, height: f32, rgba8: Vec<u8>) -> Node {
+        Node::new(
+            next_node_id(),
+            NodeKind::Image(ImageNode {
+                source: ImageSource::rgba8(
+                    width.max(1.0).round() as u32,
+                    height.max(1.0).round() as u32,
+                    rgba8,
+                ),
+            }),
         )
     }
 
@@ -81,43 +93,17 @@ mod helpers {
 
 pub(crate) use helpers::*;
 
-pub(crate) fn snapshot_submit(update: RetainedComposeUpdate<'_>) -> RenderSceneUpdate {
+pub(crate) fn snapshot_display_list(update: ComposeUpdate) -> DisplayList {
     match update {
-        RetainedComposeUpdate::Full { scene, .. } => RenderSceneUpdate::Full(scene.snapshot_scene()),
-        RetainedComposeUpdate::Delta { scene, delta, .. } => RenderSceneUpdate::Delta {
-            current: scene.snapshot_scene(),
-            delta,
-        },
+        ComposeUpdate::Full { display_list, .. } => display_list,
+        ComposeUpdate::Delta { display_list, .. } => display_list,
     }
 }
 
-pub(crate) fn snapshot_display_list(update: RetainedComposeUpdate<'_>) -> DisplayList {
-    match update {
-        RetainedComposeUpdate::Full { display_list, .. } => display_list,
-        RetainedComposeUpdate::Delta { display_list, .. } => display_list,
-    }
-}
-
-pub(crate) fn snapshot_outputs(update: RetainedComposeUpdate<'_>) -> (RenderSceneUpdate, DisplayList) {
-    match update {
-        RetainedComposeUpdate::Full {
-            scene,
-            display_list,
-            ..
-        } => {
-            (RenderSceneUpdate::Full(scene.snapshot_scene()), display_list)
-        }
-        RetainedComposeUpdate::Delta {
-            scene,
-            delta,
-            display_list,
-            ..
-        } => (
-            RenderSceneUpdate::Delta {
-                current: scene.snapshot_scene(),
-                delta,
-            },
-            display_list,
-        ),
-    }
+pub(crate) fn snapshot_outputs(update: ComposeUpdate) -> (ComposeUpdate, DisplayList) {
+    let display_list = match &update {
+        ComposeUpdate::Full { display_list, .. } => display_list.clone(),
+        ComposeUpdate::Delta { display_list, .. } => display_list.clone(),
+    };
+    (update, display_list)
 }

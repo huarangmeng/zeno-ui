@@ -3,7 +3,7 @@ use std::time::Duration;
 use zeno_core::{
     AppConfig, Backend, Platform, Point, Size, WindowConfig, ZenoError, ZenoErrorCode,
 };
-use zeno_scene::{FrameReport, RenderSession, Scene};
+use zeno_scene::{DisplayList, FrameReport, RenderSession};
 
 use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
 #[cfg(feature = "desktop_winit")]
@@ -81,13 +81,17 @@ impl AnimatedFrameOutput {
 }
 
 #[cfg(feature = "desktop_winit")]
-pub type BoxedAnimatedSceneCallback =
-    Box<dyn FnMut(AnimatedFrameContext, &mut dyn RenderSession) -> Result<AnimatedFrameOutput, ZenoError>>;
+pub type BoxedAnimatedSceneCallback = Box<
+    dyn FnMut(
+        AnimatedFrameContext,
+        &mut dyn RenderSession,
+    ) -> Result<AnimatedFrameOutput, ZenoError>,
+>;
 
 impl DesktopShell {
     #[cfg(feature = "desktop_winit")]
     pub fn run_window(&self, config: &WindowConfig) -> Result<(), ZenoError> {
-        self.run_pending_scene_window(
+        self.run_pending_display_list_window(
             ResolvedSession::new(
                 Platform::current(),
                 config.clone(),
@@ -97,17 +101,17 @@ impl DesktopShell {
                 },
                 false,
             ),
-            {
-                let mut scene = Scene::new(config.size);
-                scene.clear_color = Some(zeno_core::Color::WHITE);
-                scene
-            },
+            DisplayList::empty(config.size),
         )
     }
 
     #[cfg(feature = "desktop_winit")]
-    pub fn run_scene_window(&self, config: &WindowConfig, scene: Scene) -> Result<(), ZenoError> {
-        self.run_pending_scene_window(
+    pub fn run_display_list_window(
+        &self,
+        config: &WindowConfig,
+        display_list: DisplayList,
+    ) -> Result<(), ZenoError> {
+        self.run_pending_display_list_window(
             ResolvedSession::new(
                 Platform::current(),
                 config.clone(),
@@ -117,22 +121,22 @@ impl DesktopShell {
                 },
                 false,
             ),
-            scene,
+            display_list,
         )
     }
 
     #[cfg(feature = "desktop_winit")]
-    pub fn run_app_scene_window(
+    pub fn run_app_display_list_window(
         &self,
         app_config: &AppConfig,
-        scene: Scene,
+        display_list: DisplayList,
     ) -> Result<ResolvedWindowRun, ZenoError> {
         let session = self.prepare_app_window_session(app_config)?;
         let outcome = ResolvedWindowRun {
             backend: session.backend.backend_kind,
             attempts: session.backend.attempts.clone(),
         };
-        self.run_pending_scene_window(session, scene)?;
+        self.run_pending_display_list_window(session, display_list)?;
         Ok(outcome)
     }
 
@@ -146,12 +150,12 @@ impl DesktopShell {
     }
 
     #[cfg(feature = "desktop_winit")]
-    pub fn run_pending_scene_window(
+    pub fn run_pending_display_list_window(
         &self,
         pending: ResolvedSession,
-        scene: Scene,
+        display_list: DisplayList,
     ) -> Result<(), ZenoError> {
-        self.run_window_session(pending, scene)
+        self.run_window_session(pending, display_list)
     }
 
     #[cfg(feature = "desktop_winit")]
@@ -162,7 +166,10 @@ impl DesktopShell {
         animator: F,
     ) -> Result<(), ZenoError>
     where
-        F: FnMut(AnimatedFrameContext, &mut dyn RenderSession) -> Result<AnimatedFrameOutput, ZenoError>
+        F: FnMut(
+                AnimatedFrameContext,
+                &mut dyn RenderSession,
+            ) -> Result<AnimatedFrameOutput, ZenoError>
             + 'static,
     {
         self.run_animated_window_session(pending, Box::new(animator))
@@ -172,7 +179,7 @@ impl DesktopShell {
     fn run_window_session(
         &self,
         resolved_session: ResolvedSession,
-        scene: Scene,
+        display_list: DisplayList,
     ) -> Result<(), ZenoError> {
         use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -191,7 +198,7 @@ impl DesktopShell {
             Some(resolved_session.backend.backend_kind),
             NativeSurfaceHostRequirement::DesktopWindow,
         );
-        let mut app = DesktopWindowApp::new(resolved_session, native_surface, scene);
+        let mut app = DesktopWindowApp::new(resolved_session, native_surface, display_list);
         event_loop.run_app(&mut app).map_err(|error| {
             ZenoError::invalid_configuration(
                 ZenoErrorCode::WindowRunAppFailed,

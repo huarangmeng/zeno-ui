@@ -1,13 +1,9 @@
-use fontdue::Font;
 use metal::{
-    Buffer, Device, MTLOrigin, MTLPixelFormat, MTLPrimitiveType, MTLRegion, MTLResourceOptions,
-    MTLSize, MTLTextureType, MTLTextureUsage, RenderPipelineState, Texture,
+    Buffer, Device, MTLOrigin, MTLPixelFormat, MTLRegion, MTLResourceOptions, MTLSize,
+    MTLTextureType, MTLTextureUsage, Texture,
 };
-use zeno_core::{Color, Point, Rect, Transform2D};
-use zeno_scene::{DrawCommand, Shape};
-use zeno_text::GlyphRasterCache;
-
-use super::text::rasterize_layout;
+use zeno_core::{Color, Rect, Transform2D};
+use zeno_scene::Shape;
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -35,76 +31,6 @@ pub(super) struct CompositeVertex {
     pub clip_position: [f32; 2],
     pub uv: [f32; 2],
     pub color: [f32; 4],
-}
-
-// 该模块只负责把 retained scene 中的绘制命令翻译成 GPU 顶点与纹理资源。
-pub(super) fn draw_commands(
-    device: &Device,
-    color_pipeline: &RenderPipelineState,
-    text_pipeline: &RenderPipelineState,
-    font: Option<&Font>,
-    encoder: &metal::RenderCommandEncoderRef,
-    commands: &[DrawCommand],
-    viewport_width: f32,
-    viewport_height: f32,
-    transform: Transform2D,
-    opacity_multiplier: f32,
-    glyph_cache: &GlyphRasterCache,
-) {
-    for command in commands {
-        match command {
-            DrawCommand::Clear(_) => {}
-            DrawCommand::Fill { shape, brush } => {
-                let zeno_scene::Brush::Solid(color) = brush;
-                if let Some(vertices) = build_shape_vertices(
-                    shape,
-                    apply_alpha(*color, opacity_multiplier),
-                    viewport_width,
-                    viewport_height,
-                    transform,
-                ) {
-                    let buffer = new_buffer(device, &vertices);
-                    encoder.set_render_pipeline_state(color_pipeline);
-                    encoder.set_vertex_buffer(0, Some(&buffer), 0);
-                    encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
-                }
-            }
-            DrawCommand::Stroke { .. } => {}
-            DrawCommand::Text {
-                position,
-                layout,
-                color,
-            } => {
-                let Some(font) = font else {
-                    continue;
-                };
-                let Some((mask, width, height)) =
-                    rasterize_layout(layout, |glyph_id, glyph, font_size| {
-                        Some(glyph_cache.get_or_rasterize(font, glyph_id, glyph, font_size))
-                    })
-                else {
-                    continue;
-                };
-                let texture = make_text_texture(device, &mask, width, height);
-                let mapped =
-                    transform.map_point(Point::new(position.x, position.y - layout.metrics.ascent));
-                let vertices = build_text_vertices(
-                    mapped.x,
-                    mapped.y,
-                    width as f32,
-                    height as f32,
-                    apply_alpha(*color, opacity_multiplier),
-                    viewport_width,
-                    viewport_height,
-                );
-                let buffer = new_buffer(device, &vertices);
-                encoder.set_render_pipeline_state(text_pipeline);
-                encoder.set_vertex_buffer(0, Some(&buffer), 0);
-                encoder.set_fragment_texture(0, Some(&texture));
-                encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
-            }
-        }
-    }
 }
 
 pub(super) fn build_shape_vertices(
@@ -262,12 +188,7 @@ pub(super) fn make_text_texture(device: &Device, alpha: &[u8], width: u32, heigh
     texture
 }
 
-pub(super) fn make_rgba_texture(
-    device: &Device,
-    rgba: &[u8],
-    width: u32,
-    height: u32,
-) -> Texture {
+pub(super) fn make_rgba_texture(device: &Device, rgba: &[u8], width: u32, height: u32) -> Texture {
     let descriptor = metal::TextureDescriptor::new();
     descriptor.set_texture_type(MTLTextureType::D2);
     descriptor.set_pixel_format(MTLPixelFormat::RGBA8Unorm);
@@ -323,9 +244,4 @@ pub(super) fn new_buffer<T>(device: &Device, values: &[T]) -> Buffer {
         std::mem::size_of_val(values) as u64,
         MTLResourceOptions::CPUCacheModeDefaultCache,
     )
-}
-
-pub(super) fn apply_alpha(color: Color, opacity_multiplier: f32) -> Color {
-    let alpha = ((f32::from(color.alpha) * opacity_multiplier).clamp(0.0, 255.0)).round() as u8;
-    Color::rgba(color.red, color.green, color.blue, alpha)
 }

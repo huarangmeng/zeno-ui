@@ -62,7 +62,12 @@ fn mark_inserted_object_dirty(
     let mut current = object.parent;
     while let Some(parent_index) = current {
         let parent_id = current_objects.object(parent_index).node_id;
-        if retained.layout().object_table().index_of(parent_id).is_some() {
+        if retained
+            .layout()
+            .object_table()
+            .index_of(parent_id)
+            .is_some()
+        {
             retained.mark_node_dirty(parent_id, DirtyReason::Structure);
             return;
         }
@@ -91,7 +96,17 @@ fn local_change_reason(
                 style_change_reason(&previous.style, &current.style, true, false)
             }
         }
-        (FrontendObjectKind::Spacer(previous_spacer), FrontendObjectKind::Spacer(current_spacer)) => {
+        (FrontendObjectKind::Image(previous_image), FrontendObjectKind::Image(current_image)) => {
+            if previous_image != current_image {
+                Some(DirtyReason::Paint)
+            } else {
+                style_change_reason(&previous.style, &current.style, false, false)
+            }
+        }
+        (
+            FrontendObjectKind::Spacer(previous_spacer),
+            FrontendObjectKind::Spacer(current_spacer),
+        ) => {
             if previous_spacer != current_spacer {
                 Some(DirtyReason::Layout)
             } else {
@@ -117,7 +132,12 @@ fn local_change_reason(
             }
             style_change_reason(&previous.style, &current.style, false, true)
         }
-        (FrontendObjectKind::Stack { axis: previous_axis }, FrontendObjectKind::Stack { axis: current_axis }) => {
+        (
+            FrontendObjectKind::Stack {
+                axis: previous_axis,
+            },
+            FrontendObjectKind::Stack { axis: current_axis },
+        ) => {
             if previous_axis != current_axis {
                 return Some(DirtyReason::Structure);
             }

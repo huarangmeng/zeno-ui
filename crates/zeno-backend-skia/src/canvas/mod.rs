@@ -1,111 +1,20 @@
-mod draw;
 mod effects;
-mod layer;
 mod mapping;
 mod text;
 
 use std::collections::HashSet;
 
 use skia_safe as sk;
-use zeno_core::{Color, Rect};
+use zeno_core::Rect;
 use zeno_scene::{
-    ClipChainId, ClipRegion, DisplayItem, DisplayItemPayload, DisplayList, RetainedScene, Scene,
-    SpatialNodeId,
+    ClipChainId, ClipRegion, DisplayItem, DisplayItemPayload, DisplayList, SpatialNodeId,
 };
 
 pub use text::{SkiaTextCache, SkiaTextCacheStats};
 
-use draw::draw_command;
 use effects::{context_effect_bounds, context_paint, needs_save_layer_for_context};
-use layer::render_retained_scene_layers;
 use mapping::{apply_transform, sk_color};
 use text::draw_text_layout;
-
-pub fn render_scene_to_canvas(canvas: &sk::Canvas, scene: &Scene, text_cache: &mut SkiaTextCache) {
-    let mut retained = RetainedScene::from_scene(scene.clone());
-    render_retained_scene_to_canvas(canvas, &mut retained, text_cache);
-}
-
-pub fn render_scene_region_to_canvas(
-    canvas: &sk::Canvas,
-    scene: &Scene,
-    dirty_rect: Rect,
-    text_cache: &mut SkiaTextCache,
-) {
-    let clip = sk::Rect::from_xywh(
-        dirty_rect.origin.x,
-        dirty_rect.origin.y,
-        dirty_rect.size.width,
-        dirty_rect.size.height,
-    );
-
-    let mut retained = RetainedScene::from_scene(scene.clone());
-    canvas.save();
-    canvas.clip_rect(clip, None, Some(false));
-    canvas.draw_rect(clip, &clear_paint(scene));
-    render_retained_scene_layers(canvas, &mut retained, text_cache);
-    canvas.restore();
-}
-
-fn clear_paint(scene: &Scene) -> sk::Paint {
-    let mut paint = sk::Paint::default();
-    paint.set_style(sk::paint::Style::Fill);
-    paint.set_anti_alias(true);
-    let clear = scene
-        .clear_color
-        .or_else(|| scene.clear_packet())
-        .unwrap_or(Color::TRANSPARENT);
-    paint.set_color(sk_color(clear));
-    paint
-}
-
-pub fn render_retained_scene_to_canvas(
-    canvas: &sk::Canvas,
-    scene: &mut RetainedScene,
-    text_cache: &mut SkiaTextCache,
-) {
-    if let Some(clear_color) = scene.clear_color {
-        canvas.clear(sk_color(clear_color));
-    }
-    if scene.live_object_count() == 0 {
-        for cmd in scene.packets() {
-            draw_command(canvas, cmd, text_cache);
-        }
-        return;
-    }
-    render_retained_scene_layers(canvas, scene, text_cache);
-}
-
-pub fn render_retained_scene_region_to_canvas(
-    canvas: &sk::Canvas,
-    scene: &mut RetainedScene,
-    dirty_rect: Rect,
-    text_cache: &mut SkiaTextCache,
-) {
-    let clip = sk::Rect::from_xywh(
-        dirty_rect.origin.x,
-        dirty_rect.origin.y,
-        dirty_rect.size.width,
-        dirty_rect.size.height,
-    );
-    canvas.save();
-    canvas.clip_rect(clip, None, Some(false));
-    canvas.draw_rect(clip, &clear_paint_retained(scene));
-    render_retained_scene_layers(canvas, scene, text_cache);
-    canvas.restore();
-}
-
-fn clear_paint_retained(scene: &mut RetainedScene) -> sk::Paint {
-    let mut paint = sk::Paint::default();
-    paint.set_style(sk::paint::Style::Fill);
-    paint.set_anti_alias(true);
-    let clear = scene
-        .clear_color
-        .or_else(|| scene.clear_packet())
-        .unwrap_or(Color::TRANSPARENT);
-    paint.set_color(sk_color(clear));
-    paint
-}
 
 pub fn render_display_list_to_canvas(
     canvas: &sk::Canvas,
@@ -152,7 +61,11 @@ fn render_display_list_scope(
         };
         match scope_entry {
             ScopeEntry::Direct => {
-                if dirty_rect.is_none_or(|dirty| item.visual_rect.intersects(&dirty)) {
+                let should_render = match dirty_rect {
+                    Some(dirty) => item.visual_rect.intersects(&dirty),
+                    None => true,
+                };
+                if should_render {
                     render_display_item(canvas, display_list, item, text_cache);
                 }
             }
@@ -160,9 +73,13 @@ fn render_display_list_scope(
                 if !rendered_child_contexts.insert(context_id) {
                     continue;
                 }
-                if dirty_rect.is_some_and(|dirty| {
-                    !stacking_context_bounds(display_list, context_id).intersects(&dirty)
-                }) {
+                let context_dirty = match dirty_rect {
+                    Some(dirty) => {
+                        stacking_context_bounds(display_list, context_id).intersects(&dirty)
+                    }
+                    None => true,
+                };
+                if !context_dirty {
                     continue;
                 }
                 render_stacking_context(canvas, display_list, context_id, dirty_rect, text_cache);
@@ -199,7 +116,13 @@ fn render_stacking_context(
     } else {
         canvas.save();
     }
-    render_display_list_scope(canvas, display_list, Some(context_id), dirty_rect, text_cache);
+    render_display_list_scope(
+        canvas,
+        display_list,
+        Some(context_id),
+        dirty_rect,
+        text_cache,
+    );
     canvas.restore_to_count(initial_save_count);
 }
 
@@ -274,8 +197,10 @@ fn scope_entry_for_item(
     match (parent_context, item.stacking_context) {
         (None, None) => Some(ScopeEntry::Direct),
         (Some(parent), Some(current)) if current == parent => Some(ScopeEntry::Direct),
-        (scope_parent, Some(current)) => immediate_child_context(display_list, scope_parent, current)
-            .map(ScopeEntry::ChildContext),
+        (scope_parent, Some(current)) => {
+            immediate_child_context(display_list, scope_parent, current)
+                .map(ScopeEntry::ChildContext)
+        }
         _ => None,
     }
 }
@@ -351,9 +276,11 @@ fn render_display_item(
                 sk::AlphaType::Premul,
                 None,
             );
-            if let Some(sk_image) =
-                sk::images::raster_from_data(&info, sk::Data::new_copy(&image.rgba8), (image.width * 4) as usize)
-            {
+            if let Some(sk_image) = sk::images::raster_from_data(
+                &info,
+                sk::Data::new_copy(&image.rgba8),
+                (image.width * 4) as usize,
+            ) {
                 let dst = sk::Rect::from_xywh(
                     image.dest_rect.origin.x,
                     image.dest_rect.origin.y,
@@ -381,7 +308,11 @@ fn paint_for_item(item: &DisplayItem) -> Option<sk::Paint> {
     Some(paint)
 }
 
-fn apply_spatial_transform(canvas: &sk::Canvas, display_list: &DisplayList, spatial_id: SpatialNodeId) {
+fn apply_spatial_transform(
+    canvas: &sk::Canvas,
+    display_list: &DisplayList,
+    spatial_id: SpatialNodeId,
+) {
     let Some(node) = display_list
         .spatial_tree
         .nodes

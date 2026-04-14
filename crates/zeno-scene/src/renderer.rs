@@ -1,19 +1,11 @@
 use zeno_core::{Backend, Platform, ZenoError};
 
-use crate::{
-    BackendProbe, DisplayList, FrameReport, RenderCapabilities, RenderSurface, RetainedScene,
-};
+use crate::{BackendProbe, DisplayList, FrameReport, RenderCapabilities, RenderSurface};
 
 pub trait Renderer: Send + Sync {
     fn kind(&self) -> Backend;
 
     fn capabilities(&self) -> RenderCapabilities;
-
-    fn render_retained(
-        &self,
-        surface: &RenderSurface,
-        scene: &mut RetainedScene,
-    ) -> Result<FrameReport, ZenoError>;
 
     fn render_display_list(
         &self,
@@ -30,14 +22,6 @@ pub trait RenderSession {
     fn surface(&self) -> &RenderSurface;
 
     fn resize(&mut self, width: u32, height: u32) -> Result<(), ZenoError>;
-
-    fn submit_retained_scene(
-        &mut self,
-        scene: &mut RetainedScene,
-        dirty_bounds: Option<zeno_core::Rect>,
-        patch_upserts: usize,
-        patch_removes: usize,
-    ) -> Result<FrameReport, ZenoError>;
 
     fn submit_display_list(
         &mut self,

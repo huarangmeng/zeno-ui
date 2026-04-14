@@ -4,7 +4,7 @@ use zeno_core::{Color, Size};
 use zeno_foundation::{column, container, text};
 use zeno_runtime::UiRuntime;
 use zeno_text::{SystemTextSystem, TextSystem};
-use zeno_ui::{EdgeInsets, dump_layout, dump_scene, Node};
+use zeno_ui::{EdgeInsets, Node, dump_layout};
 
 fn main() {
     let iterations = env::var("ZENO_TEXT_PROBE_ITERATIONS")
@@ -43,12 +43,8 @@ fn main() {
             } else {
                 patch_frames += 1;
             }
-            total_commands += frame.scene_mut().packet_count();
-            total_blocks += frame.scene().live_object_count();
-            if matches!(dump_mode.as_str(), "scene" | "all") && index + 1 == iterations {
-                let scene_snapshot = frame.scene().snapshot_scene();
-                println!("--- scene dump ---\n{}", dump_scene(&scene_snapshot));
-            }
+            total_commands += frame.display_list().items.len();
+            total_blocks += frame.display_list().items.len();
             if matches!(dump_mode.as_str(), "display_list" | "all") && index + 1 == iterations {
                 println!(
                     "--- display list ---\nitems={} stacking_contexts={}",

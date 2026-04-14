@@ -6,8 +6,8 @@
 - 当前完成度：P0 已完成；P1 已完成 retained tree、layout dirty roots 与 Structured Scene 的 MVP 主链路；P2 中“文本主路径 + bench/devtools 工程化能力”已完成，后续重点转向更复杂 effect/filter、golden image 与移动端 presenter 原生化。
 
 ## 当前阶段判断
-- 当前主链路已经成立：`zeno-ui -> RetainedScene -> zeno-runtime -> zeno-platform -> backend-*`。
-- 当前主链路已经进一步升级为：`zeno-ui -> RetainedDisplayList/DisplayList + RetainedScene -> zeno-runtime -> zeno-platform -> backend-*`。
+- 当前主链路已经从 retained submit 协议前推到：`zeno-ui(内部 retained 数据面) -> DisplayList -> zeno-runtime -> zeno-platform -> backend-*`。
+- retained 提交链已从 runtime/platform/backend 与 `zeno-scene` 公开 API 中移除；当前只剩 `RetainedDisplayList` 作为内部增量缓存数据面。
 - 当前最大的收益点不在继续堆更多组件或绘制命令，而在补齐 retained tree、帧调度、缓存与统一的渲染会话抽象。
 - 桌面是当前最成熟的验证面：Skia 可用，macOS Impeller 有 Metal presenter 原型。
 - V2 对象表架构已在当前代码线上原地落地：`FrontendObjectTable` 统一索引与对象属性、`DirtyTable`（bitset + generation）管理六种脏类型、`LayoutWorkQueue` 两阶段工作队列驱动布局、reconcile 基于对象 diff、scene/patch/fragment 全部 index-first 显式栈遍历。`Node` 声明树已退缩为 frontend compile 输入。
@@ -17,7 +17,7 @@
 
 ### 1. 局部更新能力已具备 MVP，仍待继续细化
 - `zeno-ui` 已具备 retained tree、节点 dirty、layout dirty roots 与局部 relayout 路径；当前 runtime 数据面已收敛为 `FrontendObjectTable + DirtyTable + LayoutArena + FragmentStore`，dirty/fragment/patch 主路径全部 index-first。
-- `Scene` 已从单纯扁平命令流升级到 object/delta 模型，而运行时 session 热路径已经切换为直接消费 `RetainedScene`。
+- `Scene` 已从单纯扁平命令流升级到 object/delta 模型；当前 retained 数据面主要服务于内部增量生成，而运行时 session 热路径已经统一为直接消费 `DisplayList`。
 - 当前剩余差距主要在更细粒度的 dirty root 归并、更复杂结构编辑下的 patch 收敛，以及后端更深层级的局部 GPU 提交能力。
 - V2 对象表架构已落地，当前热路径已为 index-only；后续优化方向聚焦于更细粒度 compositor、draw packet buffer 局部重写与 GPU 级局部提交。
 
@@ -31,7 +31,7 @@
 - 当前剩余工作主要是把移动端已成型的 presenter builder 继续推进到真实 GPU 生命周期，而不是拆成多个平台专用 crate。
 
 ### 4. Scene 已完成第一阶段结构化，第二阶段仍待推进
-- 当前 `Scene` / `RetainedScene` 已具备 `RenderObject`、`RenderObjectDelta` 与 retained graph，不再只是单纯扁平命令流。
+- 当前 `Scene` 仍保留 `RenderObject` 快照表达供 backend/test 辅助使用，但正式增量主链已经切到 `RetainedDisplayList + DisplayList`。
 - 当前剩余差距主要是 packet arena 管理、Spatial/Clip 独立真相源、更强的资源句柄化与更缓存友好的结构。
 
 ### 5. 文本系统主路径已打通，仍待继续做强
@@ -86,7 +86,7 @@
 
 ### P1：升级 Scene 结构
 - 状态：已完成（MVP）
-- 已完成 `RenderObject`、`RenderObjectDelta`、`RetainedScene` 主数据结构，并打通 compose/runtime/platform/backend retained 提交流。
+- 已完成 `RenderObject` / `DisplayList` / `RetainedDisplayList` 主数据结构，并打通 compose/runtime/platform/backend 的 `DisplayList` 单轨提交流。
 - 已完成 block 统计、patch upserts/removes 统计与 session 侧 retained patch 消费入口。
 
 ### P2：升级文本系统
@@ -103,10 +103,10 @@
 
 ### P3：升级到 DisplayList + Compositor
 - 状态：协议层已完成，进入 compositor 基础设施阶段
-- 第一步：以 retained scene graph 消除 `Scene snapshot + apply_delta` 的合并成本，并让后端停止每帧重建临时 HashMap。已完成。
+- 第一步：以 retained 过渡层消除 `Scene snapshot + apply_delta` 的合并成本，并让后端停止每帧重建临时 HashMap。已完成历史使命。
 - 第二步：拆出 `SpatialTree` 与 `ClipChainStore`，让 transform/clip 成为独立真相源。已完成。
 - 第三步：以 `RetainedDisplayList` 替换 `FragmentStore + patch collect`，让 paint-only 更新只修改脏对象的 item 区间。已完成。
-- 第四步：让 backend 原生消费 `DisplayList`，而不是通过 retained scene 或桥接协议中转。已完成，Skia 与 macOS Impeller 都已具备原生 `DisplayList` renderer，并支持文本与图像 payload。
+- 第四步：让 backend 原生消费 `DisplayList`，而不是通过 retained/scene 桥接协议中转。已完成，Skia 与 macOS Impeller 都已具备原生 `DisplayList` renderer，并支持文本与图像 payload。
 - 第五步：引入 `DamageTracker + TileGrid/TileCache + CompositorLayerTree`，让 rasterize 只处理脏 tiles，并把 transform/opacity 动画下沉为 compositor-only 帧。当前主要待完成。
 - 参考文档：`display-list-compositor.md`
 
@@ -115,6 +115,7 @@
 ### zeno-ui
 - 引入 `NodeId`、diff、dirty propagation、布局缓存。
 - 把 `ComposeRenderer` 从“单次函数式翻译器”演进为“可保留上下文的 compose engine”。
+- 图片方向已从节点内联像素推进到资源引用模型；下一步应继续扩展 `ImageSource` 的多来源、解码缓存与资源失效策略。
 
 ### zeno-scene
 - 保持 `DrawCommand` 的简单性，但逐步补充资源句柄和更适合后端缓存的数据结构。
@@ -124,6 +125,7 @@
 ### zeno-runtime
 - 继续保留 backend probe/fallback 逻辑。
 - 让 `ResolvedSession` 继续承担统一 descriptor 角色，并把平台、attempts 与调试元数据稳定沉淀在这一层。
+- `UiFrame` / `UiRuntime` 的主观测面也应保持 display-list-first，避免 examples 或工具链重新回流到旧 scene/retained 观测接口。
 
 ### zeno-platform
 - 保持 shell 只负责窗口、surface、事件循环和宿主对象。
@@ -169,8 +171,8 @@
 - `UiRuntime` 已成为内部重绘决策与 frame 准备入口，对上层隐藏 `ComposeEngine`。
 - `FrameScheduler` 已将桌面空闲态持续 redraw 改为按需重绘。
 - `RetainedComposeTree` 已具备稳定 `NodeId` identity、index-first dirty propagation、index-first layout dirty roots 与局部 relayout 主链路。retained runtime 已完成 V2 对象表架构：`FrontendObjectTable` 为唯一真相源、`DirtyTable` 管理六种脏类型、`LayoutWorkQueue` 两阶段工作队列驱动布局、reconcile 基于对象 diff、scene/patch/fragment 全部基于对象表显式栈遍历。
-- `Scene` 已具备 `RenderObject` / `RenderObjectDelta` / `RetainedScene`，桌面与移动端 session 主热路径已按 retained 提交模型消费场景。
-- `DisplayList` / `RetainedDisplayList` / `SpatialTree` / `ClipChainStore` / `StackingContext` 已进入运行时主链，`TextRun` 与 `Image` payload 已升级为可直接渲染的数据面。
+- `Scene` 仍提供 `RenderObject` 快照表达，但桌面与移动端 session 主热路径已经统一按 `DisplayList` 提交模型消费场景。
+- `DisplayList` / `RetainedDisplayList` / `SpatialTree` / `ClipChainStore` / `StackingContext` 已进入运行时主链，`TextRun` 与 `Image` payload 已升级为可直接渲染的数据面；其中图片链路已进一步具备 `ImageSource + ImageResourceKey + ImageResourceTable` 的最小资源模型。
 - `SkiaTextCache` 已具备 typeface/font 缓存与命中统计。
 - 帧统计已输出 `block_count`、`patch_upserts`、`patch_removes`，可直接观察增量提交行为。
 - 下一代关键指标需要扩展到 `damage rect count`、`dirty tile count`、`tile cache hit ratio`、`rasterize time`、`composite time` 与 compositor-only animation frame ratio。

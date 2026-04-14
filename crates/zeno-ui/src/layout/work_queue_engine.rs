@@ -1,15 +1,15 @@
 use std::sync::Arc;
 
 use zeno_core::{Point, Rect, Size};
-use zeno_text::{line_box, TextParagraph, TextSystem};
+use zeno_text::{TextParagraph, TextSystem, line_box};
 
-use crate::frontend::{compile_object_table, FrontendObjectKind, FrontendObjectTable};
+use crate::frontend::{FrontendObjectKind, FrontendObjectTable, compile_object_table};
+use crate::layout::remaining_available_for_axis;
 use crate::layout::work_queue::{LayoutTask, LayoutWorkQueue};
 use crate::layout::{
-    aligned_offset, aligned_offset_for_cross_axis, arranged_gap_and_offset, main_axis_extent,
-    stack_content_size, stack_cross_extent, LayoutArena, NodeLayoutData,
+    LayoutArena, NodeLayoutData, aligned_offset, aligned_offset_for_cross_axis,
+    arranged_gap_and_offset, main_axis_extent, stack_content_size, stack_cross_extent,
 };
-use crate::layout::remaining_available_for_axis;
 use crate::{Axis, Node, Style};
 
 pub(crate) fn measure_layout_workqueue(
@@ -28,7 +28,16 @@ pub(crate) fn measure_layout_with_objects(
     text_system: &dyn TextSystem,
 ) -> LayoutArena {
     let mut arena = LayoutArena::new(Arc::new(objects.clone()));
-    run_queue(objects, &mut arena, LayoutTask::Measure { index: 0, origin, available: viewport }, text_system);
+    run_queue(
+        objects,
+        &mut arena,
+        LayoutTask::Measure {
+            index: 0,
+            origin,
+            available: viewport,
+        },
+        text_system,
+    );
     arena
 }
 
@@ -61,7 +70,9 @@ pub(crate) fn finalize_existing_node(
 ) {
     let object = objects.object(index);
     match &object.kind {
-        FrontendObjectKind::Text(_) | FrontendObjectKind::Spacer(_) => {}
+        FrontendObjectKind::Text(_)
+        | FrontendObjectKind::Image(_)
+        | FrontendObjectKind::Spacer(_) => {}
         FrontendObjectKind::Container => {
             let child_index = objects.child_indices(index)[0];
             finalize_container(index, origin, available, child_index, objects, arena);
@@ -72,7 +83,15 @@ pub(crate) fn finalize_existing_node(
         }
         FrontendObjectKind::Stack { axis } => {
             let child_indices = objects.child_indices(index).to_vec();
-            finalize_stack(index, origin, available, &child_indices, *axis, objects, arena);
+            finalize_stack(
+                index,
+                origin,
+                available,
+                &child_indices,
+                *axis,
+                objects,
+                arena,
+            );
         }
     }
 }
@@ -87,15 +106,31 @@ fn run_queue(
     q.push(root_task);
     while let Some(task) = q.pop() {
         match task {
-            LayoutTask::Measure { index, origin, available } => {
-                measure_task(index, origin, available, objects, text_system, arena, &mut q)
-            }
-            LayoutTask::FinalizeContainer { index, origin, available, child_index } => {
-                finalize_container(index, origin, available, child_index, objects, arena)
-            }
-            LayoutTask::FinalizeBox { index, origin, available, child_indices } => {
-                finalize_box(index, origin, available, &child_indices, objects, arena)
-            }
+            LayoutTask::Measure {
+                index,
+                origin,
+                available,
+            } => measure_task(
+                index,
+                origin,
+                available,
+                objects,
+                text_system,
+                arena,
+                &mut q,
+            ),
+            LayoutTask::FinalizeContainer {
+                index,
+                origin,
+                available,
+                child_index,
+            } => finalize_container(index, origin, available, child_index, objects, arena),
+            LayoutTask::FinalizeBox {
+                index,
+                origin,
+                available,
+                child_indices,
+            } => finalize_box(index, origin, available, &child_indices, objects, arena),
             LayoutTask::ContinueStack {
                 index,
                 origin,
@@ -158,11 +193,37 @@ fn measure_task(
             let layout = text_system.layout(paragraph);
             let content = line_box(&layout);
             let size = finalize_size_for_style(&object.style, available, content);
-            arena.upsert(index, Rect::new(origin.x, origin.y, size.width, size.height), Some(layout));
+            arena.upsert(
+                index,
+                Rect::new(origin.x, origin.y, size.width, size.height),
+                Some(layout),
+            );
+        }
+        FrontendObjectKind::Image(image) => {
+            let (intrinsic_width, intrinsic_height) = image.source.dimensions();
+            let width = object
+                .style
+                .width
+                .unwrap_or(intrinsic_width as f32)
+                .min(available.width.max(0.0));
+            let height = object
+                .style
+                .height
+                .unwrap_or(intrinsic_height as f32)
+                .min(available.height.max(0.0));
+            arena.upsert(index, Rect::new(origin.x, origin.y, width, height), None);
         }
         FrontendObjectKind::Spacer(spacer) => {
-            let width = object.style.width.unwrap_or(spacer.width).min(available.width.max(0.0));
-            let height = object.style.height.unwrap_or(spacer.height).min(available.height.max(0.0));
+            let width = object
+                .style
+                .width
+                .unwrap_or(spacer.width)
+                .min(available.width.max(0.0));
+            let height = object
+                .style
+                .height
+                .unwrap_or(spacer.height)
+                .min(available.height.max(0.0));
             arena.upsert(index, Rect::new(origin.x, origin.y, width, height), None);
         }
         FrontendObjectKind::Container => {
@@ -170,8 +231,17 @@ fn measure_task(
             let padding = object.style.padding;
             let child_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
             let child_available = content_available_for_style(&object.style, available);
-            q.push(LayoutTask::FinalizeContainer { index, origin, available, child_index });
-            q.push(LayoutTask::Measure { index: child_index, origin: child_origin, available: child_available });
+            q.push(LayoutTask::FinalizeContainer {
+                index,
+                origin,
+                available,
+                child_index,
+            });
+            q.push(LayoutTask::Measure {
+                index: child_index,
+                origin: child_origin,
+                available: child_available,
+            });
         }
         FrontendObjectKind::Box => {
             let child_indices = objects.child_indices(index).to_vec();
@@ -185,7 +255,11 @@ fn measure_task(
             let padding = object.style.padding;
             let content_origin = Point::new(origin.x + padding.left, origin.y + padding.top);
             for child_index in child_indices.into_iter().rev() {
-                q.push(LayoutTask::Measure { index: child_index, origin: content_origin, available: child_available });
+                q.push(LayoutTask::Measure {
+                    index: child_index,
+                    origin: content_origin,
+                    available: child_available,
+                });
             }
         }
         FrontendObjectKind::Stack { .. } => {
@@ -212,7 +286,11 @@ fn finalize_container(
     let object = objects.object(index);
     let child_size = arena.slot_at(child_index).frame.size;
     let size = finalize_size_for_style(&object.style, available, child_size);
-    arena.upsert(index, Rect::new(origin.x, origin.y, size.width, size.height), None);
+    arena.upsert(
+        index,
+        Rect::new(origin.x, origin.y, size.width, size.height),
+        None,
+    );
 }
 
 fn finalize_box(
@@ -263,7 +341,11 @@ fn finalize_box(
             arena,
         );
     }
-    arena.upsert(index, Rect::new(origin.x, origin.y, size.width, size.height), None);
+    arena.upsert(
+        index,
+        Rect::new(origin.x, origin.y, size.width, size.height),
+        None,
+    );
 }
 
 fn continue_stack(
@@ -282,7 +364,15 @@ fn continue_stack(
         unreachable!("continue_stack only accepts stack objects");
     };
     if next_child_offset >= child_indices.len() {
-        finalize_stack(index, origin, available, child_indices, axis, objects, arena);
+        finalize_stack(
+            index,
+            origin,
+            available,
+            child_indices,
+            axis,
+            objects,
+            arena,
+        );
         return;
     }
     let padding = object.style.padding;
@@ -298,7 +388,11 @@ fn continue_stack(
         measured_child_offset: next_child_offset,
         used_main_before_child: used_main,
     });
-    q.push(LayoutTask::Measure { index: child_index, origin: content_origin, available: child_available });
+    q.push(LayoutTask::Measure {
+        index: child_index,
+        origin: content_origin,
+        available: child_available,
+    });
 }
 
 fn resume_stack(
@@ -389,7 +483,11 @@ fn finalize_stack(
             arena,
         );
     }
-    arena.upsert(index, Rect::new(origin.x, origin.y, size.width, size.height), None);
+    arena.upsert(
+        index,
+        Rect::new(origin.x, origin.y, size.width, size.height),
+        None,
+    );
 }
 
 fn shift_subtree(
@@ -421,8 +519,14 @@ fn finalize_size_for_style(style: &Style, available: Size, content: Size) -> Siz
         content.height + style.padding.vertical(),
     );
     Size::new(
-        style.width.unwrap_or(natural.width).min(available.width.max(0.0)),
-        style.height.unwrap_or(natural.height).min(available.height.max(0.0)),
+        style
+            .width
+            .unwrap_or(natural.width)
+            .min(available.width.max(0.0)),
+        style
+            .height
+            .unwrap_or(natural.height)
+            .min(available.height.max(0.0)),
     )
 }
 
@@ -447,8 +551,13 @@ fn position_stack_children(
         Axis::Horizontal => content_size.height,
         Axis::Vertical => content_size.width,
     };
-    let (gap, start_offset) =
-        arranged_gap_and_offset(container_main, content_main, children.len(), spacing, arrangement);
+    let (gap, start_offset) = arranged_gap_and_offset(
+        container_main,
+        content_main,
+        children.len(),
+        spacing,
+        arrangement,
+    );
     let mut cursor = start_offset;
     let last_index = children.len().saturating_sub(1);
     let mut aligned = Vec::with_capacity(children.len());
@@ -460,8 +569,12 @@ fn position_stack_children(
         let cross_offset =
             aligned_offset_for_cross_axis(container_cross, cross_extent, cross_axis_alignment);
         let origin = match axis {
-            Axis::Horizontal => Point::new(content_origin.x + cursor, content_origin.y + cross_offset),
-            Axis::Vertical => Point::new(content_origin.x + cross_offset, content_origin.y + cursor),
+            Axis::Horizontal => {
+                Point::new(content_origin.x + cursor, content_origin.y + cross_offset)
+            }
+            Axis::Vertical => {
+                Point::new(content_origin.x + cross_offset, content_origin.y + cursor)
+            }
         };
         aligned.push(origin);
         cursor += main_extent;

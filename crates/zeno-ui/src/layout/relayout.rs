@@ -1,9 +1,9 @@
 use zeno_core::{Point, Size};
 use zeno_text::TextSystem;
 
-use crate::frontend::{compile_object_table, FrontendObjectTable};
-use crate::tree::RetainedComposeTree;
 use crate::Node;
+use crate::frontend::{FrontendObjectTable, compile_object_table};
+use crate::tree::RetainedComposeTree;
 
 use super::arena::LayoutArena;
 use super::work_queue::{
@@ -71,4 +71,3 @@ fn same_index_order(previous: &FrontendObjectTable, current: &FrontendObjectTabl
     }
     (0..previous.len()).all(|index| previous.node_id_at(index) == current.node_id_at(index))
 }
-

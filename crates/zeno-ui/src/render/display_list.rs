@@ -1,35 +1,37 @@
 use zeno_core::{Point, Rect, Size, Transform2D};
 use zeno_scene::{
-    ClipChain, ClipChainId, ClipChainStore, ClipRegion, DisplayItem, DisplayItemId,
+    ClipChain, ClipChainId, ClipChainStore, ClipRegion, DisplayImage, DisplayItem, DisplayItemId,
     DisplayItemPayload, DisplayList, DisplayTextRun, Effect, RetainedDisplayList, SpatialNode,
     SpatialNodeId, SpatialTree, StackingContext, StackingContextId,
 };
 
-use super::scene::node_creates_layer;
 use super::*;
-use crate::frontend::{FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table};
+use crate::frontend::{
+    FrontendObject, FrontendObjectKind, FrontendObjectTable, compile_object_table,
+};
+use crate::image::ImageResourceTable;
 use crate::layout::LayoutArena;
+use crate::modifier::ClipMode;
 
 pub(super) fn build_retained_display_list(
     root: &Node,
     layout: &LayoutArena,
+    image_resources: &ImageResourceTable,
     viewport: Size,
 ) -> RetainedDisplayList {
     let frontend = compile_object_table(root);
-    build_retained_display_list_from_frontend(&frontend, layout, viewport)
+    build_retained_display_list_from_frontend(&frontend, layout, image_resources, viewport)
 }
 
 #[must_use]
-pub(super) fn snapshot_display_list(
-    retained: &RetainedDisplayList,
-    viewport: Size,
-) -> DisplayList {
+pub(super) fn snapshot_display_list(retained: &RetainedDisplayList, viewport: Size) -> DisplayList {
     retained.snapshot(viewport)
 }
 
 fn build_retained_display_list_from_frontend(
     objects: &FrontendObjectTable,
     layout: &LayoutArena,
+    image_resources: &ImageResourceTable,
     viewport: Size,
 ) -> RetainedDisplayList {
     let mut list = RetainedDisplayList::new(viewport);
@@ -44,23 +46,29 @@ fn build_retained_display_list_from_frontend(
     for index in 0..objects.len() {
         list.replace_object_items(
             index,
-            items_for_object(objects, index, layout, stacking_context_map[index]),
+            items_for_object(
+                objects,
+                index,
+                layout,
+                image_resources,
+                stacking_context_map[index],
+            ),
         );
     }
     list.compact_if_needed();
     list
 }
 
-fn build_stacking_context_map(
-    objects: &FrontendObjectTable,
-) -> Vec<Option<StackingContextId>> {
+fn build_stacking_context_map(objects: &FrontendObjectTable) -> Vec<Option<StackingContextId>> {
     let mut map = vec![None; objects.len()];
     for index in 0..objects.len() {
         let object = objects.object(index);
-        map[index] = if node_creates_layer(&object.style) {
+        map[index] = if object_creates_stacking_context(&object.style) {
             Some(StackingContextId(index as u32))
         } else {
-            objects.parent_index_of(index).and_then(|parent| map[parent])
+            objects
+                .parent_index_of(index)
+                .and_then(|parent| map[parent])
         };
     }
     map
@@ -93,7 +101,9 @@ fn build_spatial_tree(objects: &FrontendObjectTable, layout: &LayoutArena) -> Ve
             .unwrap_or(local_transform);
         nodes.push(SpatialNode {
             id: SpatialNodeId(index as u32),
-            parent: objects.parent_index_of(index).map(|idx| SpatialNodeId(idx as u32)),
+            parent: objects
+                .parent_index_of(index)
+                .map(|idx| SpatialNodeId(idx as u32)),
             local_transform,
             world_transform,
             dirty: false,
@@ -120,12 +130,19 @@ fn build_clip_chains(
             chains.push(ClipChain {
                 id: ClipChainId(index as u32 + 1),
                 spatial_id: SpatialNodeId(index as u32),
-                clip: ClipRegion::Rect(Rect::new(
-                    0.0,
-                    0.0,
-                    slot.frame.size.width,
-                    slot.frame.size.height,
-                )),
+                clip: match object.style.clip {
+                    Some(ClipMode::Bounds) => ClipRegion::Rect(Rect::new(
+                        0.0,
+                        0.0,
+                        slot.frame.size.width,
+                        slot.frame.size.height,
+                    )),
+                    Some(ClipMode::RoundedBounds { radius }) => ClipRegion::RoundedRect {
+                        rect: Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height),
+                        radius,
+                    },
+                    None => unreachable!("clip chain only created when clip mode is present"),
+                },
                 parent: Some(ClipChainId(0)),
             });
         }
@@ -140,7 +157,7 @@ fn build_stacking_contexts(
     let mut contexts = Vec::new();
     for index in 0..objects.len() {
         let object = objects.object(index);
-        if !node_creates_layer(&object.style) {
+        if !object_creates_stacking_context(&object.style) {
             continue;
         }
         let _slot = layout.slot_at(index);
@@ -169,6 +186,7 @@ fn items_for_object(
     objects: &FrontendObjectTable,
     index: usize,
     layout: &LayoutArena,
+    image_resources: &ImageResourceTable,
     stacking_context: Option<StackingContextId>,
 ) -> Vec<DisplayItem> {
     let object = objects.object(index);
@@ -222,6 +240,24 @@ fn items_for_object(
             }),
         });
     }
+    if let FrontendObjectKind::Image(image) = &object.kind {
+        let resource = image_resources
+            .resolve(image.source.resource_key())
+            .expect("image resource should exist for display list item");
+        items.push(DisplayItem {
+            item_id: DisplayItemId((index as u32) * 2 + 1),
+            spatial_id: SpatialNodeId(index as u32),
+            clip_chain_id,
+            stacking_context,
+            visual_rect: slot.frame,
+            payload: DisplayItemPayload::Image(DisplayImage::new_rgba8(
+                Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height),
+                resource.width,
+                resource.height,
+                resource.rgba8.clone(),
+            )),
+        });
+    }
     items
 }
 
@@ -239,4 +275,12 @@ fn effects_for_object(object: &FrontendObject) -> Vec<Effect> {
         });
     }
     effects
+}
+
+fn object_creates_stacking_context(style: &crate::Style) -> bool {
+    style.layer
+        || style.opacity < 1.0
+        || style.blend_mode != BlendMode::Normal
+        || style.blur.is_some()
+        || style.drop_shadow.is_some()
 }

@@ -14,7 +14,11 @@ impl RetainedComposeTree {
             self.layout_root_index_for(index)
         }
     }
-    pub(super) fn insert_layout_dirty_root(&mut self, candidate_index: usize, merge_siblings: bool) {
+    pub(super) fn insert_layout_dirty_root(
+        &mut self,
+        candidate_index: usize,
+        merge_siblings: bool,
+    ) {
         let mut merged_candidate = candidate_index;
         if merge_siblings {
             loop {
@@ -28,7 +32,8 @@ impl RetainedComposeTree {
                         break;
                     }
                     if self.should_merge_layout_roots_index(existing, merged_candidate) {
-                        merged_candidate = self.merge_layout_roots_index(existing, merged_candidate);
+                        merged_candidate =
+                            self.merge_layout_roots_index(existing, merged_candidate);
                         updated = true;
                         break;
                     }

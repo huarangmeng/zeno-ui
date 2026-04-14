@@ -1,8 +1,8 @@
 use zeno_core::{Point, Size};
 
-use crate::modifier::{CrossAxisAlignment, HorizontalAlignment, VerticalAlignment};
 use crate::Axis;
 use crate::layout::NodeLayoutData;
+use crate::modifier::{CrossAxisAlignment, HorizontalAlignment, VerticalAlignment};
 
 // Geometry helpers shared by layout arena and work queue.
 
@@ -34,7 +34,9 @@ pub(crate) fn finalize_size(
     let natural = Size::new(content.width + padding_h, content.height + padding_v);
     Size::new(
         width.unwrap_or(natural.width).min(available.width.max(0.0)),
-        height.unwrap_or(natural.height).min(available.height.max(0.0)),
+        height
+            .unwrap_or(natural.height)
+            .min(available.height.max(0.0)),
     )
 }
 
@@ -103,7 +105,9 @@ pub(crate) fn arranged_gap_and_offset(
         crate::Arrangement::Start => (base_gap, 0.0),
         crate::Arrangement::Center => (base_gap, extra * 0.5),
         crate::Arrangement::End => (base_gap, extra),
-        crate::Arrangement::SpaceBetween if child_count > 1 => (base_gap + extra / gaps.max(1.0), 0.0),
+        crate::Arrangement::SpaceBetween if child_count > 1 => {
+            (base_gap + extra / gaps.max(1.0), 0.0)
+        }
         crate::Arrangement::SpaceAround if child_count > 0 => {
             let segment = extra / child_count as f32;
             (base_gap + segment, segment * 0.5)
@@ -135,8 +139,13 @@ pub(crate) fn position_stack_children(
         Axis::Horizontal => content_size.height,
         Axis::Vertical => content_size.width,
     };
-    let (gap, start_offset) =
-        arranged_gap_and_offset(container_main, content_main, children.len(), spacing, arrangement);
+    let (gap, start_offset) = arranged_gap_and_offset(
+        container_main,
+        content_main,
+        children.len(),
+        spacing,
+        arrangement,
+    );
     let mut cursor = start_offset;
     let last_index = children.len().saturating_sub(1);
     let mut aligned = Vec::with_capacity(children.len());
@@ -148,8 +157,12 @@ pub(crate) fn position_stack_children(
         let cross_offset =
             aligned_offset_for_cross_axis(container_cross, cross_extent, cross_axis_alignment);
         let origin = match axis {
-            Axis::Horizontal => Point::new(content_origin.x + cursor, content_origin.y + cross_offset),
-            Axis::Vertical => Point::new(content_origin.x + cross_offset, content_origin.y + cursor),
+            Axis::Horizontal => {
+                Point::new(content_origin.x + cursor, content_origin.y + cross_offset)
+            }
+            Axis::Vertical => {
+                Point::new(content_origin.x + cross_offset, content_origin.y + cursor)
+            }
         };
         aligned.push(origin);
         cursor += main_extent;
@@ -183,4 +196,3 @@ impl IntoAlignmentAxis for VerticalAlignment {
         }
     }
 }
-

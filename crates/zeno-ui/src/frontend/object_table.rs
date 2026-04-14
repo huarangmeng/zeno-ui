@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{Axis, Node, NodeId, NodeKind, SpacerNode, Style, TextNode};
+use crate::{Axis, ImageNode, Node, NodeId, NodeKind, SpacerNode, Style, TextNode};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct FrontendObjectTable {
@@ -25,6 +25,7 @@ pub(crate) struct FrontendObject {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum FrontendObjectKind {
     Text(TextNode),
+    Image(ImageNode),
     Spacer(SpacerNode),
     Container,
     Box,
@@ -61,16 +62,26 @@ pub(crate) fn compile_object_table(root: &Node) -> FrontendObjectTable {
         match &node.kind {
             NodeKind::Container(child) => {
                 let child_index = assign_indices(
-                    child, Some(index), index_by_id, node_ids, parents,
-                    children_table, container_like,
+                    child,
+                    Some(index),
+                    index_by_id,
+                    node_ids,
+                    parents,
+                    children_table,
+                    container_like,
                 );
                 children_table[index].push(child_index);
             }
             NodeKind::Box { children } | NodeKind::Stack { children, .. } => {
                 for child in children {
                     let child_index = assign_indices(
-                        child, Some(index), index_by_id, node_ids, parents,
-                        children_table, container_like,
+                        child,
+                        Some(index),
+                        index_by_id,
+                        node_ids,
+                        parents,
+                        children_table,
+                        container_like,
                     );
                     children_table[index].push(child_index);
                 }
@@ -81,9 +92,13 @@ pub(crate) fn compile_object_table(root: &Node) -> FrontendObjectTable {
     }
 
     assign_indices(
-        root, None,
-        &mut index_by_id, &mut node_ids, &mut parents,
-        &mut children_table, &mut container_like,
+        root,
+        None,
+        &mut index_by_id,
+        &mut node_ids,
+        &mut parents,
+        &mut children_table,
+        &mut container_like,
     );
 
     let len = node_ids.len();
@@ -143,6 +158,7 @@ fn fill_objects(
 fn frontend_kind(kind: &NodeKind) -> FrontendObjectKind {
     match kind {
         NodeKind::Text(text) => FrontendObjectKind::Text(text.clone()),
+        NodeKind::Image(image) => FrontendObjectKind::Image(image.clone()),
         NodeKind::Spacer(spacer) => FrontendObjectKind::Spacer(spacer.clone()),
         NodeKind::Container(_) => FrontendObjectKind::Container,
         NodeKind::Box { .. } => FrontendObjectKind::Box,
@@ -186,6 +202,7 @@ impl FrontendObjectTable {
         self.container_like[index]
     }
 
+    #[cfg(test)]
     #[must_use]
     pub fn node_ids(&self) -> &[NodeId] {
         &self.node_ids

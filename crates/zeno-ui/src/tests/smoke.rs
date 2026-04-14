@@ -17,10 +17,17 @@ fn builds_scene_from_column_tree() {
     assert_eq!(display_list.items.len(), 3);
     assert!(matches!(
         display_list.items[0].payload,
-        zeno_scene::DisplayItemPayload::FillRect { .. } | zeno_scene::DisplayItemPayload::FillRoundedRect { .. }
+        zeno_scene::DisplayItemPayload::FillRect { .. }
+            | zeno_scene::DisplayItemPayload::FillRoundedRect { .. }
     ));
-    assert!(matches!(display_list.items[1].payload, zeno_scene::DisplayItemPayload::TextRun(_)));
-    assert!(matches!(display_list.items[2].payload, zeno_scene::DisplayItemPayload::TextRun(_)));
+    assert!(matches!(
+        display_list.items[1].payload,
+        zeno_scene::DisplayItemPayload::TextRun(_)
+    ));
+    assert!(matches!(
+        display_list.items[2].payload,
+        zeno_scene::DisplayItemPayload::TextRun(_)
+    ));
 }
 
 #[test]
@@ -42,12 +49,37 @@ fn builds_scene_from_nested_container_and_row() {
         display_list.items[0].payload,
         zeno_scene::DisplayItemPayload::FillRoundedRect { .. }
     ));
-    assert!(display_list
-        .items
-        .iter()
-        .filter(|item| matches!(item.payload, zeno_scene::DisplayItemPayload::TextRun(_)))
-        .count()
-        >= 2);
+    assert!(
+        display_list
+            .items
+            .iter()
+            .filter(|item| matches!(item.payload, zeno_scene::DisplayItemPayload::TextRun(_)))
+            .count()
+            >= 2
+    );
+}
+
+#[test]
+fn image_node_measures_and_appears_in_layout_dump() {
+    let root = image_rgba8(
+        2.0,
+        2.0,
+        vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ],
+    )
+    .fixed_size(24.0, 18.0)
+    .key("image");
+    let viewport = Size::new(320.0, 240.0);
+    let measured =
+        crate::layout::measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Image = measured.kind else {
+        panic!("image node should measure into image kind");
+    };
+    assert_eq!(measured.frame.size, Size::new(24.0, 18.0));
+
+    let layout_dump = dump_layout(&root, viewport, &FallbackTextSystem);
+    assert!(layout_dump.contains("image 2x2"));
 }
 
 #[test]
@@ -74,19 +106,19 @@ fn compose_submit_keeps_text_baseline_in_sync_with_text_metrics() {
 }
 
 #[test]
-fn dump_helpers_report_scene_and_layout_structure() {
+fn dump_helpers_report_display_list_and_layout_structure() {
     let root = container(text("Hello").key("text"))
         .padding_all(8.0)
         .background(Color::WHITE)
         .opacity(0.5)
         .layer()
         .key("root");
-    let scene = compose_scene(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
-    let scene_dump = dump_scene(&scene);
+    let display_list = ComposeRenderer::new(&FallbackTextSystem)
+        .compose_display_list(&root, Size::new(320.0, 240.0));
     let layout_dump = dump_layout(&root, Size::new(320.0, 240.0), &FallbackTextSystem);
 
-    assert!(scene_dump.contains("layer id="));
-    assert!(scene_dump.contains("blend="));
+    assert_eq!(display_list.stacking_contexts.len(), 1);
+    assert_eq!(display_list.items.len(), 2);
     assert!(layout_dump.contains("node id="));
     assert!(layout_dump.contains("text lines="));
 }

@@ -2,6 +2,7 @@ use zeno_core::Color;
 use zeno_text::FontDescriptor;
 
 use crate::{
+    image::ImageSource,
     modifier::{
         Alignment, Arrangement, BlendMode, CrossAxisAlignment, DropShadow, Modifier, Modifiers,
         TransformOrigin,
@@ -26,8 +27,14 @@ pub struct SpacerNode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct ImageNode {
+    pub source: ImageSource,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum NodeKind {
     Text(TextNode),
+    Image(ImageNode),
     Container(Box<Node>),
     Box { children: Vec<Node> },
     Stack { axis: Axis, children: Vec<Node> },
@@ -127,6 +134,20 @@ impl Node {
     #[must_use]
     pub fn fixed_size(self, width: f32, height: f32) -> Self {
         self.modifier(Modifier::FixedSize { width, height })
+    }
+
+    #[must_use]
+    pub fn image_rgba8(id: NodeId, width: f32, height: f32, rgba8: Vec<u8>) -> Self {
+        Self::new(
+            id,
+            NodeKind::Image(ImageNode {
+                source: ImageSource::rgba8(
+                    width.max(1.0).round() as u32,
+                    height.max(1.0).round() as u32,
+                    rgba8,
+                ),
+            }),
+        )
     }
 
     #[must_use]

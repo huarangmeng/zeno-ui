@@ -1,6 +1,5 @@
-mod draw;
 mod display_list_renderer;
-mod layer_renderer;
+mod draw;
 mod offscreen;
 mod pipeline;
 mod scissor;
@@ -8,22 +7,15 @@ mod shaders;
 mod text;
 
 use fontdue::Font;
-use metal::{
-    CommandQueue, CompileOptions, Device, MTLLoadAction, MTLStoreAction, MetalDrawableRef,
-    RenderPassDescriptor, RenderPipelineState,
-};
+use metal::{CommandQueue, CompileOptions, Device, MetalDrawableRef, RenderPipelineState};
 use shaders::SHADERS;
-use zeno_core::zeno_session_log;
-use zeno_core::{Color, Rect, Transform2D, ZenoError, ZenoErrorCode};
-use zeno_scene::{RetainedScene, SceneBlendMode};
+use zeno_core::{Color, Rect, ZenoError, ZenoErrorCode};
+use zeno_scene::SceneBlendMode;
 use zeno_text::{GlyphRasterCache, load_system_font};
 
 use self::{
-    draw::draw_commands,
     display_list_renderer::render_display_list_to_drawable_region_with_load,
-    layer_renderer::render_retained_scene_layers,
     pipeline::{create_color_pipeline, create_composite_pipeline, create_text_pipeline},
-    scissor::effective_root_scissor,
 };
 
 // 对外只暴露渲染器入口，具体的绘制、裁剪、离屏与管线初始化细节下沉到子模块。
@@ -77,14 +69,6 @@ impl MetalSceneRenderer {
         })
     }
 
-    pub fn render_retained_to_drawable(
-        &mut self,
-        drawable: &MetalDrawableRef,
-        scene: &mut RetainedScene,
-    ) -> Result<(), ZenoError> {
-        self.render_retained_to_drawable_region_with_load(drawable, scene, false, None)
-    }
-
     pub fn render_display_list_to_drawable(
         &mut self,
         drawable: &MetalDrawableRef,
@@ -124,104 +108,6 @@ impl MetalSceneRenderer {
             dirty_bounds,
             &mut self.glyph_cache,
         )
-    }
-
-    pub fn render_retained_to_drawable_region_with_load(
-        &mut self,
-        drawable: &MetalDrawableRef,
-        scene: &mut RetainedScene,
-        preserve_contents: bool,
-        dirty_bounds: Option<Rect>,
-    ) -> Result<(), ZenoError> {
-        let render_pass = RenderPassDescriptor::new();
-        let attachment = render_pass
-            .color_attachments()
-            .object_at(0)
-            .ok_or_else(|| {
-                ZenoError::invalid_configuration(
-                    ZenoErrorCode::BackendImpellerRenderPassAttachmentMissing,
-                    "backend.impeller",
-                    "render_retained_to_drawable",
-                    "missing metal color attachment",
-                )
-            })?;
-        attachment.set_texture(Some(drawable.texture()));
-        attachment.set_load_action(if preserve_contents {
-            MTLLoadAction::Load
-        } else {
-            MTLLoadAction::Clear
-        });
-        attachment.set_store_action(MTLStoreAction::Store);
-        if !preserve_contents {
-            let clear = scene
-                .clear_color
-                .or_else(|| scene.clear_packet())
-                .unwrap_or(zeno_core::Color::TRANSPARENT);
-            attachment.set_clear_color(metal::MTLClearColor::new(
-                f64::from(clear.red) / 255.0,
-                f64::from(clear.green) / 255.0,
-                f64::from(clear.blue) / 255.0,
-                f64::from(clear.alpha) / 255.0,
-            ));
-        }
-
-        let command_buffer = self.queue.new_command_buffer();
-        zeno_session_log!(
-            trace,
-            op = "impeller_retained_encoder_root_begin",
-            preserve_contents,
-            ?dirty_bounds,
-            objects = scene.live_object_count(),
-            "impeller retained root encoder begin"
-        );
-        let encoder = command_buffer.new_render_command_encoder(&render_pass);
-        let viewport_width = scene.size.width.max(1.0);
-        let viewport_height = scene.size.height.max(1.0);
-        let root_scissor = effective_root_scissor(dirty_bounds, viewport_width, viewport_height);
-        encoder.set_scissor_rect(root_scissor);
-
-        if scene.live_object_count() == 0 {
-            draw_commands(
-                &self.device,
-                &self.color_pipeline,
-                &self.text_pipeline,
-                self.font.as_ref(),
-                &encoder,
-                scene.packets(),
-                viewport_width,
-                viewport_height,
-                Transform2D::identity(),
-                1.0,
-                &mut self.glyph_cache,
-            );
-        } else {
-            render_retained_scene_layers(
-                &self.device,
-                &self.queue,
-                &self.color_pipeline,
-                &self.text_pipeline,
-                &self.composite_pipeline,
-                &self.composite_multiply_pipeline,
-                &self.composite_screen_pipeline,
-                self.font.as_ref(),
-                &encoder,
-                scene,
-                root_scissor,
-                viewport_width,
-                viewport_height,
-                &mut self.glyph_cache,
-            );
-        }
-
-        zeno_session_log!(
-            trace,
-            op = "impeller_retained_encoder_root_end",
-            "impeller retained root encoder end"
-        );
-        encoder.end_encoding();
-        command_buffer.present_drawable(drawable);
-        command_buffer.commit();
-        Ok(())
     }
 }
 

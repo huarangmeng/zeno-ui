@@ -1,5 +1,4 @@
-//! ComposeEngine 相关测试继续按 cache / patch 两组拆开。
+//! ComposeEngine 相关测试聚焦 DisplayList 主路径。
 
 mod cache;
 mod display_list;
-mod patch;

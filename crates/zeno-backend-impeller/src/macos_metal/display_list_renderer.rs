@@ -4,13 +4,15 @@ use metal::{
     RenderPassDescriptor, RenderPipelineState,
 };
 use zeno_core::{Color, Rect, Transform2D, ZenoError, ZenoErrorCode, zeno_session_log};
-use zeno_scene::{BlendMode, ClipRegion, DisplayItemPayload, DisplayList, Effect, StackingContextId};
+use zeno_scene::{
+    BlendMode, ClipRegion, DisplayItemPayload, DisplayList, Effect, StackingContextId,
+};
 use zeno_text::GlyphRasterCache;
 
 use super::{
     draw::{
-        build_composite_vertices, build_shape_vertices, build_text_vertices, make_offscreen_texture,
-        make_rgba_texture, make_text_texture, new_buffer,
+        build_composite_vertices, build_shape_vertices, build_text_vertices,
+        make_offscreen_texture, make_rgba_texture, make_text_texture, new_buffer,
     },
     offscreen::{CompositeParams, composite_pipeline_for_blend, draw_composited_texture},
     scissor::{effective_root_scissor, intersect_scissor, scissor_for_rect},
@@ -18,7 +20,7 @@ use super::{
 };
 
 // A native DisplayList renderer for the Impeller Metal backend.
-// This bypasses legacy Scene/RetainedScene and drives the existing pipelines directly.
+// This drives the existing Metal pipelines directly from DisplayList semantics.
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_display_list_to_drawable_region_with_load(
@@ -256,11 +258,7 @@ fn render_context(
     let offscreen_encoder = offscreen_command_buffer.new_render_command_encoder(&render_pass);
     let off_w = texture_width as f32;
     let off_h = texture_height as f32;
-    let off_scissor = scissor_for_rect(
-        Rect::new(0.0, 0.0, off_w, off_h),
-        off_w,
-        off_h,
-    );
+    let off_scissor = scissor_for_rect(Rect::new(0.0, 0.0, off_w, off_h), off_w, off_h);
     offscreen_encoder.set_scissor_rect(off_scissor);
 
     // Translate so that offscreen local origin maps to effect_bounds.origin.
@@ -309,7 +307,11 @@ fn render_context(
         parent_opacity * context.opacity,
         viewport_width,
         viewport_height,
-        composite_params_for_effects(&context.effects, texture_width as f32, texture_height as f32),
+        composite_params_for_effects(
+            &context.effects,
+            texture_width as f32,
+            texture_height as f32,
+        ),
     );
     encoder.set_scissor_rect(parent_scissor);
 }
@@ -358,12 +360,23 @@ fn render_item(
                 let buffer = new_buffer(device, &vertices);
                 encoder.set_render_pipeline_state(color_pipeline);
                 encoder.set_vertex_buffer(0, Some(&buffer), 0);
-                encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
+                encoder.draw_primitives(
+                    metal::MTLPrimitiveType::Triangle,
+                    0,
+                    vertices.len() as u64,
+                );
             }
         }
-        DisplayItemPayload::FillRoundedRect { rect, radius, color } => {
+        DisplayItemPayload::FillRoundedRect {
+            rect,
+            radius,
+            color,
+        } => {
             if let Some(vertices) = build_shape_vertices(
-                &zeno_scene::Shape::RoundedRect { rect: *rect, radius: *radius },
+                &zeno_scene::Shape::RoundedRect {
+                    rect: *rect,
+                    radius: *radius,
+                },
                 apply_alpha(*color, opacity),
                 viewport_width,
                 viewport_height,
@@ -372,7 +385,11 @@ fn render_item(
                 let buffer = new_buffer(device, &vertices);
                 encoder.set_render_pipeline_state(color_pipeline);
                 encoder.set_vertex_buffer(0, Some(&buffer), 0);
-                encoder.draw_primitives(metal::MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
+                encoder.draw_primitives(
+                    metal::MTLPrimitiveType::Triangle,
+                    0,
+                    vertices.len() as u64,
+                );
             }
         }
         DisplayItemPayload::TextRun(text) => {
@@ -411,12 +428,7 @@ fn render_item(
         DisplayItemPayload::Image(image) => {
             let texture = make_rgba_texture(device, &image.rgba8, image.width, image.height);
             let rect = transform.map_rect(image.dest_rect);
-            let vertices = build_composite_vertices(
-                rect,
-                opacity,
-                viewport_width,
-                viewport_height,
-            );
+            let vertices = build_composite_vertices(rect, opacity, viewport_width, viewport_height);
             let buffer = new_buffer(device, &vertices);
             encoder.set_render_pipeline_state(composite_pipeline_for_blend(
                 zeno_scene::SceneBlendMode::Normal,
@@ -480,7 +492,10 @@ fn clip_scissor(
     scissor
 }
 
-fn world_transform(display_list: &DisplayList, spatial_id: zeno_scene::SpatialNodeId) -> Transform2D {
+fn world_transform(
+    display_list: &DisplayList,
+    spatial_id: zeno_scene::SpatialNodeId,
+) -> Transform2D {
     display_list
         .spatial_tree
         .nodes
@@ -501,7 +516,10 @@ enum ScopeStep {
     ChildContext(StackingContextId),
 }
 
-fn scope_steps(display_list: &DisplayList, parent_context: Option<StackingContextId>) -> Vec<ScopeStep> {
+fn scope_steps(
+    display_list: &DisplayList,
+    parent_context: Option<StackingContextId>,
+) -> Vec<ScopeStep> {
     let mut rendered_children: std::collections::HashSet<StackingContextId> =
         std::collections::HashSet::new();
     let mut steps = Vec::new();
@@ -527,10 +545,12 @@ fn scope_entry_for_item(
     match (parent_context, item_context) {
         (None, None) => ScopeEntry::Direct,
         (Some(parent), Some(current)) if current == parent => ScopeEntry::Direct,
-        (scope_parent, Some(current)) => match immediate_child_context(display_list, scope_parent, current) {
-            Some(child) => ScopeEntry::ChildContext(child),
-            None => ScopeEntry::Skip,
-        },
+        (scope_parent, Some(current)) => {
+            match immediate_child_context(display_list, scope_parent, current) {
+                Some(child) => ScopeEntry::ChildContext(child),
+                None => ScopeEntry::Skip,
+            }
+        }
         _ => ScopeEntry::Skip,
     }
 }
@@ -656,7 +676,11 @@ fn scene_blend_mode(mode: BlendMode) -> zeno_scene::SceneBlendMode {
     }
 }
 
-fn composite_params_for_effects(effects: &[Effect], texture_width: f32, texture_height: f32) -> CompositeParams {
+fn composite_params_for_effects(
+    effects: &[Effect],
+    texture_width: f32,
+    texture_height: f32,
+) -> CompositeParams {
     // Reuse the existing parameter shape by mapping DisplayList effects to the flags/fields.
     let mut blur_sigma = 0.0;
     let mut shadow_blur = 0.0;
@@ -669,7 +693,12 @@ fn composite_params_for_effects(effects: &[Effect], texture_width: f32, texture_
                 blur_sigma = *sigma;
                 flags |= 1;
             }
-            Effect::DropShadow { dx, dy, blur, color } => {
+            Effect::DropShadow {
+                dx,
+                dy,
+                blur,
+                color,
+            } => {
                 shadow_blur = *blur;
                 shadow_offset = [*dx, *dy];
                 shadow_color = [
@@ -696,8 +725,8 @@ fn composite_params_for_effects(effects: &[Effect], texture_width: f32, texture_
 #[cfg(test)]
 mod tests {
     use super::{
-        clip_scissor, composite_params_for_effects, context_bounds, immediate_child_context,
-        scope_steps, ScopeStep,
+        ScopeStep, clip_scissor, composite_params_for_effects, context_bounds,
+        immediate_child_context, scope_steps,
     };
     use zeno_core::{Color, Rect, Size, Transform2D};
     use zeno_scene::{
@@ -822,7 +851,11 @@ mod tests {
             Some(StackingContextId(10))
         );
         assert_eq!(
-            immediate_child_context(&display_list, Some(StackingContextId(10)), StackingContextId(11)),
+            immediate_child_context(
+                &display_list,
+                Some(StackingContextId(10)),
+                StackingContextId(11)
+            ),
             Some(StackingContextId(11))
         );
     }

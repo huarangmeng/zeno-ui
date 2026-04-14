@@ -8,7 +8,7 @@ use zeno_core::Platform;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
 #[cfg(feature = "mobile_ios")]
 use zeno_scene::{
-    FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer, RetainedScene,
+    DisplayList, FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer,
 };
 
 use crate::PlatformDescriptor;
@@ -70,15 +70,17 @@ impl IosMobilePresenter {
         }
     }
 
-    pub(crate) fn render_retained(
+    pub(crate) fn render_display_list(
         &self,
         surface: &RenderSurface,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
     ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::SkiaView(presenter) => presenter.render_retained(surface, scene),
-            Self::SkiaMetalLayer(presenter) => presenter.render_retained(surface, scene),
-            Self::ImpellerMetalLayer(presenter) => presenter.render_retained(surface, scene),
+            Self::SkiaView(presenter) => presenter.render_display_list(surface, display_list),
+            Self::SkiaMetalLayer(presenter) => presenter.render_display_list(surface, display_list),
+            Self::ImpellerMetalLayer(presenter) => {
+                presenter.render_display_list(surface, display_list)
+            }
         }
     }
 }
@@ -114,12 +116,12 @@ impl IosSkiaViewPresenter {
         self.renderer.capabilities()
     }
 
-    fn render_retained(
+    fn render_display_list(
         &self,
         surface: &RenderSurface,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
     ) -> Result<FrameReport, ZenoError> {
-        self.renderer.render_retained(surface, scene)
+        self.renderer.render_display_list(surface, display_list)
     }
 }
 
@@ -157,12 +159,12 @@ impl IosSkiaMetalLayerPresenter {
         self.renderer.capabilities()
     }
 
-    fn render_retained(
+    fn render_display_list(
         &self,
         surface: &RenderSurface,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
     ) -> Result<FrameReport, ZenoError> {
-        self.renderer.render_retained(surface, scene)
+        self.renderer.render_display_list(surface, display_list)
     }
 }
 
@@ -192,11 +194,11 @@ impl IosImpellerMetalLayerPresenter {
         self.renderer.capabilities()
     }
 
-    fn render_retained(
+    fn render_display_list(
         &self,
         surface: &RenderSurface,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
     ) -> Result<FrameReport, ZenoError> {
-        self.renderer.render_retained(surface, scene)
+        self.renderer.render_display_list(surface, display_list)
     }
 }

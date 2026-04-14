@@ -1,44 +1,34 @@
-use zeno_ui::{ComposeEngine, ComposeStats, DirtyReason, Node, NodeId};
 use zeno_core::{Size, ZenoError, ZenoErrorCode};
-use zeno_scene::{DisplayList, RenderObjectDelta, RetainedScene};
+use zeno_scene::DisplayList;
 use zeno_text::TextSystem;
+use zeno_ui::{ComposeEngine, ComposeStats, DirtyReason, Node, NodeId};
 
 use crate::{FramePhases, FrameScheduler};
 
-pub struct UiFrame<'a> {
-    pub scene_update: UiSceneUpdate<'a>,
+pub struct UiFrame {
+    pub scene_update: UiSceneUpdate,
     pub phases: FramePhases,
     pub compose_stats: ComposeStats,
 }
 
-pub enum UiSceneUpdate<'a> {
+pub enum UiSceneUpdate {
     Full {
-        scene: &'a mut RetainedScene,
         display_list: DisplayList,
         compose_stats: ComposeStats,
     },
     Delta {
-        scene: &'a mut RetainedScene,
-        delta: RenderObjectDelta,
         dirty_bounds: Option<zeno_core::Rect>,
+        patch_upserts: usize,
+        patch_removes: usize,
         display_list: DisplayList,
         compose_stats: ComposeStats,
     },
 }
 
-impl<'a> UiFrame<'a> {
-    #[must_use]
-    pub fn scene(&self) -> &RetainedScene {
-        self.scene_update.scene()
-    }
-
+impl UiFrame {
     #[must_use]
     pub fn display_list(&self) -> &DisplayList {
         self.scene_update.display_list()
-    }
-
-    pub fn scene_mut(&mut self) -> &mut RetainedScene {
-        self.scene_update.scene_mut()
     }
 
     #[must_use]
@@ -47,27 +37,12 @@ impl<'a> UiFrame<'a> {
     }
 }
 
-impl<'a> UiSceneUpdate<'a> {
-    #[must_use]
-    pub fn scene(&self) -> &RetainedScene {
-        match self {
-            UiSceneUpdate::Full { scene, .. } => scene,
-            UiSceneUpdate::Delta { scene, .. } => scene,
-        }
-    }
-
+impl UiSceneUpdate {
     #[must_use]
     pub fn display_list(&self) -> &DisplayList {
         match self {
             UiSceneUpdate::Full { display_list, .. } => display_list,
             UiSceneUpdate::Delta { display_list, .. } => display_list,
-        }
-    }
-
-    pub fn scene_mut(&mut self) -> &mut RetainedScene {
-        match self {
-            UiSceneUpdate::Full { scene, .. } => scene,
-            UiSceneUpdate::Delta { scene, .. } => scene,
         }
     }
 }
@@ -123,7 +98,7 @@ impl<'a> UiRuntime<'a> {
         self.scheduler.has_pending_frame()
     }
 
-    pub fn prepare_frame(&mut self) -> Result<Option<UiFrame<'_>>, ZenoError> {
+    pub fn prepare_frame(&mut self) -> Result<Option<UiFrame>, ZenoError> {
         if !self.scheduler.has_pending_frame() {
             return Ok(None);
         }
@@ -152,26 +127,24 @@ impl<'a> UiRuntime<'a> {
             self.engine.invalidate(DirtyReason::Paint);
         }
 
-        let scene_update = match self.engine.compose_submit_retained(root, viewport) {
-            zeno_ui::RetainedComposeUpdate::Full {
-                scene,
+        let scene_update = match self.engine.compose_update(root, viewport) {
+            zeno_ui::ComposeUpdate::Full {
                 display_list,
                 compose_stats,
             } => UiSceneUpdate::Full {
-                scene,
                 display_list,
                 compose_stats,
             },
-            zeno_ui::RetainedComposeUpdate::Delta {
-                scene,
-                delta,
+            zeno_ui::ComposeUpdate::Delta {
                 dirty_bounds,
+                patch_upserts,
+                patch_removes,
                 display_list,
                 compose_stats,
             } => UiSceneUpdate::Delta {
-                scene,
-                delta,
                 dirty_bounds,
+                patch_upserts,
+                patch_removes,
                 display_list,
                 compose_stats,
             },

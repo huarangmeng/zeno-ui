@@ -8,7 +8,7 @@ use zeno_core::Platform;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
 #[cfg(feature = "mobile_android")]
 use zeno_scene::{
-    FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer, RetainedScene,
+    DisplayList, FrameReport, GraphicsBackend, RenderCapabilities, RenderSurface, Renderer,
 };
 
 use crate::PlatformDescriptor;
@@ -60,14 +60,18 @@ impl AndroidMobilePresenter {
         }
     }
 
-    pub(crate) fn render_retained(
+    pub(crate) fn render_display_list(
         &self,
         surface: &RenderSurface,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
     ) -> Result<FrameReport, ZenoError> {
         match self {
-            Self::SkiaNativeWindow(presenter) => presenter.render_retained(surface, scene),
-            Self::ImpellerNativeWindow(presenter) => presenter.render_retained(surface, scene),
+            Self::SkiaNativeWindow(presenter) => {
+                presenter.render_display_list(surface, display_list)
+            }
+            Self::ImpellerNativeWindow(presenter) => {
+                presenter.render_display_list(surface, display_list)
+            }
         }
     }
 }
@@ -103,12 +107,12 @@ impl AndroidSkiaNativeWindowPresenter {
         self.renderer.capabilities()
     }
 
-    fn render_retained(
+    fn render_display_list(
         &self,
         surface: &RenderSurface,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
     ) -> Result<FrameReport, ZenoError> {
-        self.renderer.render_retained(surface, scene)
+        self.renderer.render_display_list(surface, display_list)
     }
 }
 
@@ -136,11 +140,11 @@ impl AndroidImpellerNativeWindowPresenter {
         self.renderer.capabilities()
     }
 
-    fn render_retained(
+    fn render_display_list(
         &self,
         surface: &RenderSurface,
-        scene: &mut RetainedScene,
+        display_list: &DisplayList,
     ) -> Result<FrameReport, ZenoError> {
-        self.renderer.render_retained(surface, scene)
+        self.renderer.render_display_list(surface, display_list)
     }
 }

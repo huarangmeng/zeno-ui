@@ -80,8 +80,8 @@ impl DesktopSessionPlan {
 mod tests {
     use super::{DesktopPresenterKind, DesktopSessionPlan};
     use crate::NativeSurfaceHostRequirement;
-    use zeno_core::{Backend, Platform, WindowConfig};
     use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
+    use zeno_core::{Backend, Platform, WindowConfig};
 
     fn resolved_session(platform: Platform, backend: Backend) -> ResolvedSession {
         ResolvedSession::new(

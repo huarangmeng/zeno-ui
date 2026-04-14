@@ -3,10 +3,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use zeno_core::{Point, Size};
-use zeno_scene::{RetainedDisplayList, Scene};
+use zeno_scene::RetainedDisplayList;
 use zeno_text::FallbackTextSystem;
 
 use super::RetainedComposeTree;
+use crate::image::ImageResourceTable;
 use crate::{DirtyReason, Node, NodeId, NodeKind, TextNode, layout::measure_node};
 
 static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
@@ -122,13 +123,14 @@ fn dirty_nodes_in_different_containers_stay_scoped_to_their_branches() {
 fn retained_tree_for(root: Node, viewport: Size) -> RetainedComposeTree {
     let measured = measure_node(&root, Point::new(0.0, 0.0), viewport, &FallbackTextSystem);
     let layout = crate::layout::LayoutArena::from_measured(&root, &measured);
+    let image_resources = ImageResourceTable::from_frontend(layout.object_table().as_ref());
     RetainedComposeTree::new(
         root,
         viewport,
         layout,
         Vec::new(),
+        image_resources,
         RetainedDisplayList::new(viewport),
-        Scene::new(viewport),
     )
 }
 

@@ -40,7 +40,10 @@ pub(crate) struct DirtyTable {
 
 impl DirtyTable {
     pub fn new(len: usize) -> Self {
-        Self { bits: vec![DirtyBits::NONE; len], generation: 0 }
+        Self {
+            bits: vec![DirtyBits::NONE; len],
+            generation: 0,
+        }
     }
     pub fn mark(&mut self, index: usize, bits: DirtyBits) {
         self.bits[index] = self.bits[index] | bits;
@@ -51,16 +54,25 @@ impl DirtyTable {
     }
     #[allow(dead_code)]
     pub fn clear_all(&mut self) {
-        for b in &mut self.bits { *b = DirtyBits::NONE; }
+        for b in &mut self.bits {
+            *b = DirtyBits::NONE;
+        }
     }
     #[allow(dead_code)]
     pub fn is_dirty(&self, index: usize) -> bool {
         self.bits[index] != DirtyBits::NONE
     }
     pub fn dirty_indices(&self) -> impl Iterator<Item = usize> + '_ {
-        self.bits.iter().enumerate().filter_map(|(i, b)| (*b != DirtyBits::NONE).then_some(i))
+        self.bits
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| (*b != DirtyBits::NONE).then_some(i))
     }
-    pub fn bump_generation(&mut self) { self.generation += 1; }
+    pub fn bump_generation(&mut self) {
+        self.generation += 1;
+    }
     #[allow(dead_code)]
-    pub const fn generation(&self) -> u64 { self.generation }
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
 }

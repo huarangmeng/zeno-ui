@@ -1,10 +1,11 @@
 //! 片段与 available map 的构建拆出来，便于后续单独优化缓存命中策略。
 
 use super::*;
-use crate::frontend::{FrontendObject, FrontendObjectKind, compile_object_table};
 #[cfg(test)]
 use crate::frontend::FrontendObjectTable;
+use crate::frontend::{FrontendObject, FrontendObjectKind, compile_object_table};
 use crate::layout::LayoutArena;
+#[cfg(test)]
 use zeno_scene::DrawCommand;
 
 #[cfg(test)]
@@ -112,28 +113,6 @@ impl FragmentStore {
     }
 }
 
-#[cfg(test)]
-#[allow(dead_code)]
-pub(super) fn structured_scene_from_layout(
-    root: &Node,
-    viewport: Size,
-    layout: &LayoutArena,
-) -> (
-    Vec<Size>,
-    FragmentStore,
-    Scene,
-) {
-    let objects = compile_object_table(root);
-    let mut fragments = FragmentStore::new_with_len(objects.len());
-    let available = available_slots_from_objects(&objects, viewport, layout);
-    for index in 0..objects.len() {
-        let slot = layout.slot_at(index);
-        fragments.insert_at(index, node_fragment(objects.object(index), slot));
-    }
-    let scene = super::scene::build_scene(root, layout, viewport);
-    (available, fragments, scene)
-}
-
 pub(super) fn available_slots_from_layout(
     root: &Node,
     viewport: Size,
@@ -141,48 +120,6 @@ pub(super) fn available_slots_from_layout(
 ) -> Vec<Size> {
     let objects = compile_object_table(root);
     available_slots_from_objects(&objects, viewport, layout)
-}
-
-pub(super) fn node_fragment(
-    object: &FrontendObject,
-    slot: &crate::layout::LayoutSlot,
-) -> Vec<DrawCommand> {
-    let style = &object.style;
-    let mut fragment = Vec::new();
-    let local_bounds = Rect::new(
-        0.0,
-        0.0,
-        slot.frame.size.width,
-        slot.frame.size.height,
-    );
-    if let Some(background) = style.background {
-        let shape = if style.corner_radius > 0.0 {
-            Shape::RoundedRect {
-                rect: local_bounds,
-                radius: style.corner_radius,
-            }
-        } else {
-            Shape::Rect(local_bounds)
-        };
-        fragment.push(DrawCommand::Fill {
-            shape,
-            brush: Brush::Solid(background),
-        });
-    }
-
-    if let (FrontendObjectKind::Text(_), Some(text_layout)) = (&object.kind, slot.text_layout.as_ref()) {
-        let position = Point::new(
-            style.padding.left,
-            style.padding.top + text_layout.metrics.ascent,
-        );
-        fragment.push(DrawCommand::Text {
-            position,
-            layout: text_layout.clone(),
-            color: style.foreground,
-        });
-    }
-
-    fragment
 }
 
 #[allow(dead_code)]
@@ -230,8 +167,11 @@ fn available_slots_from_objects(
                 let mut used_main = 0.0f32;
                 let children = objects.child_indices(index);
                 for (position, &child_index) in children.iter().enumerate() {
-                    available[child_index] =
-                        crate::layout::remaining_available_for_axis(content_available, used_main, *axis);
+                    available[child_index] = crate::layout::remaining_available_for_axis(
+                        content_available,
+                        used_main,
+                        *axis,
+                    );
                     let child_frame = layout.slot_at(child_index).frame;
                     used_main += main_axis_extent(child_frame.size, *axis);
                     if position + 1 != children.len() {
@@ -267,7 +207,10 @@ mod tests {
     }
 
     fn spacer(width: f32, height: f32) -> Node {
-        Node::new(next_node_id(), NodeKind::Spacer(SpacerNode { width, height }))
+        Node::new(
+            next_node_id(),
+            NodeKind::Spacer(SpacerNode { width, height }),
+        )
     }
 
     fn row(children: Vec<Node>) -> Node {
@@ -300,13 +243,26 @@ mod tests {
         let table = layout.object_table();
 
         assert_eq!(available[table.index_of(root.id()).unwrap()], viewport);
-        assert_eq!(available[table.index_of(first_id).unwrap()], Size::new(60.0, 30.0));
-        assert_eq!(available[table.index_of(second_id).unwrap()], Size::new(53.0, 30.0));
-        assert_eq!(available[table.index_of(third_id).unwrap()], Size::new(46.0, 30.0));
-        assert!(available[table.index_of(first_id).unwrap()].width
-            > available[table.index_of(second_id).unwrap()].width);
-        assert!(available[table.index_of(second_id).unwrap()].width
-            > available[table.index_of(third_id).unwrap()].width);
+        assert_eq!(
+            available[table.index_of(first_id).unwrap()],
+            Size::new(60.0, 30.0)
+        );
+        assert_eq!(
+            available[table.index_of(second_id).unwrap()],
+            Size::new(53.0, 30.0)
+        );
+        assert_eq!(
+            available[table.index_of(third_id).unwrap()],
+            Size::new(46.0, 30.0)
+        );
+        assert!(
+            available[table.index_of(first_id).unwrap()].width
+                > available[table.index_of(second_id).unwrap()].width
+        );
+        assert!(
+            available[table.index_of(second_id).unwrap()].width
+                > available[table.index_of(third_id).unwrap()].width
+        );
     }
 
     #[test]
@@ -314,13 +270,22 @@ mod tests {
         let mut store = FragmentStore::new_with_len(2);
 
         store.insert_at(0, vec![DrawCommand::Clear(Color::WHITE)]);
-        store.insert_at(1, vec![
-            DrawCommand::Clear(Color::BLACK),
-            DrawCommand::Clear(Color::TRANSPARENT),
-        ]);
+        store.insert_at(
+            1,
+            vec![
+                DrawCommand::Clear(Color::BLACK),
+                DrawCommand::Clear(Color::TRANSPARENT),
+            ],
+        );
 
-        assert_eq!(store.fragment_range_at(0), Some(CommandRange { start: 0, len: 1 }));
-        assert_eq!(store.fragment_range_at(1), Some(CommandRange { start: 1, len: 2 }));
+        assert_eq!(
+            store.fragment_range_at(0),
+            Some(CommandRange { start: 0, len: 1 })
+        );
+        assert_eq!(
+            store.fragment_range_at(1),
+            Some(CommandRange { start: 1, len: 2 })
+        );
         assert_eq!(store.active_command_count(), 3);
     }
 }

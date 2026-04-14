@@ -1,9 +1,10 @@
 //! RetainedComposeTree 持有增量合成所需的全部缓存快照。
 
 use zeno_core::Size;
-use zeno_scene::{RetainedDisplayList, RetainedScene, Scene};
+use zeno_scene::RetainedDisplayList;
 
 use crate::frontend::{DirtyBits, DirtyTable, FrontendObjectTable, compile_object_table};
+use crate::image::ImageResourceTable;
 use crate::{DirtyFlags, DirtyReason, Node, NodeId, layout::LayoutArena};
 
 use super::indexing::DenseNodeStore;
@@ -18,7 +19,7 @@ pub struct RetainedComposeTree {
     pub(super) dirty_table: DirtyTable,
     pub(super) layout_dirty_roots: Vec<usize>,
     pub(super) display_list: RetainedDisplayList,
-    pub(super) scene: RetainedScene,
+    pub(super) image_resources: ImageResourceTable,
     pub(super) dirty: DirtyFlags,
 }
 
@@ -29,8 +30,8 @@ impl RetainedComposeTree {
         viewport: Size,
         layout: LayoutArena,
         available: Vec<Size>,
+        image_resources: ImageResourceTable,
         display_list: RetainedDisplayList,
-        scene: Scene,
     ) -> Self {
         let dense_nodes = DenseNodeStore::build(layout.object_table().clone(), available);
         let objects = compile_object_table(&root);
@@ -44,19 +45,9 @@ impl RetainedComposeTree {
             dirty_table,
             layout_dirty_roots: Vec::new(),
             display_list,
-            scene: RetainedScene::from_scene(scene),
+            image_resources,
             dirty: DirtyFlags::clean(),
         }
-    }
-
-    #[must_use]
-    pub fn scene(&self) -> &RetainedScene {
-        &self.scene
-    }
-
-    #[must_use]
-    pub fn scene_mut(&mut self) -> &mut RetainedScene {
-        &mut self.scene
     }
 
     #[must_use]
@@ -70,6 +61,11 @@ impl RetainedComposeTree {
     }
 
     #[must_use]
+    pub fn viewport(&self) -> Size {
+        self.viewport
+    }
+
+    #[must_use]
     pub const fn dirty(&self) -> DirtyFlags {
         self.dirty
     }
@@ -80,8 +76,8 @@ impl RetainedComposeTree {
         viewport: Size,
         layout: LayoutArena,
         available: Vec<Size>,
+        image_resources: ImageResourceTable,
         display_list: RetainedDisplayList,
-        scene: Scene,
     ) {
         let dense_nodes = DenseNodeStore::build(layout.object_table().clone(), available);
         let objects = compile_object_table(&root);
@@ -96,7 +92,7 @@ impl RetainedComposeTree {
         self.dirty_table = dirty_table;
         self.layout_dirty_roots.clear();
         self.display_list = display_list;
-        self.scene = RetainedScene::from_scene(scene);
+        self.image_resources = image_resources;
         self.dirty = DirtyFlags::clean();
     }
 
@@ -154,20 +150,13 @@ impl RetainedComposeTree {
     #[must_use]
     pub fn layout_dirty_root_indices(&self) -> Vec<usize> {
         if self.layout_dirty_roots.is_empty() && self.dirty.requires_layout() {
-            self.dense_nodes.index_of(self.root.id()).into_iter().collect()
+            self.dense_nodes
+                .index_of(self.root.id())
+                .into_iter()
+                .collect()
         } else {
             self.layout_dirty_roots.clone()
         }
-    }
-
-    #[must_use]
-    pub fn layout_for(&self, node_id: NodeId) -> Option<&crate::layout::LayoutSlot> {
-        self.layout.slot(node_id)
-    }
-
-    #[must_use]
-    pub fn node_ids(&self) -> &[NodeId] {
-        self.dense_nodes.node_ids()
     }
 
     #[must_use]
@@ -196,6 +185,10 @@ impl RetainedComposeTree {
         self.display_list = display_list;
     }
 
+    pub fn replace_image_resources(&mut self, image_resources: ImageResourceTable) {
+        self.image_resources = image_resources;
+    }
+
     pub fn apply_layout_state(
         &mut self,
         root: Node,
@@ -216,14 +209,6 @@ impl RetainedComposeTree {
         self.dirty = DirtyFlags::clean();
     }
 
-    #[allow(dead_code)]
-    pub fn replace_scene(&mut self, scene: RetainedScene) {
-        self.scene = scene;
-        self.dirty = DirtyFlags::clean();
-        self.layout_dirty_roots.clear();
-        self.dirty_table.clear_all();
-    }
-
     pub fn sync_root(&mut self, root: Node) {
         self.objects = compile_object_table(&root);
         self.root = root;
@@ -238,7 +223,11 @@ impl RetainedComposeTree {
 fn dirty_bits_for_reason(reason: DirtyReason) -> DirtyBits {
     match reason {
         DirtyReason::Structure => {
-            DirtyBits::STYLE | DirtyBits::INTRINSIC | DirtyBits::LAYOUT | DirtyBits::PAINT | DirtyBits::SCENE
+            DirtyBits::STYLE
+                | DirtyBits::INTRINSIC
+                | DirtyBits::LAYOUT
+                | DirtyBits::PAINT
+                | DirtyBits::SCENE
         }
         DirtyReason::Layout | DirtyReason::Order | DirtyReason::Text => {
             DirtyBits::INTRINSIC | DirtyBits::LAYOUT | DirtyBits::PAINT | DirtyBits::SCENE

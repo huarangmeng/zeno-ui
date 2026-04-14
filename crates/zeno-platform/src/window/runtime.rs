@@ -5,14 +5,12 @@ use winit::event::{ElementState, MouseButton, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 use zeno_core::{ZenoError, ZenoErrorCode, zeno_frame_log, zeno_session_log, zeno_window_error};
-use zeno_scene::{FrameReport, RetainedScene, Scene};
+use zeno_scene::{DisplayList, FrameReport};
 
 use crate::NativeSurface;
 use crate::desktop_session::{BoxedDesktopRenderSession, create_desktop_render_session};
 use crate::session::ResolvedSession;
-use crate::window::{
-    AnimatedFrameContext, BoxedAnimatedSceneCallback, FrameRequest, PointerState,
-};
+use crate::window::{AnimatedFrameContext, BoxedAnimatedSceneCallback, FrameRequest, PointerState};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct PendingFramePhases {
@@ -38,7 +36,7 @@ impl PendingFramePhases {
 }
 
 enum SceneDriver {
-    Static(RetainedScene),
+    Static(DisplayList),
     Animated {
         callback: BoxedAnimatedSceneCallback,
         started_at: Instant,
@@ -65,12 +63,12 @@ impl DesktopWindowApp {
     pub(super) fn new(
         resolved_session: ResolvedSession,
         native_surface: NativeSurface,
-        scene: Scene,
+        display_list: DisplayList,
     ) -> Self {
         Self {
             resolved_session,
             native_surface,
-            scene_driver: SceneDriver::Static(RetainedScene::from_scene(scene)),
+            scene_driver: SceneDriver::Static(display_list),
             session: None,
             phases: PendingFramePhases::default(),
             frame_index: 0,
@@ -158,9 +156,9 @@ impl DesktopWindowApp {
         })?;
         let (frame_request, report, cache) = {
             let (frame_request, report) = match &mut self.scene_driver {
-                SceneDriver::Static(scene) => (
+                SceneDriver::Static(display_list) => (
                     FrameRequest::Wait,
-                    session.submit_retained_scene(scene, None, 0, 0)?,
+                    session.submit_display_list(display_list, None, 0, 0)?,
                 ),
                 SceneDriver::Animated {
                     callback,

@@ -3,12 +3,10 @@ mod geometry;
 mod relayout;
 mod work_queue;
 
-use zeno_core::{Rect, Size};
 use crate::Node;
+use zeno_core::{Rect, Size};
 
-pub(crate) use arena::{
-    measure_layout, measure_node, LayoutArena, LayoutSlot, MeasuredKind, MeasuredNode,
-};
+pub(crate) use arena::{LayoutArena, MeasuredKind, MeasuredNode, measure_layout, measure_node};
 pub(crate) use geometry::{
     aligned_offset, aligned_offset_for_cross_axis, arranged_gap_and_offset, main_axis_extent,
     remaining_available_for_axis, stack_content_size, stack_cross_extent,
@@ -23,7 +21,11 @@ pub(crate) struct NodeLayoutData {
 #[allow(dead_code)]
 pub(crate) fn content_available(node: &Node, available: Size) -> Size {
     let style = node.resolved_style();
-    finalize_content_available(style.padding.horizontal(), style.padding.vertical(), available)
+    finalize_content_available(
+        style.padding.horizontal(),
+        style.padding.vertical(),
+        available,
+    )
 }
 
 fn finalize_content_available(padding_h: f32, padding_v: f32, available: Size) -> Size {
@@ -44,7 +46,10 @@ mod tests {
     }
 
     fn spacer(width: f32, height: f32) -> Node {
-        Node::new(next_node_id(), NodeKind::Spacer(SpacerNode { width, height }))
+        Node::new(
+            next_node_id(),
+            NodeKind::Spacer(SpacerNode { width, height }),
+        )
     }
 
     fn container(child: Node) -> Node {
@@ -115,7 +120,8 @@ mod tests {
 
     #[test]
     fn arranged_gap_and_offset_centers_stack_content() {
-        let (gap, start) = arranged_gap_and_offset(100.0, 30.0, 2, 10.0, crate::Arrangement::Center);
+        let (gap, start) =
+            arranged_gap_and_offset(100.0, 30.0, 2, 10.0, crate::Arrangement::Center);
         assert_eq!(gap, 10.0);
         assert_eq!(start, 30.0);
     }

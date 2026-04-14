@@ -3,30 +3,20 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
-use zeno_core::{Point, Rect, Size, Transform2D};
-use zeno_scene::{
-    Brush, DisplayList, LayerOrder, LayerObject, RenderObject, RenderObjectDelta,
-    RenderObjectOrder, RetainedScene, Scene, SceneBlendMode, SceneClip, SceneEffect,
-    SceneTransform, Shape,
-};
+use zeno_core::{Point, Rect, Size};
+use zeno_scene::DisplayList;
 use zeno_text::TextSystem;
 
 use crate::{
-    Node, NodeId, NodeKind,
-    invalidation::DirtyReason,
-    layout::measure_layout,
-    modifier::{BlendMode, ClipMode, TransformOrigin},
-    tree::RetainedComposeTree,
+    Node, NodeId, NodeKind, image::ImageResourceTable, invalidation::DirtyReason,
+    layout::measure_layout, modifier::BlendMode, tree::RetainedComposeTree,
 };
 
 mod debug;
 mod display_list;
 mod fragments;
-mod patch;
 mod reconcile;
 mod relayout;
-mod scene;
-
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct ComposeStats {
@@ -46,14 +36,16 @@ impl<'a> ComposeRenderer<'a> {
     }
 
     #[must_use]
-    pub fn compose(&self, root: &Node, viewport: Size) -> Scene {
-        debug::compose_scene_internal(root, viewport, self.text_system)
+    pub fn compose(&self, root: &Node, viewport: Size) -> DisplayList {
+        self.compose_display_list(root, viewport)
     }
 
     #[must_use]
     pub fn compose_display_list(&self, root: &Node, viewport: Size) -> DisplayList {
         let layout = measure_layout(root, Point::new(0.0, 0.0), viewport, self.text_system);
-        let retained = display_list::build_retained_display_list(root, &layout, viewport);
+        let image_resources = ImageResourceTable::from_frontend(layout.object_table().as_ref());
+        let retained =
+            display_list::build_retained_display_list(root, &layout, &image_resources, viewport);
         display_list::snapshot_display_list(&retained, viewport)
     }
 }
@@ -64,16 +56,15 @@ pub struct ComposeEngine<'a> {
     stats: ComposeStats,
 }
 
-pub enum RetainedComposeUpdate<'a> {
+pub enum ComposeUpdate {
     Full {
-        scene: &'a mut RetainedScene,
         display_list: DisplayList,
         compose_stats: ComposeStats,
     },
     Delta {
-        scene: &'a mut RetainedScene,
-        delta: RenderObjectDelta,
         dirty_bounds: Option<Rect>,
+        patch_upserts: usize,
+        patch_removes: usize,
         display_list: DisplayList,
         compose_stats: ComposeStats,
     },
@@ -90,28 +81,21 @@ impl<'a> ComposeEngine<'a> {
     }
 
     #[must_use]
-    pub fn compose(&mut self, root: &Node, viewport: Size) -> Scene {
-        match self.compose_submit_retained(root, viewport) {
-            RetainedComposeUpdate::Full { scene, .. } => scene.snapshot_scene(),
-            RetainedComposeUpdate::Delta { scene, .. } => scene.snapshot_scene(),
-        }
+    pub fn compose(&mut self, root: &Node, viewport: Size) -> DisplayList {
+        self.compose_display_list(root, viewport)
     }
 
     #[must_use]
     pub fn compose_display_list(&mut self, root: &Node, viewport: Size) -> DisplayList {
-        let _ = self.compose_submit_retained(root, viewport);
+        let _ = self.compose_update(root, viewport);
         self.current_display_list()
             .expect("display list should exist after compose")
             .snapshot(viewport)
     }
 
-    pub fn compose_submit_retained(
-        &mut self,
-        root: &Node,
-        viewport: Size,
-    ) -> RetainedComposeUpdate<'_> {
+    pub fn compose_update(&mut self, root: &Node, viewport: Size) -> ComposeUpdate {
         if let Some(retained) = self.retained.as_mut() {
-            if retained.scene().size == viewport && retained.root() != root {
+            if retained.viewport() == viewport && retained.root() != root {
                 reconcile::reconcile_root_change(retained, root);
             }
         }
@@ -123,8 +107,7 @@ impl<'a> ComposeEngine<'a> {
                 retained.sync_root(root.clone());
             }
             let display_list = retained.display_list().snapshot(viewport);
-            return RetainedComposeUpdate::Full {
-                scene: retained.scene_mut(),
+            return ComposeUpdate::Full {
                 display_list,
                 compose_stats: self.stats,
             };
@@ -134,25 +117,35 @@ impl<'a> ComposeEngine<'a> {
             self.stats.compose_passes += 1;
             let retained = self.retained.as_mut().expect("retained tree must exist");
             let dirty_indices: HashSet<usize> = retained.dirty_indices().into_iter().collect();
-            patch::repaint_dirty_nodes(root, retained);
-            let rebuilt_display_list =
-                display_list::build_retained_display_list(root, retained.layout(), viewport);
+            let previous_dirty_bounds = retained
+                .display_list()
+                .bounds_for_object_indices(dirty_indices.iter().copied());
+            let image_resources =
+                ImageResourceTable::from_frontend(retained.layout().object_table().as_ref());
+            retained.replace_image_resources(image_resources.clone());
+            let rebuilt_display_list = display_list::build_retained_display_list(
+                root,
+                retained.layout(),
+                &image_resources,
+                viewport,
+            );
             retained.replace_display_list(rebuilt_display_list);
-            let patch = patch::patch_scene_for_nodes(root, retained, &dirty_indices);
-            let dirty_bounds = retained.scene_mut().dirty_bounds_for_delta(&patch);
             retained.sync_root(root.clone());
+            let current_dirty_bounds = retained
+                .display_list()
+                .bounds_for_object_indices(dirty_indices.iter().copied());
+            let dirty_bounds = merge_bounds(previous_dirty_bounds, current_dirty_bounds);
             let display_list = retained.display_list().snapshot(viewport);
-            if patch.is_empty() {
-                return RetainedComposeUpdate::Full {
-                    scene: retained.scene_mut(),
+            if dirty_indices.is_empty() {
+                return ComposeUpdate::Full {
                     display_list,
                     compose_stats: self.stats,
                 };
             }
-            return RetainedComposeUpdate::Delta {
-                scene: retained.scene_mut(),
-                delta: patch,
+            return ComposeUpdate::Delta {
                 dirty_bounds,
+                patch_upserts: dirty_indices.len(),
+                patch_removes: 0,
                 display_list,
                 compose_stats: self.stats,
             };
@@ -162,8 +155,6 @@ impl<'a> ComposeEngine<'a> {
             self.stats.compose_passes += 1;
             self.stats.layout_passes += 1;
             let retained = self.retained.as_mut().expect("retained tree must exist");
-            let dirty_indices: HashSet<usize> = retained.dirty_indices().into_iter().collect();
-            let previous_node_ids: HashSet<NodeId> = retained.node_ids().iter().copied().collect();
             let layout_dirty_roots = retained.layout_dirty_root_indices();
             let layout = relayout::relayout_layout(
                 root,
@@ -174,45 +165,18 @@ impl<'a> ComposeEngine<'a> {
                 &layout_dirty_roots,
             );
             let available = fragments::available_slots_from_layout(root, viewport, &layout);
-            let current_node_ids: HashSet<NodeId> =
-                layout.object_table().node_ids().iter().copied().collect();
-            let new_indices: HashSet<usize> = current_node_ids
-                .difference(&previous_node_ids)
-                .filter_map(|id| layout.object_table().index_of(*id))
-                .collect();
-            let fragment_update_ids: HashSet<usize> =
-                dirty_indices.union(&new_indices).copied().collect();
-            let patch_update_ids = patch::scene_update_ids_for_relayout(
-                root,
-                &layout,
-                retained,
-                &fragment_update_ids,
-            );
             retained.apply_layout_state(root.clone(), viewport, layout.clone(), available);
-            patch::update_fragments_for_nodes(
+            let image_resources = ImageResourceTable::from_frontend(layout.object_table().as_ref());
+            retained.replace_image_resources(image_resources.clone());
+            let rebuilt_display_list = display_list::build_retained_display_list(
                 root,
                 &layout,
+                &image_resources,
                 viewport,
-                &fragment_update_ids,
-                retained,
             );
-            let rebuilt_display_list =
-                display_list::build_retained_display_list(root, &layout, viewport);
             retained.replace_display_list(rebuilt_display_list);
-            let patch = patch::patch_scene_for_nodes(root, retained, &patch_update_ids);
-            let dirty_bounds = retained.scene_mut().dirty_bounds_for_delta(&patch);
             let display_list = retained.display_list().snapshot(viewport);
-            if patch.is_empty() {
-                return RetainedComposeUpdate::Full {
-                    scene: retained.scene_mut(),
-                    display_list,
-                    compose_stats: self.stats,
-                };
-            }
-            return RetainedComposeUpdate::Delta {
-                scene: retained.scene_mut(),
-                delta: patch,
-                dirty_bounds,
+            return ComposeUpdate::Full {
                 display_list,
                 compose_stats: self.stats,
             };
@@ -222,16 +186,17 @@ impl<'a> ComposeEngine<'a> {
         self.stats.layout_passes += 1;
         let layout = measure_layout(root, Point::new(0.0, 0.0), viewport, self.text_system);
         let available = fragments::available_slots_from_layout(root, viewport, &layout);
-        let scene = scene::build_scene(root, &layout, viewport);
-        let display_list = display_list::build_retained_display_list(root, &layout, viewport);
+        let image_resources = ImageResourceTable::from_frontend(layout.object_table().as_ref());
+        let display_list =
+            display_list::build_retained_display_list(root, &layout, &image_resources, viewport);
         match self.retained.as_mut() {
             Some(retained) => retained.replace(
                 root.clone(),
                 viewport,
                 layout,
                 available,
+                image_resources,
                 display_list,
-                scene.clone(),
             ),
             None => {
                 self.retained = Some(RetainedComposeTree::new(
@@ -239,18 +204,17 @@ impl<'a> ComposeEngine<'a> {
                     viewport,
                     layout,
                     available,
+                    image_resources,
                     display_list,
-                    scene.clone(),
                 ));
             }
         }
         let retained = self
             .retained
-            .as_mut()
-            .expect("retained scene should exist after full compose");
+            .as_ref()
+            .expect("retained display list should exist after full compose");
         let display_list = retained.display_list().snapshot(viewport);
-        RetainedComposeUpdate::Full {
-            scene: retained.scene_mut(),
+        ComposeUpdate::Full {
             display_list,
             compose_stats: self.stats,
         }
@@ -260,7 +224,7 @@ impl<'a> ComposeEngine<'a> {
         match self.retained.as_ref() {
             Some(retained) => {
                 retained.dirty().is_clean()
-                    && retained.scene().size == viewport
+                    && retained.viewport() == viewport
                     && retained.root() == root
             }
             None => false,
@@ -269,14 +233,16 @@ impl<'a> ComposeEngine<'a> {
 
     fn can_fast_path_paint(&self, viewport: Size) -> bool {
         match self.retained.as_ref() {
-            Some(retained) => retained.dirty().requires_paint_only() && retained.scene().size == viewport,
+            Some(retained) => {
+                retained.dirty().requires_paint_only() && retained.viewport() == viewport
+            }
             None => false,
         }
     }
 
     fn can_fast_path_layout(&self, viewport: Size) -> bool {
         match self.retained.as_ref() {
-            Some(retained) => retained.dirty().requires_layout() && retained.scene().size == viewport,
+            Some(retained) => retained.dirty().requires_layout() && retained.viewport() == viewport,
             None => false,
         }
     }
@@ -294,13 +260,10 @@ impl<'a> ComposeEngine<'a> {
     }
 
     #[must_use]
-    pub fn current_scene(&self) -> Option<&RetainedScene> {
-        self.retained.as_ref().map(RetainedComposeTree::scene)
-    }
-
-    #[must_use]
     pub fn current_display_list(&self) -> Option<&zeno_scene::RetainedDisplayList> {
-        self.retained.as_ref().map(RetainedComposeTree::display_list)
+        self.retained
+            .as_ref()
+            .map(RetainedComposeTree::display_list)
     }
 
     #[must_use]
@@ -310,16 +273,15 @@ impl<'a> ComposeEngine<'a> {
 }
 
 #[must_use]
-pub fn compose_scene(root: &Node, viewport: Size, text_system: &dyn TextSystem) -> Scene {
-    debug::compose_scene_internal(root, viewport, text_system)
-}
-
-#[must_use]
-pub fn dump_scene(scene: &Scene) -> String {
-    debug::dump_scene(scene)
-}
-
-#[must_use]
 pub fn dump_layout(root: &Node, viewport: Size, text_system: &dyn TextSystem) -> String {
     debug::dump_layout(root, viewport, text_system)
+}
+
+fn merge_bounds(first: Option<Rect>, second: Option<Rect>) -> Option<Rect> {
+    match (first, second) {
+        (Some(first), Some(second)) => Some(first.union(&second)),
+        (Some(first), None) => Some(first),
+        (None, Some(second)) => Some(second),
+        (None, None) => None,
+    }
 }
