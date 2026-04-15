@@ -5,8 +5,8 @@ use zeno_core::{
     WindowConfig, zeno_session_log,
 };
 use zeno_foundation::{
-    button, checkbox, column, container, r#switch, row, scroll, spacer, switch_control,
-    text, toggle_button,
+    button, checkbox, column, container, row, scroll, spacer, r#switch, switch_control, text,
+    toggle_button,
 };
 use zeno_runtime::{App, AppFrame, AppView, run_app_with_text_system};
 use zeno_text::SystemTextSystem;
@@ -25,7 +25,7 @@ fn main() {
             ..WindowConfig::default()
         },
         debug: DebugConfig {
-            frame_stats: true,
+            frame_stats: frame_stats_enabled_from_env(),
             ..DebugConfig::default()
         },
         ..AppConfig::default()
@@ -69,6 +69,18 @@ fn renderer_config_from_env() -> RendererConfig {
         preference: preference.clone(),
         allow_fallback: !matches!(preference, BackendPreference::Force(_)),
     }
+}
+
+fn frame_stats_enabled_from_env() -> bool {
+    matches!(
+        env::var("ZENO_DEMO_FRAME_STATS")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
 }
 
 const VIEWPORT_PADDING: f32 = 24.0;
@@ -659,7 +671,9 @@ fn controls_card(
                 .foreground(Color::rgba(220, 232, 255, 255)),
             spacer(0.0, 14.0).key("controls-gap-1"),
             row(vec![
-                Node::from(button(text("Primary Action")).on_click(AppMessage::ShowcaseButtonPressed)),
+                Node::from(
+                    button(text("Primary Action")).on_click(AppMessage::ShowcaseButtonPressed),
+                ),
                 Node::from(
                     toggle_button(selected_label)
                         .selected(controls_toggle)
@@ -732,7 +746,6 @@ fn controls_card(
     .layer()
     .drop_shadow(0.0, 12.0, 18.0, Color::rgba(20, 28, 56, 150))
 }
-
 
 fn metric_pill(label: &str, value: &str, color: Color) -> Node {
     container(

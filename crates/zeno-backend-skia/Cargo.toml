@@ -12,8 +12,9 @@ zeno-text = { path = "../zeno-text" }
 [dependencies.skia-safe]
 version = "0.93"
 optional = true
-default-features = false
-features = ["textlayout"]
+features = []
 
 [features]
-native_skia = ["skia-safe"]
+# Keep upstream defaults (binary-cache/pdf/embed-icudtl, etc.) and expose
+# zeno-backend-skia's native capability set through a single feature.
+native_skia = ["skia-safe", "skia-safe/textlayout"]

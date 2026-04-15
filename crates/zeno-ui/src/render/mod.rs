@@ -2,14 +2,19 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
+use std::time::Instant;
 
-use zeno_core::{Point, Size};
+use zeno_core::{Point, Size, zeno_session_log};
 use zeno_scene::{DamageRegion, DamageTracker, DisplayList, RetainedDisplayList};
 use zeno_text::TextSystem;
 
 use crate::{
-    InteractionState, Node, NodeId, NodeKind, frontend::ElementId, image::ImageResourceTable,
-    invalidation::DirtyReason, layout::measure_layout, modifier::BlendMode,
+    InteractionState, Node, NodeId, NodeKind,
+    frontend::{ElementId, FrontendObjectKind},
+    image::ImageResourceTable,
+    invalidation::DirtyReason,
+    layout::measure_layout,
+    modifier::BlendMode,
     tree::RetainedComposeTree,
 };
 
@@ -131,7 +136,9 @@ impl<'a> ComposeEngine<'a> {
 
         if self.can_fast_path_paint(viewport) {
             self.stats.compose_passes += 1;
+            let branch_started = Instant::now();
             let retained = self.retained.as_mut().expect("retained tree must exist");
+            let dirty_flags = retained.dirty();
             let dirty_indices: HashSet<usize> = retained.dirty_indices().into_iter().collect();
             let dirty_element_ids: Vec<_> = dirty_indices
                 .iter()
@@ -158,7 +165,26 @@ impl<'a> ComposeEngine<'a> {
                 retained.layout().object_table().as_ref(),
                 dirty_element_ids.iter().copied(),
             );
+            let branch_ms = branch_started.elapsed().as_secs_f64() * 1000.0;
             let display_list = retained.display_list().snapshot(viewport);
+            // Stable perf instrumentation. Keep op names in sync with
+            // docs/architecture/performance-debugging.md.
+            // #region debug-point compose-update-paint
+            zeno_session_log!(
+                trace,
+                op = "compose_update_branch",
+                branch = "paint",
+                branch_ms,
+                dirty_flags = ?dirty_flags,
+                dirty_count = dirty_indices.len(),
+                patch_upserts = dirty_indices.len(),
+                damage_rect_count = damage.rect_count(),
+                damage_full = damage.is_full(),
+                display_items = display_list.items.len(),
+                stacking_contexts = display_list.stacking_contexts.len(),
+                "compose update paint branch"
+            );
+            // #endregion
             if dirty_indices.is_empty() {
                 return ComposeUpdate::Full {
                     display_list,
@@ -177,12 +203,28 @@ impl<'a> ComposeEngine<'a> {
         if self.can_fast_path_layout(viewport) {
             self.stats.compose_passes += 1;
             self.stats.layout_passes += 1;
+            let branch_started = Instant::now();
             let retained = self.retained.as_mut().expect("retained tree must exist");
+            let dirty_flags = retained.dirty();
             let layout_dirty_roots = retained.layout_dirty_root_indices();
             let layout_dirty_element_ids: Vec<_> = layout_dirty_roots
                 .iter()
                 .copied()
                 .map(|index| retained.layout().object_table().element_id_at(index))
+                .collect();
+            let layout_dirty_root_summary: Vec<_> = layout_dirty_roots
+                .iter()
+                .take(4)
+                .copied()
+                .map(|index| {
+                    let object = retained.layout().object_table().object(index);
+                    format!(
+                        "idx={} eid={} kind={}",
+                        index,
+                        object.element_id.0,
+                        frontend_kind_name(&object.kind)
+                    )
+                })
                 .collect();
             let previous_display_list = retained.display_list().clone();
             let previous_object_table = retained.layout().object_table().clone();
@@ -213,12 +255,52 @@ impl<'a> ComposeEngine<'a> {
                 retained.layout().object_table().as_ref(),
                 layout_dirty_element_ids.iter().copied(),
             );
+            let branch_ms = branch_started.elapsed().as_secs_f64() * 1000.0;
             if damage.is_empty() {
+                let display_list = retained.display_list().snapshot(viewport);
+                // Stable perf instrumentation. Keep op names in sync with
+                // docs/architecture/performance-debugging.md.
+                // #region debug-point compose-update-layout
+                zeno_session_log!(
+                    trace,
+                    op = "compose_update_branch",
+                    branch = "layout",
+                    branch_ms,
+                    dirty_flags = ?dirty_flags,
+                    dirty_root_count = layout_dirty_roots.len(),
+                    dirty_roots = ?layout_dirty_root_summary,
+                    patch_upserts = layout_dirty_element_ids.len(),
+                    damage_rect_count = damage.rect_count(),
+                    damage_full = damage.is_full(),
+                    display_items = display_list.items.len(),
+                    stacking_contexts = display_list.stacking_contexts.len(),
+                    "compose update layout branch"
+                );
+                // #endregion
                 return ComposeUpdate::Full {
                     display_list,
                     compose_stats: self.stats,
                 };
             }
+            // Stable perf instrumentation. Keep op names in sync with
+            // docs/architecture/performance-debugging.md.
+            // #region debug-point compose-update-layout
+            zeno_session_log!(
+                trace,
+                op = "compose_update_branch",
+                branch = "layout",
+                branch_ms,
+                dirty_flags = ?dirty_flags,
+                dirty_root_count = layout_dirty_roots.len(),
+                dirty_roots = ?layout_dirty_root_summary,
+                patch_upserts = layout_dirty_element_ids.len(),
+                damage_rect_count = damage.rect_count(),
+                damage_full = damage.is_full(),
+                display_items = display_list.items.len(),
+                stacking_contexts = display_list.stacking_contexts.len(),
+                "compose update layout branch"
+            );
+            // #endregion
             return ComposeUpdate::Delta {
                 damage,
                 patch_upserts: layout_dirty_element_ids.len(),
@@ -230,6 +312,7 @@ impl<'a> ComposeEngine<'a> {
 
         self.stats.compose_passes += 1;
         self.stats.layout_passes += 1;
+        let branch_started = Instant::now();
         let layout = measure_layout(root, Point::new(0.0, 0.0), viewport, self.text_system);
         let available = fragments::available_slots_from_layout(root, viewport, &layout);
         let image_resources = ImageResourceTable::from_frontend(layout.object_table().as_ref());
@@ -260,6 +343,21 @@ impl<'a> ComposeEngine<'a> {
             .as_ref()
             .expect("retained display list should exist after full compose");
         let display_list = retained.display_list().snapshot(viewport);
+        let branch_ms = branch_started.elapsed().as_secs_f64() * 1000.0;
+        // Stable perf instrumentation. Keep op names in sync with
+        // docs/architecture/performance-debugging.md.
+        // #region debug-point compose-update-full
+        zeno_session_log!(
+            trace,
+            op = "compose_update_branch",
+            branch = "full",
+            branch_ms,
+            object_count = retained.layout().object_table().len(),
+            display_items = display_list.items.len(),
+            stacking_contexts = display_list.stacking_contexts.len(),
+            "compose update full branch"
+        );
+        // #endregion
         ComposeUpdate::Full {
             display_list,
             compose_stats: self.stats,
@@ -342,7 +440,10 @@ impl<'a> ComposeEngine<'a> {
     }
 
     #[must_use]
-    pub fn interaction_target_by_element(&self, element_id: ElementId) -> Option<InteractionTarget> {
+    pub fn interaction_target_by_element(
+        &self,
+        element_id: ElementId,
+    ) -> Option<InteractionTarget> {
         let retained = self.retained.as_ref()?;
         let objects = retained.objects();
         (0..objects.len()).find_map(|index| {
@@ -455,5 +556,16 @@ fn collect_subtree_indices(
     out.push(root_index);
     for &child_index in object_table.child_indices(root_index) {
         collect_subtree_indices(object_table, child_index, out);
+    }
+}
+
+fn frontend_kind_name(kind: &FrontendObjectKind) -> &'static str {
+    match kind {
+        FrontendObjectKind::Text(_) => "Text",
+        FrontendObjectKind::Image(_) => "Image",
+        FrontendObjectKind::Spacer(_) => "Spacer",
+        FrontendObjectKind::Container => "Container",
+        FrontendObjectKind::Box => "Box",
+        FrontendObjectKind::Stack { .. } => "Stack",
     }
 }

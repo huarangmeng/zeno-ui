@@ -1,7 +1,7 @@
 use zeno_core::{Backend, Size, ZenoError, ZenoErrorCode};
 use zeno_scene::{
-    CompositorFrame, CompositorSubmission, DisplayList, FrameReport, RenderCapabilities,
-    RenderSession, RenderSurface, TileCache,
+    CompositorFrame, CompositorPlanner, CompositorSubmission, DisplayList, FrameReport,
+    RenderCapabilities, RenderSession, RenderSurface, TileCache,
 };
 
 use crate::platform;
@@ -77,30 +77,24 @@ impl RenderSession for MobileRenderSession {
     ) -> Result<FrameReport, ZenoError> {
         let display_list = &frame.payload;
         match self {
-            Self::Android(session) => {
-                session.submit_display_list(
-                    display_list,
-                    frame.damage.rect_count(),
-                    frame.damage.is_full(),
-                    &frame.damage,
-                )
-            }
-            Self::IosView(session) => {
-                session.submit_display_list(
-                    display_list,
-                    frame.damage.rect_count(),
-                    frame.damage.is_full(),
-                    &frame.damage,
-                )
-            }
-            Self::IosMetalLayer(session) => {
-                session.submit_display_list(
-                    display_list,
-                    frame.damage.rect_count(),
-                    frame.damage.is_full(),
-                    &frame.damage,
-                )
-            }
+            Self::Android(session) => session.submit_display_list(
+                display_list,
+                frame.damage.rect_count(),
+                frame.damage.is_full(),
+                &frame.damage,
+            ),
+            Self::IosView(session) => session.submit_display_list(
+                display_list,
+                frame.damage.rect_count(),
+                frame.damage.is_full(),
+                &frame.damage,
+            ),
+            Self::IosMetalLayer(session) => session.submit_display_list(
+                display_list,
+                frame.damage.rect_count(),
+                frame.damage.is_full(),
+                &frame.damage,
+            ),
         }
     }
 }
@@ -168,7 +162,7 @@ impl AndroidNativeWindowSession {
         damage_full: bool,
         damage: &zeno_scene::DamageRegion,
     ) -> Result<FrameReport, ZenoError> {
-        let submission = display_list.build_compositor_submission(&mut self.tile_cache, damage);
+        let submission = CompositorPlanner::new().plan(display_list, &mut self.tile_cache, damage);
         submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
@@ -236,7 +230,7 @@ impl IosViewSession {
         damage_full: bool,
         damage: &zeno_scene::DamageRegion,
     ) -> Result<FrameReport, ZenoError> {
-        let submission = display_list.build_compositor_submission(&mut self.tile_cache, damage);
+        let submission = CompositorPlanner::new().plan(display_list, &mut self.tile_cache, damage);
         submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),
@@ -315,7 +309,7 @@ impl IosMetalLayerSession {
         damage_full: bool,
         damage: &zeno_scene::DamageRegion,
     ) -> Result<FrameReport, ZenoError> {
-        let submission = display_list.build_compositor_submission(&mut self.tile_cache, damage);
+        let submission = CompositorPlanner::new().plan(display_list, &mut self.tile_cache, damage);
         submit_mobile_display_list(
             self.presenter.kind(),
             self.presenter.capabilities(),

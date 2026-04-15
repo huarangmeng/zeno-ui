@@ -2,10 +2,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use zeno_core::{Rect, Size};
 
-use crate::composite::{
-    CompositeLayerPass, CompositePass, CompositeTileRef, CompositorBlendMode, CompositorLayerId,
-    CompositorLayerTree, CompositorSubmission,
-};
 use crate::damage::DamageRegion;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -142,7 +138,11 @@ impl TileGrid {
 
     #[must_use]
     pub fn for_viewport(viewport: Size) -> Self {
-        Self::new(viewport, Self::DEFAULT_TILE_WIDTH, Self::DEFAULT_TILE_HEIGHT)
+        Self::new(
+            viewport,
+            Self::DEFAULT_TILE_WIDTH,
+            Self::DEFAULT_TILE_HEIGHT,
+        )
     }
 
     #[must_use]
@@ -262,6 +262,12 @@ impl RasterBatch {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct TileCachePlanningOutput {
+    pub tile_plan: TilePlan,
+    pub raster_batch: RasterBatch,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TilePlan {
     pub dirty_tiles: Vec<TileId>,
@@ -348,7 +354,9 @@ impl TileCache {
             all_tiles
                 .iter()
                 .copied()
-                .filter(|tile_id| self.cached_tiles.contains(tile_id) && !dirty_tile_set.contains(tile_id))
+                .filter(|tile_id| {
+                    self.cached_tiles.contains(tile_id) && !dirty_tile_set.contains(tile_id)
+                })
                 .collect()
         };
         let plan = TilePlan {
@@ -366,11 +374,11 @@ impl TileCache {
     }
 
     #[must_use]
-    pub fn build_submission(
+    pub fn build_tile_state(
         &mut self,
         grid: TileGrid,
         damage: &DamageRegion,
-    ) -> CompositorSubmission {
+    ) -> TileCachePlanningOutput {
         self.content_generation += 1;
         self.reused_handles.clear();
         self.evicted_handles.clear();
@@ -422,47 +430,20 @@ impl TileCache {
                 .copied()
                 .filter_map(|tile_id| {
                     grid.tile_rect(tile_id).and_then(|rect| {
-                        self.content_slots
-                            .get(&tile_id)
-                            .map(|slot| RasterTile {
-                                tile_id,
-                                rect,
-                                content_handle: slot.handle,
-                            })
+                        self.content_slots.get(&tile_id).map(|slot| RasterTile {
+                            tile_id,
+                            rect,
+                            content_handle: slot.handle,
+                        })
                     })
                 })
                 .collect(),
-            full_raster: damage.is_full() || tile_plan.dirty_tile_count() == tile_plan.total_tile_count(),
+            full_raster: damage.is_full()
+                || tile_plan.dirty_tile_count() == tile_plan.total_tile_count(),
         };
-        let composite_pass = CompositePass {
-            steps: vec![CompositeLayerPass {
-                layer_id: CompositorLayerId(0),
-                tiles: (0..grid.tile_count_y())
-                    .flat_map(|y| (0..grid.tile_count_x()).map(move |x| TileId { x, y }))
-                    .filter_map(|tile_id| {
-                        self.content_slots
-                            .get(&tile_id)
-                            .map(|slot| CompositeTileRef {
-                                tile_id,
-                                content_handle: slot.handle,
-                            })
-                    })
-                    .collect(),
-                needs_offscreen: false,
-                opacity: 1.0,
-                blend_mode: CompositorBlendMode::Normal,
-                effects: Vec::new(),
-                bounds: Rect::new(0.0, 0.0, grid.viewport.width, grid.viewport.height),
-                effect_bounds: Rect::new(0.0, 0.0, grid.viewport.width, grid.viewport.height),
-                effect_padding: 0.0,
-            }],
-            full_present: damage.is_full(),
-        };
-        CompositorSubmission {
+        TileCachePlanningOutput {
             tile_plan,
             raster_batch,
-            composite_pass,
-            layer_tree: CompositorLayerTree::default(),
         }
     }
 
@@ -609,7 +590,8 @@ impl TileCache {
 
     fn evict_over_budget(&mut self) {
         while self.reusable_byte_count > Self::MAX_REUSABLE_BYTE_COUNT {
-            let Some((descriptor, index, reusable)) = self.select_budget_eviction_candidate() else {
+            let Some((descriptor, index, reusable)) = self.select_budget_eviction_candidate()
+            else {
                 break;
             };
             if let Some(handles) = self.reusable_handles.get_mut(&descriptor) {
@@ -681,7 +663,9 @@ impl TileCache {
         grid: TileGrid,
         tile_id: TileId,
     ) -> TileResourceDescriptor {
-        let rect = grid.tile_rect(tile_id).unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0));
+        let rect = grid
+            .tile_rect(tile_id)
+            .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0));
         TileResourceDescriptor {
             kind: TileResourceKind::OffscreenSurface,
             width: rect.size.width.max(0.0).ceil() as u32,

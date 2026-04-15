@@ -11,18 +11,18 @@ pub mod semantics;
 mod style;
 mod tree;
 
+#[doc(hidden)]
+pub use binding::{
+    MessageBindings, begin_message_bindings, bind_click_message, bind_toggle_message,
+    finish_message_bindings,
+};
+pub use frontend::ElementId;
 pub use image::{ImageResourceKey, ImageSource};
 pub use invalidation::{DirtyFlags, DirtyReason};
 pub use modifier::{
     ActionId, Alignment, Arrangement, BlendMode, ClipMode, CrossAxisAlignment, DropShadow,
     HorizontalAlignment, InteractionRole, InteractionState, Modifier, Modifiers, TransformOrigin,
     VerticalAlignment,
-};
-pub use frontend::ElementId;
-#[doc(hidden)]
-pub use binding::{
-    MessageBindings, begin_message_bindings, bind_click_message, bind_toggle_message,
-    finish_message_bindings,
 };
 pub use node::NodeId;
 pub use node::{ImageNode, Node, NodeKind, SpacerNode, TextNode};

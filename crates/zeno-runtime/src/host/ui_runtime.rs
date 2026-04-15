@@ -215,7 +215,8 @@ impl<'a> UiRuntime<'a> {
             match touch.phase {
                 zeno_platform::event::TouchPhase::Started => {
                     if let Some(target) = hit_target {
-                        self.active_touch_targets.insert(touch.id, target.element_id.0);
+                        self.active_touch_targets
+                            .insert(touch.id, target.element_id.0);
                         if target.interaction.is_focusable() {
                             self.update_focus(Some(target.node_id), out);
                         }
@@ -296,7 +297,9 @@ impl<'a> UiRuntime<'a> {
             return Vec::new();
         };
         match target.interaction.role {
-            Some(InteractionRole::Checkbox | InteractionRole::Switch | InteractionRole::ToggleButton) => {
+            Some(
+                InteractionRole::Checkbox | InteractionRole::Switch | InteractionRole::ToggleButton,
+            ) => {
                 vec![UiEvent::ToggleChanged {
                     action_id,
                     checked: !target.interaction.checked.unwrap_or(false),
@@ -307,8 +310,10 @@ impl<'a> UiRuntime<'a> {
     }
 
     fn focused_target(&self) -> Option<InteractionTarget> {
-        self.focused_element
-            .and_then(|element_id| self.engine.interaction_target_by_element(ElementId(element_id)))
+        self.focused_element.and_then(|element_id| {
+            self.engine
+                .interaction_target_by_element(ElementId(element_id))
+        })
     }
 
     fn update_focus(&mut self, next_focus: Option<NodeId>, out: &mut Vec<UiEvent>) {
@@ -319,8 +324,9 @@ impl<'a> UiRuntime<'a> {
             return;
         }
         if let Some(previous) = self.focused_element
-            && let Some(target) =
-                self.engine.interaction_target_by_element(ElementId(previous))
+            && let Some(target) = self
+                .engine
+                .interaction_target_by_element(ElementId(previous))
             && let Some(action_id) = target.interaction.action
         {
             out.push(UiEvent::FocusChanged {
@@ -330,8 +336,9 @@ impl<'a> UiRuntime<'a> {
         }
         self.focused_element = next_element;
         if let Some(current) = self.focused_element
-            && let Some(target) =
-                self.engine.interaction_target_by_element(ElementId(current))
+            && let Some(target) = self
+                .engine
+                .interaction_target_by_element(ElementId(current))
             && let Some(action_id) = target.interaction.action
         {
             out.push(UiEvent::FocusChanged {
@@ -377,12 +384,11 @@ impl<'a> UiRuntime<'a> {
         {
             self.pointer_press_target = None;
         }
-        self.active_touch_targets
-            .retain(|_, target| {
-                self.engine
-                    .interaction_target_by_element(ElementId(*target))
-                    .is_some()
-            });
+        self.active_touch_targets.retain(|_, target| {
+            self.engine
+                .interaction_target_by_element(ElementId(*target))
+                .is_some()
+        });
     }
 }
 
@@ -470,12 +476,17 @@ mod tests {
         runtime.resize(Size::new(200.0, 120.0));
         runtime.set_root(
             interactive_spacer(1)
-                .modifier(zeno_ui::Modifier::InteractionRole(InteractionRole::Checkbox))
+                .modifier(zeno_ui::Modifier::InteractionRole(
+                    InteractionRole::Checkbox,
+                ))
                 .action(ActionId(11))
                 .modifier(zeno_ui::Modifier::Checked(false))
                 .focusable(),
         );
-        runtime.prepare_frame().expect("prepare frame").expect("ui frame");
+        runtime
+            .prepare_frame()
+            .expect("prepare frame")
+            .expect("ui frame");
 
         let press_events = runtime.dispatch_events(&make_frame(
             crate::PointerState {
@@ -524,13 +535,18 @@ mod tests {
         runtime.resize(Size::new(200.0, 120.0));
         runtime.set_root(
             interactive_spacer(3)
-                .modifier(zeno_ui::Modifier::InteractionRole(InteractionRole::Checkbox))
+                .modifier(zeno_ui::Modifier::InteractionRole(
+                    InteractionRole::Checkbox,
+                ))
                 .action(ActionId(31))
                 .modifier(zeno_ui::Modifier::Checked(false))
                 .modifier(zeno_ui::Modifier::Enabled(false))
                 .focusable(),
         );
-        runtime.prepare_frame().expect("prepare frame").expect("ui frame");
+        runtime
+            .prepare_frame()
+            .expect("prepare frame")
+            .expect("ui frame");
 
         let press_events = runtime.dispatch_events(&make_frame(
             crate::PointerState {
@@ -572,7 +588,10 @@ mod tests {
                 .modifier(zeno_ui::Modifier::Checked(false))
                 .focusable(),
         );
-        runtime.prepare_frame().expect("prepare frame").expect("ui frame");
+        runtime
+            .prepare_frame()
+            .expect("prepare frame")
+            .expect("ui frame");
 
         let press_events = runtime.dispatch_events(&make_frame(
             crate::PointerState {
@@ -601,7 +620,10 @@ mod tests {
                 .modifier(zeno_ui::Modifier::Checked(false))
                 .focusable(),
         );
-        runtime.prepare_frame().expect("prepare frame").expect("ui frame");
+        runtime
+            .prepare_frame()
+            .expect("prepare frame")
+            .expect("ui frame");
 
         let release_events = runtime.dispatch_events(&make_frame(
             crate::PointerState {
@@ -630,12 +652,17 @@ mod tests {
         runtime.resize(Size::new(200.0, 120.0));
         runtime.set_root(
             interactive_spacer(12)
-                .modifier(zeno_ui::Modifier::InteractionRole(InteractionRole::Checkbox))
+                .modifier(zeno_ui::Modifier::InteractionRole(
+                    InteractionRole::Checkbox,
+                ))
                 .action(ActionId(51))
                 .modifier(zeno_ui::Modifier::Checked(false))
                 .focusable(),
         );
-        runtime.prepare_frame().expect("prepare frame").expect("ui frame");
+        runtime
+            .prepare_frame()
+            .expect("prepare frame")
+            .expect("ui frame");
 
         let _press_events = runtime.dispatch_events(&make_frame(
             crate::PointerState {
@@ -680,7 +707,10 @@ mod tests {
                 .action(ActionId(21))
                 .accept_text_input(),
         );
-        runtime.prepare_frame().expect("prepare frame").expect("ui frame");
+        runtime
+            .prepare_frame()
+            .expect("prepare frame")
+            .expect("ui frame");
 
         let focus_events = runtime.dispatch_events(&make_frame(
             crate::PointerState::default(),

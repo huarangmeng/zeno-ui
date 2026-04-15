@@ -52,6 +52,7 @@ impl DrawCommand {
     pub fn resource_key(&self) -> Option<SceneResourceKey> {
         match self {
             Self::Text { layout, .. } => Some(SceneResourceKey(layout.cache_key().stable_hash())),
+            Self::Image { image } => Some(SceneResourceKey(image.cache_key.0)),
             _ => None,
         }
     }

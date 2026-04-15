@@ -159,12 +159,7 @@ impl From<Switch> for Node {
             .focusable()
             .opacity(if control.enabled { 1.0 } else { 0.55 });
 
-        finalize_control_node(
-            node,
-            control.key,
-            control.action,
-            control.root_modifiers,
-        )
+        finalize_control_node(node, control.key, control.action, control.root_modifiers)
     }
 }
 

@@ -186,11 +186,6 @@ impl RetainedComposeTree {
         self.dense_nodes.available_at(index)
     }
 
-    #[must_use]
-    pub fn parent_index_of(&self, index: usize) -> Option<usize> {
-        self.dense_nodes.parent_index_of(index)
-    }
-
     pub fn replace_display_list(&mut self, display_list: RetainedDisplayList) {
         let mut display_list = display_list;
         display_list.generation = self.display_list.generation.saturating_add(1);

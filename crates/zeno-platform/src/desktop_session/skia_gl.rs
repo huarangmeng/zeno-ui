@@ -13,12 +13,10 @@ use skia_safe as sk;
 use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
-use zeno_backend_skia::{
-    SkiaTextCache, render_display_list_tile_to_canvas,
-};
+use zeno_backend_skia::{SkiaImageCache, SkiaTextCache, render_display_list_tile_to_canvas};
 use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
 use zeno_scene::{
-    CompositeExecutor, CompositeLayerJob, CompositorBlendMode, CompositorEffect,
+    CompositeExecutor, CompositeLayerJob, CompositorBlendMode, CompositorEffect, CompositorPlanner,
     CompositorService, DisplayList, FrameReport, RenderSurface, TileCache, TileContentHandle,
     TileGrid, TileResourcePool,
 };
@@ -34,6 +32,7 @@ pub(super) struct SkiaGlSession {
     gl_surface: Surface<WindowSurface>,
     gr_context: sk::gpu::DirectContext,
     text_cache: SkiaTextCache,
+    image_cache: SkiaImageCache,
     tile_cache: TileCache,
     resource_pool: TileResourcePool,
     compositor_service: CompositorService,
@@ -101,6 +100,7 @@ impl SkiaGlSession {
             gl_surface,
             gr_context,
             text_cache: SkiaTextCache::default(),
+            image_cache: SkiaImageCache::default(),
             tile_cache: TileCache::new(),
             resource_pool: TileResourcePool::new(),
             compositor_service: CompositorService::new(),
@@ -146,9 +146,9 @@ impl SkiaGlSession {
         let worker_output = self
             .compositor_service
             .submit_frame(
-            frame.generation,
-            display_list.build_compositor_submission(&mut self.tile_cache, &frame.damage),
-        )
+                frame.generation,
+                CompositorPlanner::new().plan(display_list, &mut self.tile_cache, &frame.damage),
+            )
             .map_err(|error| {
                 desktop_session_error(
                     ZenoErrorCode::SessionCreateRenderSessionFailed,
@@ -161,7 +161,9 @@ impl SkiaGlSession {
         let scheduler_stats = worker_output.scheduler_stats;
         let service_stats = self.compositor_service.stats();
         let tile_grid = TileGrid::for_viewport(display_list.viewport);
-        let composite_plan = self.composite_executor.plan(&submission.composite_pass, tile_grid);
+        let composite_plan = self
+            .composite_executor
+            .plan(&submission.composite_pass, tile_grid);
         let composite_stats = composite_plan.stats;
         let pool_delta = self.resource_pool.synchronize(&mut self.tile_cache);
         let eviction_stats = self.tile_cache.eviction_stats();
@@ -171,7 +173,8 @@ impl SkiaGlSession {
                 i32::try_from(descriptor.height.max(1)).unwrap_or(1),
             );
             self.tile_surfaces.entry(*handle).or_insert_with(|| {
-                sk::surfaces::raster_n32_premul(size).expect("tile offscreen surface should allocate")
+                sk::surfaces::raster_n32_premul(size)
+                    .expect("tile offscreen surface should allocate")
             });
         }
         let released_tile_resource_count = pool_delta.released.len();
@@ -261,13 +264,16 @@ impl SkiaGlSession {
             "skia macos compositor frame submit"
         );
         for raster_tile in &submission.raster_batch.tiles {
-            let slot = self.tile_cache.content_slot(raster_tile.tile_id).ok_or_else(|| {
-                desktop_session_error(
-                    ZenoErrorCode::SessionWrapRenderTargetFailed,
-                    "tile_cache_slot",
-                    "missing tile content slot for raster tile",
-                )
-            })?;
+            let slot = self
+                .tile_cache
+                .content_slot(raster_tile.tile_id)
+                .ok_or_else(|| {
+                    desktop_session_error(
+                        ZenoErrorCode::SessionWrapRenderTargetFailed,
+                        "tile_cache_slot",
+                        "missing tile content slot for raster tile",
+                    )
+                })?;
             let size = (
                 i32::try_from(slot.resource.width.max(1)).unwrap_or(1),
                 i32::try_from(slot.resource.height.max(1)).unwrap_or(1),
@@ -286,8 +292,10 @@ impl SkiaGlSession {
             render_display_list_tile_to_canvas(
                 surface.canvas(),
                 display_list,
+                &submission.layer_tree,
                 raster_tile.rect,
                 &mut self.text_cache,
+                &mut self.image_cache,
             );
         }
         if submission.raster_batch.full_raster {
@@ -315,7 +323,11 @@ impl SkiaGlSession {
                     .paint(&layer_paint);
                 surface.canvas().save_layer(&layer_rec);
             }
-            for tile in composite_plan.jobs.iter().filter(|job| job.layer_id == layer.layer_id) {
+            for tile in composite_plan
+                .jobs
+                .iter()
+                .filter(|job| job.layer_id == layer.layer_id)
+            {
                 let Some(image) = self
                     .tile_surfaces
                     .get_mut(&tile.content_handle)
@@ -330,10 +342,14 @@ impl SkiaGlSession {
                     tile.rect.size.height,
                 );
                 if draw_direct {
-                    surface.canvas().draw_image_rect(image, None, dst, &layer_paint);
+                    surface
+                        .canvas()
+                        .draw_image_rect(image, None, dst, &layer_paint);
                 } else {
                     let draw_paint = sk::Paint::default();
-                    surface.canvas().draw_image_rect(image, None, dst, &draw_paint);
+                    surface
+                        .canvas()
+                        .draw_image_rect(image, None, dst, &draw_paint);
                 }
             }
             surface.canvas().restore();
@@ -373,7 +389,8 @@ impl SkiaGlSession {
             evicted_tile_resource_count,
             budget_evicted_tile_resource_count: eviction_stats.budget_eviction_count,
             age_evicted_tile_resource_count: eviction_stats.age_eviction_count,
-            descriptor_limit_evicted_tile_resource_count: eviction_stats.descriptor_limit_eviction_count,
+            descriptor_limit_evicted_tile_resource_count: eviction_stats
+                .descriptor_limit_eviction_count,
             reused_tile_resource_count,
             reusable_tile_resource_count: self.tile_cache.reusable_handle_count(),
             reusable_tile_resource_bytes: self.tile_cache.reusable_byte_count(),
@@ -389,12 +406,15 @@ impl SkiaGlSession {
 
     pub(super) fn cache_summary(&self) -> String {
         let stats = self.text_cache.stats();
+        let image_stats = self.image_cache.stats();
         format!(
-            "fonts:{} typefaces:{} font_hits:{} typeface_hits:{} clear:{:?} scale:{:.2}",
+            "fonts:{} typefaces:{} font_hits:{} typeface_hits:{} images:{} image_hits:{} clear:{:?} scale:{:.2}",
             stats.cached_fonts,
             stats.cached_typefaces,
             stats.font_hits,
             stats.typeface_hits,
+            image_stats.cached_images,
+            image_stats.image_hits,
             self.clear_color,
             self.window.scale_factor()
         )

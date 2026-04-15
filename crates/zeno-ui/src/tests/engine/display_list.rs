@@ -107,9 +107,14 @@ fn compose_renderer_builds_display_list_for_image_node() {
         DisplayItemPayload::Image(image) => image,
         other => panic!("expected image payload, got {other:?}"),
     };
+    let expected_key = match &root.kind {
+        NodeKind::Image(image) => image.source.resource_key().0,
+        other => panic!("expected image node root, got {other:?}"),
+    };
 
     assert_eq!(image.width, 2);
     assert_eq!(image.height, 2);
+    assert_eq!(image.cache_key.0, expected_key);
     assert_eq!(image.dest_rect.size, Size::new(20.0, 12.0));
     assert_eq!(image.rgba8.len(), 16);
 }

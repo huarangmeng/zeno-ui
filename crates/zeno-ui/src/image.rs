@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::frontend::{FrontendObjectKind, FrontendObjectTable};
 
@@ -37,6 +37,7 @@ impl ImageSource {
             (width as usize) * (height as usize) * 4,
             "ImageSource::rgba8 expects RGBA8 pixel storage"
         );
+        let _ = cached_image_key(width, height, &rgba8);
         Self::Rgba8 {
             width,
             height,
@@ -53,22 +54,13 @@ impl ImageSource {
 
     #[must_use]
     pub fn resource_key(&self) -> ImageResourceKey {
-        let mut hash = 0xcbf29ce484222325u64;
         match self {
             Self::Rgba8 {
                 width,
                 height,
                 rgba8,
-            } => {
-                hash = stable_hash_u32(hash, *width);
-                hash = stable_hash_u32(hash, *height);
-                for byte in rgba8.iter() {
-                    hash ^= u64::from(*byte);
-                    hash = hash.wrapping_mul(0x100000001b3);
-                }
-            }
+            } => return cached_image_key(*width, *height, rgba8),
         }
-        ImageResourceKey(hash)
     }
 
     #[must_use]
@@ -86,6 +78,58 @@ impl ImageSource {
             },
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct CachedImageKey {
+    pixels: Weak<[u8]>,
+    width: u32,
+    height: u32,
+    key: ImageResourceKey,
+}
+
+fn cached_image_key(width: u32, height: u32, rgba8: &Arc<[u8]>) -> ImageResourceKey {
+    let pointer = Arc::as_ptr(rgba8) as *const u8 as usize;
+    let cache = image_key_cache();
+    let mut cache = cache.lock().expect("image key cache mutex poisoned");
+    if let Some(entry) = cache.get(&pointer) {
+        if entry.width == width && entry.height == height {
+            if let Some(cached_pixels) = entry.pixels.upgrade() {
+                if Arc::ptr_eq(&cached_pixels, rgba8) {
+                    return entry.key;
+                }
+            }
+        }
+        cache.remove(&pointer);
+    }
+
+    let key = compute_image_key(width, height, rgba8);
+    cache.insert(
+        pointer,
+        CachedImageKey {
+            pixels: Arc::downgrade(rgba8),
+            width,
+            height,
+            key,
+        },
+    );
+    key
+}
+
+fn image_key_cache() -> &'static Mutex<HashMap<usize, CachedImageKey>> {
+    static IMAGE_KEY_CACHE: OnceLock<Mutex<HashMap<usize, CachedImageKey>>> = OnceLock::new();
+    IMAGE_KEY_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn compute_image_key(width: u32, height: u32, rgba8: &[u8]) -> ImageResourceKey {
+    let mut hash = 0xcbf29ce484222325u64;
+    hash = stable_hash_u32(hash, width);
+    hash = stable_hash_u32(hash, height);
+    for byte in rgba8 {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    ImageResourceKey(hash)
 }
 
 impl ImageResourceTable {

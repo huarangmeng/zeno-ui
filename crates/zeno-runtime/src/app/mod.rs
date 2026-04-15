@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use zeno_core::{Backend, Platform, Point, Size};
-use zeno_platform::event::{Key, KeyState, KeyboardEvent, KeyboardModifiers, TextInputEvent, TouchEvent};
+use zeno_platform::event::{
+    Key, KeyState, KeyboardEvent, KeyboardModifiers, TextInputEvent, TouchEvent,
+};
 use zeno_scene::FrameReport;
 use zeno_ui::{ActionId, Node};
 

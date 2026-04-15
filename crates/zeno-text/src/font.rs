@@ -2,6 +2,7 @@ use std::sync::OnceLock;
 
 use font_kit::source::SystemSource;
 use fontdue::Font;
+use rustybuzz::Face;
 
 const SYSTEM_FONT_FAMILIES: [&str; 5] = [
     "PingFang SC",
@@ -40,6 +41,13 @@ pub fn system_font_available() -> bool {
 pub fn load_system_font() -> Option<Font> {
     let bytes = system_font_data()?;
     Font::from_bytes(bytes, fontdue::FontSettings::default()).ok()
+}
+
+#[must_use]
+pub fn system_font_face() -> Option<&'static Face<'static>> {
+    static FACE: OnceLock<Option<Face<'static>>> = OnceLock::new();
+    FACE.get_or_init(|| system_font_data().and_then(|bytes| Face::from_slice(bytes, 0)))
+        .as_ref()
 }
 
 fn load_system_font_data() -> Option<&'static [u8]> {

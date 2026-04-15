@@ -12,6 +12,7 @@
 - 桌面是当前最成熟的验证面：Skia 可用，macOS Impeller 有 Metal presenter 原型。
 - V2 对象表架构已在当前代码线上原地落地：`FrontendObjectTable` 统一索引与对象属性、`DirtyTable`（bitset + generation）管理六种脏类型、`LayoutWorkQueue` 两阶段工作队列驱动布局、reconcile 基于对象 diff、scene/patch/fragment 全部 index-first 显式栈遍历。`Node` 声明树已退缩为 frontend compile 输入。
 - `DisplayList` 协议层与 backend 原生消费路径已经落地；下一代性能跃迁点已经进一步收敛到 `DamageTracker + TileGrid/TileCache + CompositorLayerTree`，详见 `display-list-compositor.md`。
+- 图片性能主链已完成第一轮高收益优化：稳定 `ImageResourceKey` 已贯穿 `ImageSource -> DisplayImage/DrawCommand::Image`，Skia 已补齐 `sk::Image` cache，macOS Impeller 已补齐图片 Metal texture cache。
 
 ## 当前瓶颈
 
@@ -107,7 +108,7 @@
 - 第二步：拆出 `SpatialTree` 与 `ClipChainStore`，让 transform/clip 成为独立真相源。已完成。
 - 第三步：以 `RetainedDisplayList` 替换 `FragmentStore + patch collect`，让 paint-only 更新只修改脏对象的 item 区间。已完成。
 - 第四步：让 backend 原生消费 `DisplayList`，而不是通过 retained/scene 桥接协议中转。已完成，Skia 与 macOS Impeller 都已具备原生 `DisplayList` renderer，并支持文本与图像 payload。
-- 第五步：引入 `DamageTracker + TileGrid/TileCache + CompositorLayerTree`，让 rasterize 只处理脏 tiles，并把 transform/opacity 动画下沉为 compositor-only 帧。当前主要待完成。
+- 第五步：引入 `DamageTracker + TileGrid/TileCache + CompositorLayerTree`，让 rasterize 只处理脏 tiles，并把 transform/opacity 动画下沉为 compositor-only 帧。当前主要待完成；其中 macOS Impeller 已先补上 render-time lookup table、图片 texture cache 与 offscreen context cache 作为桌面验证面。
 - 参考文档：`display-list-compositor.md`
 
 ## 对各 crate 的具体建议
@@ -173,6 +174,8 @@
 - `RetainedComposeTree` 已具备稳定 `NodeId` identity、index-first dirty propagation、index-first layout dirty roots 与局部 relayout 主链路。retained runtime 已完成 V2 对象表架构：`FrontendObjectTable` 为唯一真相源、`DirtyTable` 管理六种脏类型、`LayoutWorkQueue` 两阶段工作队列驱动布局、reconcile 基于对象 diff、scene/patch/fragment 全部基于对象表显式栈遍历。
 - `Scene` 仍提供 `RenderObject` 快照表达，但桌面与移动端 session 主热路径已经统一按 `DisplayList` 提交模型消费场景。
 - `DisplayList` / `RetainedDisplayList` / `SpatialTree` / `ClipChainStore` / `StackingContext` 已进入运行时主链，`TextRun` 与 `Image` payload 已升级为可直接渲染的数据面；其中图片链路已进一步具备 `ImageSource + ImageResourceKey + ImageResourceTable` 的最小资源模型。
+- `DisplayImage` 当前已显式携带稳定 `cache_key`；`DrawCommand::Image` 也会复用同一资源身份，避免图片在 compose / backend 两端形成两套不一致的缓存键。
+- macOS Impeller 当前已具备图片 Metal texture cache、offscreen context cache 与 render-time lookup table，优先解决同图多 tile 重复上传与渲染热路径线性查找问题。
 - `SkiaTextCache` 已具备 typeface/font 缓存与命中统计。
 - 帧统计已输出 `block_count`、`damage_rect_count`、`damage_full`、`dirty_tile_count`、`cached_tile_count`、`reraster_tile_count`、`raster_batch_tile_count`、`composite_tile_count`、`compositor_layer_count`、`offscreen_layer_count`、`tile_content_handle_count`、`compositor_task_count`、`compositor_queue_depth`、`compositor_dropped_frame_count`、`compositor_processed_frame_count`、`released_tile_resource_count`、`evicted_tile_resource_count`、`budget_evicted_tile_resource_count`、`age_evicted_tile_resource_count`、`descriptor_limit_evicted_tile_resource_count`、`reused_tile_resource_count`、`reusable_tile_resource_count`、`reusable_tile_resource_bytes`、`tile_resource_reuse_budget_bytes`、`compositor_worker_threaded`、`compositor_worker_alive`、`composite_executed_layer_count`、`composite_executed_tile_count`、`composite_offscreen_step_count`，可直接观察 compositor frame 的局部/全量提交行为以及当前 raster/composite/layer/effect/scheduler/资源池规划规模；后续可继续补 `tile handle reuse ratio` 与 compositor-only 动画帧占比。
 - `ComposeEngine` 的 paint 增量与可见 layout 增量都已能直接生成 `DamageRegion`，不再只把 layout dirty 一律提升为 full frame。

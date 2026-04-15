@@ -28,7 +28,10 @@ impl DamageRegion {
         match self {
             Self::Empty => None,
             Self::Full => None,
-            Self::Rects(rects) => rects.iter().copied().reduce(|current, rect| current.union(&rect)),
+            Self::Rects(rects) => rects
+                .iter()
+                .copied()
+                .reduce(|current, rect| current.union(&rect)),
         }
     }
 

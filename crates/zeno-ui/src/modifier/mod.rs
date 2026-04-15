@@ -139,10 +139,10 @@ impl InteractionState {
     pub const fn is_interactive(self) -> bool {
         self.enabled
             && (self.role.is_some()
-            || self.action.is_some()
-            || self.focusable
-            || self.accepts_text_input
-            || self.checked.is_some())
+                || self.action.is_some()
+                || self.focusable
+                || self.accepts_text_input
+                || self.checked.is_some())
     }
 
     #[must_use]

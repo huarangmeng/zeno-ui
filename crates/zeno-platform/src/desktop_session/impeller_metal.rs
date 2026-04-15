@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, rc::Rc, time::Instant};
 
 #[allow(deprecated)]
 use cocoa::{appkit::NSView, base::id as cocoa_id};
@@ -11,7 +11,7 @@ use winit::window::Window;
 use zeno_backend_impeller::{CompositeParams, CompositeTextureTile, MetalSceneRenderer};
 use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
 use zeno_scene::{
-    CompositeExecutor, CompositeLayerJob, CompositorBlendMode, CompositorEffect,
+    CompositeExecutor, CompositeLayerJob, CompositorBlendMode, CompositorEffect, CompositorPlanner,
     CompositorService, DisplayList, FrameReport, RenderSurface, SceneBlendMode, TileCache,
     TileContentHandle, TileGrid, TileResourcePool,
 };
@@ -102,12 +102,14 @@ impl ImpellerMetalSession {
         &mut self,
         frame: &zeno_scene::CompositorFrame<DisplayList>,
     ) -> Result<FrameReport, ZenoError> {
+        let submit_started = Instant::now();
         let display_list = &frame.payload;
+        let worker_started = Instant::now();
         let worker_output = self
             .compositor_service
             .submit_frame(
                 frame.generation,
-                display_list.build_compositor_submission(&mut self.tile_cache, &frame.damage),
+                CompositorPlanner::new().plan(display_list, &mut self.tile_cache, &frame.damage),
             )
             .map_err(|error| {
                 desktop_session_error(
@@ -116,14 +118,21 @@ impl ImpellerMetalSession {
                     error,
                 )
             })?;
+        let worker_ms = worker_started.elapsed().as_secs_f64() * 1000.0;
         let scheduled = &worker_output.scheduled;
         let submission = &scheduled.submission;
         let scheduler_stats = worker_output.scheduler_stats;
         let service_stats = self.compositor_service.stats();
         let tile_grid = TileGrid::for_viewport(display_list.viewport);
-        let composite_plan = self.composite_executor.plan(&submission.composite_pass, tile_grid);
+        let composite_plan_started = Instant::now();
+        let composite_plan = self
+            .composite_executor
+            .plan(&submission.composite_pass, tile_grid);
+        let composite_plan_ms = composite_plan_started.elapsed().as_secs_f64() * 1000.0;
         let composite_stats = composite_plan.stats;
+        let resource_sync_started = Instant::now();
         let pool_delta = self.resource_pool.synchronize(&mut self.tile_cache);
+        let resource_sync_ms = resource_sync_started.elapsed().as_secs_f64() * 1000.0;
         let eviction_stats = self.tile_cache.eviction_stats();
         for (handle, descriptor) in &pool_delta.allocated {
             if !self.tile_textures.contains_key(handle) {
@@ -140,6 +149,7 @@ impl ImpellerMetalSession {
             self.tile_textures.remove(&handle);
         }
         let raster_bounds = submission.raster_batch.bounds();
+        let drawable_started = Instant::now();
         let drawable = self.layer.next_drawable().ok_or_else(|| {
             desktop_session_error(
                 ZenoErrorCode::SessionNextDrawableUnavailable,
@@ -147,6 +157,7 @@ impl ImpellerMetalSession {
                 "metal layer did not provide a drawable",
             )
         })?;
+        let drawable_ms = drawable_started.elapsed().as_secs_f64() * 1000.0;
         zeno_session_log!(
             trace,
             op = "submit_compositor_frame",
@@ -192,13 +203,23 @@ impl ImpellerMetalSession {
             generation = frame.generation,
             "impeller macos compositor frame submit"
         );
+        self.renderer.begin_frame();
+        let raster_started = Instant::now();
+        let mut raster_tile_count = 0usize;
         for raster_tile in &submission.raster_batch.tiles {
             let Some(texture) = self.tile_textures.get(&raster_tile.content_handle) else {
                 continue;
             };
-            self.renderer
-                .render_display_list_to_texture_tile(texture, display_list, raster_tile.rect)?;
+            self.renderer.render_display_list_to_texture_tile(
+                texture,
+                display_list,
+                &submission.layer_tree,
+                raster_tile.rect,
+            )?;
+            raster_tile_count += 1;
         }
+        let raster_ms = raster_started.elapsed().as_secs_f64() * 1000.0;
+        let build_tiles_started = Instant::now();
         let composite_tiles = composite_plan
             .jobs
             .iter()
@@ -224,6 +245,8 @@ impl ImpellerMetalSession {
                 })
             })
             .collect::<Vec<_>>();
+        let build_tiles_ms = build_tiles_started.elapsed().as_secs_f64() * 1000.0;
+        let drawable_submit_started = Instant::now();
         if submission.raster_batch.full_raster && composite_tiles.is_empty() {
             self.renderer.render_display_list_to_drawable(
                 drawable,
@@ -239,6 +262,34 @@ impl ImpellerMetalSession {
                 display_list.viewport.height.max(1.0),
             )?;
         }
+        let drawable_submit_ms = drawable_submit_started.elapsed().as_secs_f64() * 1000.0;
+        let total_submit_ms = submit_started.elapsed().as_secs_f64() * 1000.0;
+        let (offscreen_cache_entries, offscreen_cache_hits, offscreen_cache_misses) =
+            self.renderer.offscreen_context_cache_stats();
+        // Stable perf instrumentation. Keep op names in sync with
+        // docs/architecture/performance-debugging.md.
+        // #region debug-point impeller-submit-timing
+        zeno_session_log!(
+            trace,
+            op = "impeller_submit_timing",
+            total_submit_ms,
+            worker_ms,
+            composite_plan_ms,
+            resource_sync_ms,
+            drawable_ms,
+            raster_ms,
+            raster_tile_count,
+            build_tiles_ms,
+            drawable_submit_ms,
+            reraster_tile_count = submission.tile_plan.stats.reraster_tile_count,
+            composite_tile_count = submission.composite_pass.tile_count(),
+            offscreen_layer_count = submission.layer_tree.offscreen_layer_count(),
+            offscreen_cache_entries,
+            offscreen_cache_hits,
+            offscreen_cache_misses,
+            "impeller submit timing"
+        );
+        // #endregion
         Ok(FrameReport {
             backend: Backend::Impeller,
             command_count: display_list.items.len(),
@@ -264,7 +315,8 @@ impl ImpellerMetalSession {
             evicted_tile_resource_count,
             budget_evicted_tile_resource_count: eviction_stats.budget_eviction_count,
             age_evicted_tile_resource_count: eviction_stats.age_eviction_count,
-            descriptor_limit_evicted_tile_resource_count: eviction_stats.descriptor_limit_eviction_count,
+            descriptor_limit_evicted_tile_resource_count: eviction_stats
+                .descriptor_limit_eviction_count,
             reused_tile_resource_count,
             reusable_tile_resource_count: self.tile_cache.reusable_handle_count(),
             reusable_tile_resource_bytes: self.tile_cache.reusable_byte_count(),
@@ -297,7 +349,10 @@ fn layer_job_blend_mode(layer: &CompositeLayerJob) -> SceneBlendMode {
 
 fn layer_job_composite_params(layer: &CompositeLayerJob, rect: zeno_core::Rect) -> CompositeParams {
     let mut params = CompositeParams {
-        inv_texture_size: [1.0 / rect.size.width.max(1.0), 1.0 / rect.size.height.max(1.0)],
+        inv_texture_size: [
+            1.0 / rect.size.width.max(1.0),
+            1.0 / rect.size.height.max(1.0),
+        ],
         ..CompositeParams::default()
     };
     for effect in &layer.effects {

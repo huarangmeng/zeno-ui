@@ -1,4 +1,6 @@
-use zeno_core::{AppConfig, Platform, ZenoError};
+use std::time::Instant;
+
+use zeno_core::{AppConfig, Platform, ZenoError, zeno_session_log};
 use zeno_platform::desktop::DesktopShell;
 use zeno_platform::presenter::{
     AnimatedFrameContext, AnimatedFrameOutput, FrameRequest, ResolvedWindowRun,
@@ -64,8 +66,9 @@ where
                     }
                 }
                 crate::UiEvent::ToggleChanged { action_id, checked } => {
-                    if let Some(message) =
-                        self.bindings.resolve_toggle::<A::Message>(*action_id, *checked)
+                    if let Some(message) = self
+                        .bindings
+                        .resolve_toggle::<A::Message>(*action_id, *checked)
                     {
                         self.app.update(&frame, message);
                     }
@@ -81,9 +84,33 @@ where
             AppView::Compose(root) => {
                 self.runtime.resize(frame.size);
                 self.runtime.set_root(root);
+                let prepare_started = Instant::now();
                 if let Some(ui_frame) = self.runtime.prepare_frame()? {
+                    let prepare_ms = prepare_started.elapsed().as_secs_f64() * 1000.0;
+                    let submit_started = Instant::now();
                     let mut report = session.submit_compositor_frame(&ui_frame.compositor_frame)?;
+                    let submit_ms = submit_started.elapsed().as_secs_f64() * 1000.0;
                     apply_display_list_stats(&mut report, ui_frame.display_list());
+                    // Stable perf instrumentation. Keep op names in sync with
+                    // docs/architecture/performance-debugging.md.
+                    // #region debug-point app-host-frame-timing
+                    zeno_session_log!(
+                        trace,
+                        op = "app_host_frame_timing",
+                        frame_index = frame.frame_index,
+                        prepare_ms,
+                        submit_ms,
+                        total_ms = prepare_ms + submit_ms,
+                        damage_rect_count = report.damage_rect_count,
+                        damage_full = report.damage_full,
+                        dirty_tile_count = report.dirty_tile_count,
+                        reraster_tile_count = report.reraster_tile_count,
+                        composite_tile_count = report.composite_tile_count,
+                        compositor_layer_count = report.compositor_layer_count,
+                        offscreen_layer_count = report.offscreen_layer_count,
+                        "app host frame timing"
+                    );
+                    // #endregion
                     report
                 } else {
                     frame.last_report.clone().ok_or_else(|| {

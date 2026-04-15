@@ -134,25 +134,49 @@ pub(super) fn build_composite_vertices(
     viewport_width: f32,
     viewport_height: f32,
 ) -> Vec<CompositeVertex> {
+    build_composite_vertices_with_uv(
+        rect,
+        [0.0, 0.0],
+        [1.0, 1.0],
+        opacity,
+        viewport_width,
+        viewport_height,
+    )
+}
+
+pub(super) fn build_composite_vertices_with_uv(
+    rect: Rect,
+    uv_min: [f32; 2],
+    uv_max: [f32; 2],
+    opacity: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+) -> Vec<CompositeVertex> {
     let color = [1.0, 1.0, 1.0, opacity.clamp(0.0, 1.0)];
     [
-        ([rect.origin.x, rect.origin.y], [0.0, 0.0]),
-        ([rect.origin.x + rect.size.width, rect.origin.y], [1.0, 0.0]),
+        ([rect.origin.x, rect.origin.y], [uv_min[0], uv_min[1]]),
         (
-            [rect.origin.x, rect.origin.y + rect.size.height],
-            [0.0, 1.0],
+            [rect.origin.x + rect.size.width, rect.origin.y],
+            [uv_max[0], uv_min[1]],
         ),
         (
             [rect.origin.x, rect.origin.y + rect.size.height],
-            [0.0, 1.0],
+            [uv_min[0], uv_max[1]],
         ),
-        ([rect.origin.x + rect.size.width, rect.origin.y], [1.0, 0.0]),
+        (
+            [rect.origin.x, rect.origin.y + rect.size.height],
+            [uv_min[0], uv_max[1]],
+        ),
+        (
+            [rect.origin.x + rect.size.width, rect.origin.y],
+            [uv_max[0], uv_min[1]],
+        ),
         (
             [
                 rect.origin.x + rect.size.width,
                 rect.origin.y + rect.size.height,
             ],
-            [1.0, 1.0],
+            [uv_max[0], uv_max[1]],
         ),
     ]
     .into_iter()

@@ -2,7 +2,7 @@ use skia_safe as sk;
 use zeno_core::{Backend, ZenoError, ZenoErrorCode};
 use zeno_scene::{DisplayList, FrameReport, RenderCapabilities, RenderSurface, Renderer, TileGrid};
 
-use crate::canvas::{SkiaTextCache, render_display_list_to_canvas};
+use crate::canvas::{SkiaImageCache, SkiaTextCache, render_display_list_to_canvas};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SkiaRenderer;
@@ -39,8 +39,14 @@ impl Renderer for SkiaRenderer {
                 "failed to create skia surface",
             )
         })?;
+        let mut image_cache = SkiaImageCache::default();
         let mut text_cache = SkiaTextCache::default();
-        render_display_list_to_canvas(surface.canvas(), display_list, &mut text_cache);
+        render_display_list_to_canvas(
+            surface.canvas(),
+            display_list,
+            &mut text_cache,
+            &mut image_cache,
+        );
         Ok(FrameReport {
             backend: self.kind(),
             command_count: display_list.items.len(),

@@ -1,5 +1,7 @@
 use std::sync::Arc;
+use std::time::Instant;
 
+use zeno_core::zeno_session_log;
 use zeno_core::{Point, Rect, Size};
 use zeno_text::{TextParagraph, TextSystem, line_box};
 
@@ -190,7 +192,26 @@ fn measure_task(
                 font_size: object.style.font_size.unwrap_or(text.font_size),
                 max_width: inner_available.width.max(1.0),
             };
+            let text_layout_started = Instant::now();
             let layout = text_system.layout(paragraph);
+            let text_layout_ms = text_layout_started.elapsed().as_secs_f64() * 1000.0;
+            if text_layout_ms > 1.0 {
+                // Stable perf instrumentation. Keep op names in sync with
+                // docs/architecture/performance-debugging.md.
+                // #region debug-point text-layout-node
+                zeno_session_log!(
+                    trace,
+                    op = "text_layout_node",
+                    index,
+                    element_id = object.element_id.0,
+                    font_size = object.style.font_size.unwrap_or(text.font_size),
+                    max_width = inner_available.width.max(1.0),
+                    text_len = text.content.len(),
+                    text_layout_ms,
+                    "text node layout timing"
+                );
+                // #endregion
+            }
             let content = line_box(&layout);
             let size = finalize_size_for_style(&object.style, available, content);
             arena.upsert(

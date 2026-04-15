@@ -85,3 +85,8 @@ ZENO_LOG=trace cargo run -p minimal_app
 
 - 后续新增 crate 时，只允许接入项目日志宏，不直接依赖具体日志库宏。
 - 若未来需要文件落盘、JSON 输出或遥测上报，只需要替换内部日志适配层。
+
+## 性能观测面
+
+- Impeller / Compose 的长期性能日志点与推荐排查顺序，见 [performance-debugging.md](file:///Users/bytedance/RustroverProjects/zeno-ui/docs/architecture/performance-debugging.md)。
+- 这些 `op` 名称属于稳定观测协议，不应作为一次性调试残留随意删除或重命名。

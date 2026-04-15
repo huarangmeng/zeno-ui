@@ -1,4 +1,5 @@
 mod effects;
+mod image;
 mod mapping;
 mod text;
 
@@ -7,9 +8,11 @@ use std::collections::HashSet;
 use skia_safe as sk;
 use zeno_core::Rect;
 use zeno_scene::{
-    ClipChainId, ClipRegion, DisplayItem, DisplayItemPayload, DisplayList, SpatialNodeId,
+    ClipChainId, ClipRegion, CompositorLayerId, CompositorLayerTree, CompositorScopeEntry,
+    DisplayItem, DisplayItemPayload, DisplayList, SpatialNodeId,
 };
 
+pub use image::{SkiaImageCache, SkiaImageCacheStats};
 pub use text::{SkiaTextCache, SkiaTextCacheStats};
 
 use effects::{context_effect_bounds, context_paint, needs_save_layer_for_context};
@@ -20,9 +23,18 @@ pub fn render_display_list_to_canvas(
     canvas: &sk::Canvas,
     display_list: &DisplayList,
     text_cache: &mut SkiaTextCache,
+    image_cache: &mut SkiaImageCache,
 ) {
     canvas.clear(sk::Color::TRANSPARENT);
-    render_display_list_scope(canvas, display_list, None, None, text_cache);
+    render_display_list_scope(
+        canvas,
+        display_list,
+        None,
+        None,
+        None,
+        text_cache,
+        image_cache,
+    );
 }
 
 pub fn render_display_list_region_to_canvas(
@@ -30,6 +42,7 @@ pub fn render_display_list_region_to_canvas(
     display_list: &DisplayList,
     dirty_rect: Rect,
     text_cache: &mut SkiaTextCache,
+    image_cache: &mut SkiaImageCache,
 ) {
     let clip = sk::Rect::from_xywh(
         dirty_rect.origin.x,
@@ -43,51 +56,67 @@ pub fn render_display_list_region_to_canvas(
     clear.set_style(sk::paint::Style::Fill);
     clear.set_color(sk::Color::TRANSPARENT);
     canvas.draw_rect(clip, &clear);
-    render_display_list_scope(canvas, display_list, None, Some(dirty_rect), text_cache);
+    render_display_list_scope(
+        canvas,
+        display_list,
+        None,
+        None,
+        Some(dirty_rect),
+        text_cache,
+        image_cache,
+    );
     canvas.restore();
 }
 
 pub fn render_display_list_tile_to_canvas(
     canvas: &sk::Canvas,
     display_list: &DisplayList,
+    layer_tree: &CompositorLayerTree,
     tile_rect: Rect,
     text_cache: &mut SkiaTextCache,
+    image_cache: &mut SkiaImageCache,
 ) {
     let local_clip = sk::Rect::from_xywh(0.0, 0.0, tile_rect.size.width, tile_rect.size.height);
     canvas.clear(sk::Color::TRANSPARENT);
     canvas.save();
     canvas.clip_rect(local_clip, None, Some(false));
     canvas.translate((-tile_rect.origin.x, -tile_rect.origin.y));
-    render_display_list_scope(canvas, display_list, None, Some(tile_rect), text_cache);
+    render_display_list_scope(
+        canvas,
+        display_list,
+        Some(layer_tree),
+        None,
+        Some(tile_rect),
+        text_cache,
+        image_cache,
+    );
     canvas.restore();
 }
 
 fn render_display_list_scope(
     canvas: &sk::Canvas,
     display_list: &DisplayList,
+    layer_tree: Option<&CompositorLayerTree>,
     parent_context: Option<zeno_scene::StackingContextId>,
     dirty_rect: Option<Rect>,
     text_cache: &mut SkiaTextCache,
+    image_cache: &mut SkiaImageCache,
 ) {
-    let mut rendered_child_contexts = HashSet::new();
-    for item in &display_list.items {
-        let Some(scope_entry) = scope_entry_for_item(display_list, parent_context, item) else {
-            continue;
-        };
-        match scope_entry {
-            ScopeEntry::Direct => {
+    for step in scope_steps(display_list, layer_tree, parent_context) {
+        match step {
+            ScopeStep::Direct(item_index) => {
+                let Some(item) = display_list.items.get(item_index) else {
+                    continue;
+                };
                 let should_render = match dirty_rect {
                     Some(dirty) => item.visual_rect.intersects(&dirty),
                     None => true,
                 };
                 if should_render {
-                    render_display_item(canvas, display_list, item, text_cache);
+                    render_display_item(canvas, display_list, item, text_cache, image_cache);
                 }
             }
-            ScopeEntry::ChildContext(context_id) => {
-                if !rendered_child_contexts.insert(context_id) {
-                    continue;
-                }
+            ScopeStep::ChildContext(context_id) => {
                 let context_dirty = match dirty_rect {
                     Some(dirty) => {
                         stacking_context_bounds(display_list, context_id).intersects(&dirty)
@@ -97,7 +126,15 @@ fn render_display_list_scope(
                 if !context_dirty {
                     continue;
                 }
-                render_stacking_context(canvas, display_list, context_id, dirty_rect, text_cache);
+                render_stacking_context(
+                    canvas,
+                    display_list,
+                    layer_tree,
+                    context_id,
+                    dirty_rect,
+                    text_cache,
+                    image_cache,
+                );
             }
         }
     }
@@ -106,9 +143,11 @@ fn render_display_list_scope(
 fn render_stacking_context(
     canvas: &sk::Canvas,
     display_list: &DisplayList,
+    layer_tree: Option<&CompositorLayerTree>,
     context_id: zeno_scene::StackingContextId,
     dirty_rect: Option<Rect>,
     text_cache: &mut SkiaTextCache,
+    image_cache: &mut SkiaImageCache,
 ) {
     let Some(context) = display_list
         .stacking_contexts
@@ -134,9 +173,11 @@ fn render_stacking_context(
     render_display_list_scope(
         canvas,
         display_list,
+        layer_tree,
         Some(context_id),
         dirty_rect,
         text_cache,
+        image_cache,
     );
     canvas.restore_to_count(initial_save_count);
 }
@@ -176,32 +217,11 @@ fn parent_stacking_context(
     display_list: &DisplayList,
     context_id: zeno_scene::StackingContextId,
 ) -> Option<zeno_scene::StackingContextId> {
-    let context = display_list
+    display_list
         .stacking_contexts
         .iter()
-        .find(|context| context.id == context_id)?;
-    let mut current = display_list
-        .spatial_tree
-        .nodes
-        .iter()
-        .find(|node| node.id == context.spatial_id)?
-        .parent;
-    while let Some(spatial_id) = current {
-        if let Some(parent_context) = display_list
-            .stacking_contexts
-            .iter()
-            .find(|candidate| candidate.spatial_id == spatial_id)
-        {
-            return Some(parent_context.id);
-        }
-        current = display_list
-            .spatial_tree
-            .nodes
-            .iter()
-            .find(|node| node.id == spatial_id)
-            .and_then(|node| node.parent);
-    }
-    None
+        .find(|context| context.id == context_id)
+        .and_then(|context| context.parent)
 }
 
 fn scope_entry_for_item(
@@ -245,21 +265,117 @@ enum ScopeEntry {
     ChildContext(zeno_scene::StackingContextId),
 }
 
+enum ScopeStep {
+    Direct(usize),
+    ChildContext(zeno_scene::StackingContextId),
+}
+
+fn scope_steps(
+    display_list: &DisplayList,
+    layer_tree: Option<&CompositorLayerTree>,
+    parent_context: Option<zeno_scene::StackingContextId>,
+) -> Vec<ScopeStep> {
+    if let Some(steps) =
+        layer_tree.and_then(|tree| scope_steps_from_layer_tree(display_list, tree, parent_context))
+    {
+        return steps;
+    }
+    let mut rendered_child_contexts = HashSet::new();
+    let mut steps = Vec::new();
+    for (item_index, item) in display_list.items.iter().enumerate() {
+        let Some(scope_entry) = scope_entry_for_item(display_list, parent_context, item) else {
+            continue;
+        };
+        match scope_entry {
+            ScopeEntry::Direct => steps.push(ScopeStep::Direct(item_index)),
+            ScopeEntry::ChildContext(context_id) => {
+                if rendered_child_contexts.insert(context_id) {
+                    steps.push(ScopeStep::ChildContext(context_id));
+                }
+            }
+        }
+    }
+    steps
+}
+
+fn scope_steps_from_layer_tree(
+    display_list: &DisplayList,
+    layer_tree: &CompositorLayerTree,
+    parent_context: Option<zeno_scene::StackingContextId>,
+) -> Option<Vec<ScopeStep>> {
+    let layer = layer_for_scope(display_list, layer_tree, parent_context)?;
+    Some(
+        layer
+            .scope_entries
+            .iter()
+            .filter_map(|entry| match entry {
+                CompositorScopeEntry::DirectItem(item_index) => {
+                    Some(ScopeStep::Direct(*item_index))
+                }
+                CompositorScopeEntry::ChildLayer(layer_id) => {
+                    child_context_id_for_layer(display_list, layer_tree, *layer_id)
+                        .map(ScopeStep::ChildContext)
+                }
+            })
+            .collect(),
+    )
+}
+
+fn layer_for_scope<'a>(
+    display_list: &'a DisplayList,
+    layer_tree: &'a CompositorLayerTree,
+    parent_context: Option<zeno_scene::StackingContextId>,
+) -> Option<&'a zeno_scene::CompositorLayer> {
+    match parent_context {
+        None => layer_tree
+            .layers
+            .iter()
+            .find(|layer| layer.layer_id == CompositorLayerId(0)),
+        Some(context_id) => {
+            let context_index = display_list
+                .stacking_contexts
+                .iter()
+                .position(|context| context.id == context_id)?;
+            layer_tree
+                .layers
+                .iter()
+                .find(|layer| layer.stacking_context_index == Some(context_index))
+        }
+    }
+}
+
+fn child_context_id_for_layer(
+    display_list: &DisplayList,
+    layer_tree: &CompositorLayerTree,
+    layer_id: CompositorLayerId,
+) -> Option<zeno_scene::StackingContextId> {
+    let layer = layer_tree
+        .layers
+        .iter()
+        .find(|layer| layer.layer_id == layer_id)?;
+    let context_index = layer.stacking_context_index?;
+    display_list
+        .stacking_contexts
+        .get(context_index)
+        .map(|context| context.id)
+}
+
 fn render_display_item(
     canvas: &sk::Canvas,
     display_list: &DisplayList,
     item: &DisplayItem,
     text_cache: &mut SkiaTextCache,
+    image_cache: &mut SkiaImageCache,
 ) {
     canvas.save();
     apply_clip_chain(canvas, display_list, item.clip_chain_id);
     apply_spatial_transform(canvas, display_list, item.spatial_id);
-    let Some(paint) = paint_for_item(item) else {
-        canvas.restore();
-        return;
-    };
     match &item.payload {
         DisplayItemPayload::FillRect { rect, .. } => {
+            let Some(paint) = paint_for_item(item) else {
+                canvas.restore();
+                return;
+            };
             let rect = sk::Rect::from_xywh(
                 rect.origin.x,
                 rect.origin.y,
@@ -269,6 +385,10 @@ fn render_display_item(
             canvas.draw_rect(rect, &paint);
         }
         DisplayItemPayload::FillRoundedRect { rect, radius, .. } => {
+            let Some(paint) = paint_for_item(item) else {
+                canvas.restore();
+                return;
+            };
             let rounded = sk::RRect::new_rect_xy(
                 sk::Rect::from_xywh(
                     rect.origin.x,
@@ -285,23 +405,16 @@ fn render_display_item(
             draw_text_layout(canvas, text.position, &text.layout, text.color, text_cache);
         }
         DisplayItemPayload::Image(image) => {
-            let info = sk::ImageInfo::new(
-                (image.width as i32, image.height as i32),
-                sk::ColorType::RGBA8888,
-                sk::AlphaType::Premul,
-                None,
-            );
-            if let Some(sk_image) = sk::images::raster_from_data(
-                &info,
-                sk::Data::new_copy(&image.rgba8),
-                (image.width * 4) as usize,
-            ) {
+            if let Some(sk_image) =
+                image_cache.resolve_rgba8(image.cache_key, image.width, image.height, &image.rgba8)
+            {
                 let dst = sk::Rect::from_xywh(
                     image.dest_rect.origin.x,
                     image.dest_rect.origin.y,
                     image.dest_rect.size.width,
                     image.dest_rect.size.height,
                 );
+                let paint = sk::Paint::default();
                 canvas.draw_image_rect(sk_image, None, &dst, &paint);
             }
         }

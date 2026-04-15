@@ -27,7 +27,6 @@ pub(super) fn reconcile_root_change(retained: &mut RetainedComposeTree, root: &N
         .enumerate()
         .map(|(index, object)| (object.element_id, (index, object)))
         .collect();
-
     for element_id in previous_by_id.keys() {
         if !current_by_id.contains_key(element_id) {
             retained.mark_element_dirty(*element_id, DirtyReason::Structure);
@@ -97,7 +96,9 @@ fn local_change_reason(
             }
         }
         (FrontendObjectKind::Image(previous_image), FrontendObjectKind::Image(current_image)) => {
-            if previous_image != current_image {
+            let image_changed =
+                previous_image.source.resource_key() != current_image.source.resource_key();
+            if image_changed {
                 Some(DirtyReason::Paint)
             } else {
                 style_change_reason(&previous.style, &current.style, false, false)

@@ -80,7 +80,8 @@ impl NativeSurface {
     }
 }
 
-pub fn host_requirement_for_backend(
+#[allow(dead_code)]
+pub(crate) fn host_requirement_for_backend(
     platform: Platform,
     backend: Backend,
 ) -> Result<NativeSurfaceHostRequirement, ZenoError> {

@@ -14,7 +14,9 @@ pub enum CompositorBlendMode {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompositorEffect {
-    Blur { sigma: f32 },
+    Blur {
+        sigma: f32,
+    },
     DropShadow {
         dx: f32,
         dy: f32,
@@ -27,16 +29,27 @@ pub enum CompositorEffect {
 pub struct CompositorLayer {
     pub layer_id: CompositorLayerId,
     pub parent: Option<CompositorLayerId>,
+    pub child_layers: Vec<CompositorLayerId>,
+    pub descendant_layers: Vec<CompositorLayerId>,
+    pub scope_entries: Vec<CompositorScopeEntry>,
     pub stacking_context_index: Option<usize>,
+    pub paint_order: usize,
     pub opacity: f32,
     pub blend_mode: CompositorBlendMode,
     pub effects: Vec<CompositorEffect>,
     pub needs_offscreen: bool,
     pub bounds: Rect,
+    pub subtree_bounds: Rect,
     pub effect_bounds: Rect,
     pub effect_padding: f32,
     pub item_count: usize,
     pub tile_ids: Vec<TileId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompositorScopeEntry {
+    DirectItem(usize),
+    ChildLayer(CompositorLayerId),
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -62,12 +75,16 @@ impl CompositorLayerTree {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompositeLayerPass {
     pub layer_id: CompositorLayerId,
+    pub parent: Option<CompositorLayerId>,
+    pub descendant_layers: Vec<CompositorLayerId>,
     pub tiles: Vec<CompositeTileRef>,
+    pub paint_order: usize,
     pub needs_offscreen: bool,
     pub opacity: f32,
     pub blend_mode: CompositorBlendMode,
     pub effects: Vec<CompositorEffect>,
     pub bounds: Rect,
+    pub subtree_bounds: Rect,
     pub effect_bounds: Rect,
     pub effect_padding: f32,
 }
@@ -115,11 +132,15 @@ pub struct CompositeTileJob {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompositeLayerJob {
     pub layer_id: CompositorLayerId,
+    pub parent: Option<CompositorLayerId>,
+    pub descendant_layers: Vec<CompositorLayerId>,
+    pub paint_order: usize,
     pub opacity: f32,
     pub blend_mode: CompositorBlendMode,
     pub effects: Vec<CompositorEffect>,
     pub needs_offscreen: bool,
     pub bounds: Rect,
+    pub subtree_bounds: Rect,
     pub effect_bounds: Rect,
     pub effect_padding: f32,
 }
@@ -160,11 +181,15 @@ impl CompositeExecutor {
             .iter()
             .map(|step| CompositeLayerJob {
                 layer_id: step.layer_id,
+                parent: step.parent,
+                descendant_layers: step.descendant_layers.clone(),
+                paint_order: step.paint_order,
                 opacity: step.opacity,
                 blend_mode: step.blend_mode,
                 effects: step.effects.clone(),
                 needs_offscreen: step.needs_offscreen,
                 bounds: step.bounds,
+                subtree_bounds: step.subtree_bounds,
                 effect_bounds: step.effect_bounds,
                 effect_padding: step.effect_padding,
             })

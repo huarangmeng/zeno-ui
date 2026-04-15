@@ -18,13 +18,16 @@ use zeno_text::{GlyphRasterCache, load_system_font};
 
 use self::{
     display_list_renderer::{
-        composite_tile_textures_to_drawable_with_load, render_display_list_to_texture_tiles_with_load,
+        ImageTextureCache, OffscreenContextCache, composite_tile_textures_to_drawable_with_load,
         render_display_list_to_drawable_region_with_load,
         render_display_list_to_drawable_tiles_with_load,
+        render_display_list_to_texture_tiles_with_load,
     },
     draw::make_offscreen_texture,
     pipeline::{create_color_pipeline, create_composite_pipeline, create_text_pipeline},
 };
+
+const IMAGE_TEXTURE_CACHE_BUDGET_BYTES: usize = 64 * 1024 * 1024;
 
 // 对外只暴露渲染器入口，具体的绘制、裁剪、离屏与管线初始化细节下沉到子模块。
 pub struct MetalSceneRenderer {
@@ -37,6 +40,8 @@ pub struct MetalSceneRenderer {
     composite_screen_pipeline: RenderPipelineState,
     font: Option<Font>,
     glyph_cache: GlyphRasterCache,
+    image_texture_cache: ImageTextureCache,
+    offscreen_context_cache: OffscreenContextCache,
 }
 
 impl MetalSceneRenderer {
@@ -72,9 +77,20 @@ impl MetalSceneRenderer {
             )?,
             font: load_system_font(),
             glyph_cache: GlyphRasterCache::default(),
+            image_texture_cache: ImageTextureCache::new(IMAGE_TEXTURE_CACHE_BUDGET_BYTES),
+            offscreen_context_cache: OffscreenContextCache::default(),
             device,
             queue,
         })
+    }
+
+    pub fn begin_frame(&mut self) {
+        self.offscreen_context_cache.clear();
+    }
+
+    pub fn offscreen_context_cache_stats(&self) -> (usize, usize, usize) {
+        let stats = self.offscreen_context_cache.stats();
+        (stats.entry_count, stats.hits, stats.misses)
     }
 
     pub fn render_display_list_to_drawable(
@@ -100,6 +116,7 @@ impl MetalSceneRenderer {
         preserve_contents: bool,
         dirty_bounds: Option<Rect>,
     ) -> Result<(), ZenoError> {
+        self.begin_frame();
         render_display_list_to_drawable_region_with_load(
             &self.device,
             &self.queue,
@@ -115,6 +132,8 @@ impl MetalSceneRenderer {
             preserve_contents,
             dirty_bounds,
             &mut self.glyph_cache,
+            &mut self.image_texture_cache,
+            &mut self.offscreen_context_cache,
         )
     }
 
@@ -126,6 +145,7 @@ impl MetalSceneRenderer {
         preserve_contents: bool,
         dirty_regions: &[Rect],
     ) -> Result<(), ZenoError> {
+        self.begin_frame();
         render_display_list_to_drawable_tiles_with_load(
             &self.device,
             &self.queue,
@@ -141,17 +161,24 @@ impl MetalSceneRenderer {
             preserve_contents,
             dirty_regions,
             &mut self.glyph_cache,
+            &mut self.image_texture_cache,
+            &mut self.offscreen_context_cache,
         )
     }
 
     pub fn create_tile_texture(&self, width: u32, height: u32) -> metal::Texture {
-        make_offscreen_texture(&self.device, u64::from(width.max(1)), u64::from(height.max(1)))
+        make_offscreen_texture(
+            &self.device,
+            u64::from(width.max(1)),
+            u64::from(height.max(1)),
+        )
     }
 
     pub fn render_display_list_to_texture_tile(
         &mut self,
         texture: &metal::TextureRef,
         display_list: &zeno_scene::DisplayList,
+        layer_tree: &zeno_scene::CompositorLayerTree,
         tile_rect: Rect,
     ) -> Result<(), ZenoError> {
         render_display_list_to_texture_tiles_with_load(
@@ -167,11 +194,19 @@ impl MetalSceneRenderer {
             display_list,
             Some(Color::TRANSPARENT),
             false,
-            &[Rect::new(0.0, 0.0, tile_rect.size.width, tile_rect.size.height)],
+            &[Rect::new(
+                0.0,
+                0.0,
+                tile_rect.size.width,
+                tile_rect.size.height,
+            )],
+            Some(layer_tree),
             zeno_core::Transform2D::translation(-tile_rect.origin.x, -tile_rect.origin.y),
             tile_rect.size.width.max(1.0),
             tile_rect.size.height.max(1.0),
             &mut self.glyph_cache,
+            &mut self.image_texture_cache,
+            &mut self.offscreen_context_cache,
         )
     }
 

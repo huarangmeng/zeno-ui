@@ -1,11 +1,11 @@
-mod common;
 mod button;
 mod checkbox;
+mod common;
 mod scroll;
 mod switch;
-mod toggle;
 #[cfg(test)]
 mod tests;
+mod toggle;
 
 pub use button::{Button, button};
 pub use checkbox::{Checkbox, checkbox};

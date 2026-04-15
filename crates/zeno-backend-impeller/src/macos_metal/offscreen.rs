@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use metal::{Device, MTLPrimitiveType, RenderPipelineState, TextureRef};
 use zeno_core::Rect;
 use zeno_scene::SceneBlendMode;
@@ -6,7 +8,7 @@ use zeno_scene::{LayerObject, Scene, SceneEffect};
 
 #[cfg(test)]
 use super::draw::color_to_f32;
-use super::draw::{CompositeVertex, build_composite_vertices, new_buffer};
+use super::draw::{CompositeVertex, build_composite_vertices_with_uv, new_buffer};
 
 #[repr(C, align(16))]
 #[derive(Debug, Default, Clone, Copy)]
@@ -18,6 +20,13 @@ pub struct CompositeParams {
     pub shadow_color: [f32; 4],
     pub flags: u32,
     pub _padding: [u32; 3],
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(super) struct CompositeDrawStats {
+    pub vertex_build_ms: f64,
+    pub buffer_alloc_ms: f64,
+    pub encode_ms: f64,
 }
 
 // 这里集中处理离屏合成，便于后续继续向更细粒度的 offscreen patch 演进。
@@ -39,10 +48,49 @@ pub(super) fn draw_composited_texture(
     viewport_width: f32,
     viewport_height: f32,
     params: CompositeParams,
-) {
-    let vertices: Vec<CompositeVertex> =
-        build_composite_vertices(rect, opacity, viewport_width, viewport_height);
+) -> CompositeDrawStats {
+    draw_composited_texture_region(
+        device,
+        composite_pipeline,
+        encoder,
+        texture,
+        rect,
+        [0.0, 0.0],
+        [1.0, 1.0],
+        opacity,
+        viewport_width,
+        viewport_height,
+        params,
+    )
+}
+
+pub(super) fn draw_composited_texture_region(
+    device: &Device,
+    composite_pipeline: &RenderPipelineState,
+    encoder: &metal::RenderCommandEncoderRef,
+    texture: &TextureRef,
+    rect: Rect,
+    uv_min: [f32; 2],
+    uv_max: [f32; 2],
+    opacity: f32,
+    viewport_width: f32,
+    viewport_height: f32,
+    params: CompositeParams,
+) -> CompositeDrawStats {
+    let vertex_build_started = Instant::now();
+    let vertices: Vec<CompositeVertex> = build_composite_vertices_with_uv(
+        rect,
+        uv_min,
+        uv_max,
+        opacity,
+        viewport_width,
+        viewport_height,
+    );
+    let vertex_build_ms = vertex_build_started.elapsed().as_secs_f64() * 1000.0;
+    let buffer_alloc_started = Instant::now();
     let buffer = new_buffer(device, &vertices);
+    let buffer_alloc_ms = buffer_alloc_started.elapsed().as_secs_f64() * 1000.0;
+    let encode_started = Instant::now();
     encoder.set_render_pipeline_state(composite_pipeline);
     encoder.set_vertex_buffer(0, Some(&buffer), 0);
     encoder.set_fragment_texture(0, Some(texture));
@@ -52,6 +100,11 @@ pub(super) fn draw_composited_texture(
         (&params as *const CompositeParams).cast(),
     );
     encoder.draw_primitives(MTLPrimitiveType::Triangle, 0, vertices.len() as u64);
+    CompositeDrawStats {
+        vertex_build_ms,
+        buffer_alloc_ms,
+        encode_ms: encode_started.elapsed().as_secs_f64() * 1000.0,
+    }
 }
 
 pub(super) fn composite_pipeline_for_blend<'a>(

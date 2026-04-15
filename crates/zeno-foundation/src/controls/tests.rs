@@ -1,8 +1,7 @@
 use zeno_ui::{Axis, Color, InteractionRole, Modifier};
 
 use crate::{
-    button, checkbox, container, r#switch, row, scroll, spacer, switch_control, text,
-    toggle_button,
+    button, checkbox, container, row, scroll, spacer, r#switch, switch_control, text, toggle_button,
 };
 
 fn role_of(node: &zeno_ui::Node) -> Option<InteractionRole> {
@@ -41,8 +40,7 @@ fn button_style_can_be_overridden_explicitly() {
 fn controls_do_not_derive_node_id_from_action() {
     zeno_ui::begin_message_bindings();
     let first_button: zeno_ui::Node = button(text("Run")).on_click(1_u8).into();
-    let second_button: zeno_ui::Node =
-        button(text("Run again")).on_click(1_u8).into();
+    let second_button: zeno_ui::Node = button(text("Run again")).on_click(1_u8).into();
     let first_checkbox: zeno_ui::Node = checkbox(text("Accept"))
         .checked(true)
         .on_checked_change(|checked| checked)
@@ -60,10 +58,7 @@ fn controls_do_not_derive_node_id_from_action() {
 #[test]
 fn button_and_checkbox_can_be_disabled() {
     let button_node: zeno_ui::Node = button(text("Run")).enabled(false).into();
-    let checkbox_node: zeno_ui::Node = checkbox(text("Accept"))
-        .checked(true)
-        .enabled(false)
-        .into();
+    let checkbox_node: zeno_ui::Node = checkbox(text("Accept")).checked(true).enabled(false).into();
 
     assert_eq!(button_node.resolved_style().opacity, 0.55);
     assert_eq!(checkbox_node.resolved_style().opacity, 0.55);
@@ -77,8 +72,14 @@ fn toggle_button_reflects_selected_state() {
     let idle: zeno_ui::Node = toggle_button(text("Idle")).selected(false).into();
 
     assert_eq!(role_of(&selected), Some(InteractionRole::ToggleButton));
-    assert_eq!(selected.resolved_style().background, Some(Color::rgba(39, 110, 241, 255)));
-    assert_eq!(idle.resolved_style().background, Some(Color::rgba(226, 232, 240, 255)));
+    assert_eq!(
+        selected.resolved_style().background,
+        Some(Color::rgba(39, 110, 241, 255))
+    );
+    assert_eq!(
+        idle.resolved_style().background,
+        Some(Color::rgba(226, 232, 240, 255))
+    );
 }
 
 #[test]
@@ -131,10 +132,19 @@ fn toggle_checkbox_and_switch_allow_outer_modifier_overrides() {
     assert_eq!(toggle_node.resolved_style().background, Some(Color::BLACK));
     assert_eq!(toggle_node.resolved_style().corner_radius, 24.0);
     assert_eq!(checkbox_node.resolved_style().spacing, 14.0);
-    assert_eq!(checkbox_node.resolved_style().padding, zeno_ui::EdgeInsets::all(6.0));
+    assert_eq!(
+        checkbox_node.resolved_style().padding,
+        zeno_ui::EdgeInsets::all(6.0)
+    );
     assert_eq!(switch_node.resolved_style().spacing, 14.0);
-    assert_eq!(switch_node.resolved_style().padding, zeno_ui::EdgeInsets::all(6.0));
-    assert_eq!(switch_control_node.resolved_style().background, Some(Color::BLACK));
+    assert_eq!(
+        switch_node.resolved_style().padding,
+        zeno_ui::EdgeInsets::all(6.0)
+    );
+    assert_eq!(
+        switch_control_node.resolved_style().background,
+        Some(Color::BLACK)
+    );
     assert_eq!(switch_control_node.resolved_style().corner_radius, 24.0);
 }
 
@@ -144,7 +154,10 @@ fn scroll_clips_and_offsets_child_by_axis() {
     let viewport = scroll(Axis::Vertical, 18.0, content.clone());
 
     assert_eq!(role_of(&viewport), Some(InteractionRole::Scroll));
-    assert_eq!(viewport.resolved_style().clip, Some(zeno_ui::ClipMode::Bounds));
+    assert_eq!(
+        viewport.resolved_style().clip,
+        Some(zeno_ui::ClipMode::Bounds)
+    );
 
     let zeno_ui::NodeKind::Container(child) = &viewport.kind else {
         panic!("scroll viewport should wrap child in a container");

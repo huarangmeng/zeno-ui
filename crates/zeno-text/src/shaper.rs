@@ -1,6 +1,6 @@
 use rustybuzz::UnicodeBuffer;
 
-use crate::{ShapedGlyph, TextLayout, TextMetrics, TextParagraph, font::system_font_data};
+use crate::{ShapedGlyph, TextLayout, TextMetrics, TextParagraph, font::system_font_face};
 
 pub trait TextShaper: Send + Sync {
     fn name(&self) -> &'static str;
@@ -90,8 +90,7 @@ fn fallback_shape(paragraph: TextParagraph) -> TextLayout {
 }
 
 fn shape_with_system_font(paragraph: &TextParagraph) -> Option<TextLayout> {
-    let font_data = system_font_data()?;
-    let face = rustybuzz::Face::from_slice(font_data, 0)?;
+    let face = system_font_face()?;
     let units_per_em = face.units_per_em() as f32;
     let scale = paragraph.font_size.max(1.0) / units_per_em.max(1.0);
     let line_height = paragraph.font_size * 1.4;
@@ -108,7 +107,7 @@ fn shape_with_system_font(paragraph: &TextParagraph) -> Option<TextLayout> {
     for line in paragraph.text.split('\n') {
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(line);
-        let shaped = rustybuzz::shape(&face, &[], buffer);
+        let shaped = rustybuzz::shape(face, &[], buffer);
         let infos = shaped.glyph_infos();
         let positions = shaped.glyph_positions();
         let mut pen_x = 0.0f32;

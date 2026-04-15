@@ -2,8 +2,8 @@ use std::{
     any::Any,
     cell::RefCell,
     collections::HashMap,
-    sync::atomic::{AtomicU64, Ordering},
     sync::Arc,
+    sync::atomic::{AtomicU64, Ordering},
 };
 
 use crate::ActionId;

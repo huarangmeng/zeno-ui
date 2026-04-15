@@ -62,6 +62,18 @@ impl LayoutArena {
         &self.object_table
     }
 
+    #[must_use]
+    pub fn remap(&self, new_object_table: Arc<FrontendObjectTable>) -> Self {
+        let mut remapped = Self::new(new_object_table.clone());
+        for (old_index, slot) in self.slots.iter().cloned().enumerate() {
+            let element_id = self.object_table.element_id_at(old_index);
+            if let Some(new_index) = new_object_table.index_of_element(element_id) {
+                remapped.slots[new_index] = slot;
+            }
+        }
+        remapped
+    }
+
     pub(crate) fn new(object_table: Arc<FrontendObjectTable>) -> Self {
         Self {
             slots: vec![

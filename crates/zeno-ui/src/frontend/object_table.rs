@@ -214,9 +214,11 @@ fn stable_element_id(
 ) -> u64 {
     let mut hash = parent.map_or(0x9e3779b97f4a7c15, |id| id.0);
     hash = mix_hash(hash, kind_tag);
-    hash = mix_hash(hash, child_ordinal as u64);
     if let Some(explicit_key) = explicit_key {
+        // Explicit keys provide position-independent identity so keyed reorder stays stable.
         hash = mix_hash(hash, explicit_key);
+    } else {
+        hash = mix_hash(hash, child_ordinal as u64);
     }
     hash
 }
@@ -241,6 +243,79 @@ fn node_kind_discriminant(kind: &NodeKind) -> u64 {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+    use crate::{Axis, Node, NodeId, NodeKind, TextNode};
+
+    static NEXT_NODE_ID: AtomicU64 = AtomicU64::new(1);
+
+    fn next_node_id() -> NodeId {
+        NodeId(NEXT_NODE_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    fn text(content: &str) -> Node {
+        Node::new(
+            next_node_id(),
+            NodeKind::Text(TextNode {
+                content: content.into(),
+                font: zeno_text::FontDescriptor::default(),
+                font_size: 16.0,
+            }),
+        )
+    }
+
+    fn chip(label: &'static str) -> Node {
+        Node::new(
+            next_node_id(),
+            NodeKind::Container(Box::new(text(label).key(format!("chip-text-{label}")))),
+        )
+        .key(format!("chip-{label}"))
+    }
+
+    fn row(children: Vec<Node>) -> Node {
+        Node::new(
+            next_node_id(),
+            NodeKind::Stack {
+                axis: Axis::Horizontal,
+                children,
+            },
+        )
+        .key("row")
+    }
+
+    #[test]
+    fn keyed_reorder_keeps_element_ids_stable() {
+        let chip_a = chip("A");
+        let chip_b = chip("B");
+        let chip_c = chip("C");
+        let chip_d = chip("D");
+        let first = compile_object_table(&row(vec![
+            chip_a.clone(),
+            chip_b.clone(),
+            chip_c.clone(),
+            chip_d.clone(),
+        ]));
+        let second = compile_object_table(&row(vec![
+            chip_c.clone(),
+            chip_d.clone(),
+            chip_a.clone(),
+            chip_b.clone(),
+        ]));
+
+        let first_ids: Vec<_> = first.element_ids().to_vec();
+        let second_ids: Vec<_> = second.element_ids().to_vec();
+
+        for node_id in [chip_a.id(), chip_b.id(), chip_c.id(), chip_d.id()] {
+            let first_index = first.index_of(node_id).unwrap();
+            let second_index = second.index_of(node_id).unwrap();
+            assert_eq!(first_ids[first_index], second_ids[second_index]);
+        }
+    }
+}
+
 impl FrontendObjectTable {
     #[must_use]
     pub fn len(&self) -> usize {
@@ -262,6 +337,7 @@ impl FrontendObjectTable {
         self.parents[index]
     }
 
+    #[cfg(test)]
     #[must_use]
     pub fn node_id_at(&self, index: usize) -> NodeId {
         self.node_ids[index]
@@ -287,15 +363,8 @@ impl FrontendObjectTable {
         self.container_like[index]
     }
 
-    #[cfg(test)]
     #[must_use]
-    pub fn node_ids(&self) -> &[NodeId] {
-        &self.node_ids
-    }
-
-    #[cfg(test)]
-    #[must_use]
-    pub fn element_ids(&self) -> &[ElementId] {
+    pub(crate) fn element_ids(&self) -> &[ElementId] {
         &self.element_ids
     }
 }

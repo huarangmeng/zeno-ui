@@ -1,18 +1,25 @@
 use std::time::Duration;
 
-use zeno_core::{
-    AppConfig, Backend, Platform, Size, WindowConfig, ZenoError, ZenoErrorCode,
-};
-use zeno_scene::{DisplayList, FrameReport, RenderSession};
+use zeno_core::{Backend, Size, WindowConfig, ZenoError, ZenoErrorCode};
+use zeno_scene::FrameReport;
 
-use crate::session::{BackendAttempt, ResolvedBackend, ResolvedSession};
 use crate::event::{KeyboardEvent, PointerState, TextInputEvent, TouchEvent};
+use crate::session::BackendAttempt;
 #[cfg(feature = "desktop_winit")]
 mod runtime;
 #[cfg(feature = "desktop_winit")]
 use runtime::DesktopWindowApp;
 
-use crate::shell::{DesktopShell, NativeSurfaceHostRequirement, Shell, create_native_surface};
+use crate::shell::DesktopShell;
+
+#[cfg(feature = "desktop_winit")]
+use crate::session::{ResolvedBackend, ResolvedSession};
+#[cfg(feature = "desktop_winit")]
+use crate::shell::{NativeSurfaceHostRequirement, Shell, create_native_surface};
+#[cfg(feature = "desktop_winit")]
+use zeno_core::{AppConfig, Platform};
+#[cfg(feature = "desktop_winit")]
+use zeno_scene::{DisplayList, RenderSession};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesktopWindowHandle {

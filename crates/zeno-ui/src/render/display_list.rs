@@ -1,8 +1,8 @@
 use zeno_core::{Point, Rect, Size, Transform2D};
 use zeno_scene::{
     ClipChain, ClipChainId, ClipChainStore, ClipRegion, DisplayImage, DisplayItem, DisplayItemId,
-    DisplayItemPayload, DisplayList, DisplayTextRun, Effect, RetainedDisplayList, SpatialNode,
-    SpatialNodeId, SpatialTree, StackingContext, StackingContextId,
+    DisplayItemPayload, DisplayList, DisplayTextRun, Effect, ImageCacheKey, RetainedDisplayList,
+    SpatialNode, SpatialNodeId, SpatialTree, StackingContext, StackingContextId,
 };
 
 use super::*;
@@ -42,7 +42,7 @@ fn build_retained_display_list_from_frontend(
     list.clip_chains = ClipChainStore {
         chains: build_clip_chains(objects, layout, viewport),
     };
-    list.stacking_contexts = build_stacking_contexts(objects, layout);
+    list.stacking_contexts = build_stacking_contexts(objects, &stacking_context_map);
     for index in 0..objects.len() {
         list.replace_object_items(
             index,
@@ -152,7 +152,7 @@ fn build_clip_chains(
 
 fn build_stacking_contexts(
     objects: &FrontendObjectTable,
-    layout: &LayoutArena,
+    stacking_context_map: &[Option<StackingContextId>],
 ) -> Vec<StackingContext> {
     let mut contexts = Vec::new();
     for index in 0..objects.len() {
@@ -160,10 +160,13 @@ fn build_stacking_contexts(
         if !object_creates_stacking_context(&object.style) {
             continue;
         }
-        let _slot = layout.slot_at(index);
         let effects = effects_for_object(object);
         contexts.push(StackingContext {
             id: StackingContextId(index as u32),
+            parent: objects
+                .parent_index_of(index)
+                .and_then(|parent_index| stacking_context_map[parent_index]),
+            paint_order: index + 1,
             spatial_id: SpatialNodeId(index as u32),
             opacity: object.style.opacity,
             blend_mode: match object.style.blend_mode {
@@ -241,8 +244,9 @@ fn items_for_object(
         });
     }
     if let FrontendObjectKind::Image(image) = &object.kind {
+        let resource_key = image.source.resource_key();
         let resource = image_resources
-            .resolve(image.source.resource_key())
+            .resolve(resource_key)
             .expect("image resource should exist for display list item");
         items.push(DisplayItem {
             item_id: DisplayItemId((index as u32) * 2 + 1),
@@ -251,6 +255,7 @@ fn items_for_object(
             stacking_context,
             visual_rect: slot.frame,
             payload: DisplayItemPayload::Image(DisplayImage::new_rgba8(
+                ImageCacheKey(resource_key.0),
                 Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height),
                 resource.width,
                 resource.height,

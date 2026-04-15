@@ -34,7 +34,7 @@ optional = true
 [dependencies.skia-safe]
 version = "0.93"
 optional = true
-features = ["gl", "textlayout"]
+features = ["gl"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cocoa = "0.26"

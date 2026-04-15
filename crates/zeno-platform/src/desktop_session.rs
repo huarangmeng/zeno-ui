@@ -5,7 +5,9 @@ use winit::event_loop::ActiveEventLoop;
 #[cfg(feature = "desktop_winit")]
 use winit::window::Window;
 use zeno_core::{Backend, Color, ZenoError, ZenoErrorCode};
-use zeno_scene::{CompositorFrame, DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface};
+use zeno_scene::{
+    CompositorFrame, DisplayList, FrameReport, RenderCapabilities, RenderSession, RenderSurface,
+};
 
 #[cfg(all(target_os = "macos", feature = "desktop_winit"))]
 mod impeller_metal;

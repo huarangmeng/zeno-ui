@@ -35,7 +35,8 @@ macro_rules! control_root_methods {
 
         #[must_use]
         pub fn padding(mut self, padding: zeno_ui::EdgeInsets) -> Self {
-            self.root_modifiers.push(zeno_ui::Modifier::Padding(padding));
+            self.root_modifiers
+                .push(zeno_ui::Modifier::Padding(padding));
             self
         }
 
@@ -69,7 +70,8 @@ macro_rules! control_root_methods {
 
         #[must_use]
         pub fn spacing(mut self, spacing: f32) -> Self {
-            self.root_modifiers.push(zeno_ui::Modifier::Spacing(spacing));
+            self.root_modifiers
+                .push(zeno_ui::Modifier::Spacing(spacing));
             self
         }
 
@@ -161,7 +163,8 @@ macro_rules! control_root_methods {
 
         #[must_use]
         pub fn opacity(mut self, opacity: f32) -> Self {
-            self.root_modifiers.push(zeno_ui::Modifier::Opacity(opacity));
+            self.root_modifiers
+                .push(zeno_ui::Modifier::Opacity(opacity));
             self
         }
 
@@ -194,13 +197,7 @@ macro_rules! control_root_methods {
         }
 
         #[must_use]
-        pub fn drop_shadow(
-            mut self,
-            dx: f32,
-            dy: f32,
-            blur: f32,
-            color: zeno_ui::Color,
-        ) -> Self {
+        pub fn drop_shadow(mut self, dx: f32, dy: f32, blur: f32, color: zeno_ui::Color) -> Self {
             self.root_modifiers
                 .push(zeno_ui::Modifier::DropShadow(zeno_ui::DropShadow::new(
                     dx, dy, blur, color,
