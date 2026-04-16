@@ -238,6 +238,11 @@ fn items_for_object(
             .as_ref()
             .expect("text layout should exist for text display item")
             .clone();
+        let text_align = object.style.text.text_align.map(|a| match a {
+            crate::TextAlign::Start => zeno_scene::TextAlign::Start,
+            crate::TextAlign::Center => zeno_scene::TextAlign::Center,
+            crate::TextAlign::End => zeno_scene::TextAlign::End,
+        });
         items.push(DisplayItem {
             item_id: DisplayItemId((index as u32) * 2 + 1),
             spatial_id: SpatialNodeId(index as u32),
@@ -251,6 +256,7 @@ fn items_for_object(
                 ),
                 layout: text_layout,
                 color: object.style.text.color,
+                text_align,
             }),
         });
     }

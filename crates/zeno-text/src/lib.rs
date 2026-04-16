@@ -14,6 +14,6 @@ pub use font::{
 pub use shaper::{FallbackTextShaper, SystemTextShaper, TextShaper};
 pub use system::{CachedTextSystem, FallbackTextSystem, SystemTextSystem, TextSystem};
 pub use types::{
-    FontDescriptor, ShapedGlyph, TextCapabilities, TextLayout, TextMetrics, TextParagraph,
-    TextParagraphKey, line_box,
+    FontDescriptor, FontFeature, FontFeatures, FontWeight, ShapedGlyph, TextCapabilities,
+    TextLayout, TextMetrics, TextParagraph, TextParagraphKey, TextAlign, line_box,
 };

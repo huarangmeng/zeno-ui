@@ -40,6 +40,47 @@ fn fixed_size_modifier_overrides_individual_size_resolution() {
 }
 
 #[test]
+fn min_max_size_modifiers_resolve_into_style() {
+    let node = spacer(10.0, 12.0)
+        .min_width(40.0)
+        .min_height(50.0)
+        .max_width(120.0)
+        .max_height(80.0);
+
+    let style = node.resolved_style();
+    assert_eq!(style.min_width, Some(40.0));
+    assert_eq!(style.min_height, Some(50.0));
+    assert_eq!(style.max_width, Some(120.0));
+    assert_eq!(style.max_height, Some(80.0));
+}
+
+#[test]
+fn min_width_clamps_layout_size_without_forcing_exact_width() {
+    let node = text("Hi").min_width(80.0);
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+
+    assert!(measured.frame.size.width >= 80.0);
+}
+
+#[test]
+fn max_width_limits_child_measurement_space() {
+    let node = container(text("A fairly long line that should wrap").font_size(20.0))
+        .max_width(100.0)
+        .padding_all(8.0);
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Single(child) = measured.kind else {
+        panic!("container should measure a single child");
+    };
+    let crate::layout::MeasuredKind::Text(text_layout) = child.kind else {
+        panic!("child should be text");
+    };
+
+    assert!(text_layout.paragraph.max_width <= 84.0);
+}
+
+#[test]
 fn content_alignment_modifier_resolves_into_style() {
     let node = r#box(vec![spacer(10.0, 10.0)])
         .fixed_size(120.0, 80.0)
@@ -74,6 +115,62 @@ fn font_size_modifier_drives_text_layout_metrics() {
         panic!("text node should measure into text layout");
     };
     assert_eq!(text_layout.paragraph.font_size, 24.0);
+}
+
+#[test]
+fn text_style_font_family_flows_into_text_paragraph() {
+    let node = text("Hello").text_style(TextStyle::default().font_family("Inter"));
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.paragraph.font.family, "Inter");
+}
+
+#[test]
+fn text_style_font_weight_flows_into_text_paragraph() {
+    let node = text("Hello").text_style(TextStyle::default().font_weight(FontWeight::BOLD));
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.paragraph.font.weight, FontWeight::BOLD);
+}
+
+#[test]
+fn font_feature_modifier_flows_into_text_paragraph() {
+    let node = text("108.1").text_style(TextStyle::default().font_feature(FontFeature::TabularNumbers));
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert!(text_layout
+        .paragraph
+        .font
+        .features
+        .contains(FontFeature::TabularNumbers));
+}
+
+#[test]
+fn font_features_modifier_overrides_full_feature_set() {
+    let node = text("108.1").text_style(TextStyle::default().font_features(FontFeatures::tabular_numbers()));
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert!(text_layout
+        .paragraph
+        .font
+        .features
+        .contains(FontFeature::TabularNumbers));
 }
 
 #[test]
@@ -166,6 +263,38 @@ fn scale_and_rotate_modifiers_emit_affine_transform_state() {
         .find(|node| node.world_transform == expected_transform)
         .expect("transformed spatial node");
     assert_eq!(spatial.world_transform, expected_transform);
+}
+
+#[test]
+fn transformed_item_visual_rect_tracks_world_bounds() {
+    let root = container(spacer(12.0, 8.0).key("child"))
+        .fixed_size(120.0, 40.0)
+        .background(Color::WHITE)
+        .transform_origin(0.5, 0.5)
+        .rotate_degrees(90.0)
+        .key("root");
+    let display_list = ComposeRenderer::new(&FallbackTextSystem)
+        .compose_display_list(&root, Size::new(320.0, 240.0));
+    let item = display_list
+        .items
+        .iter()
+        .find(|item| matches!(item.payload, zeno_scene::DisplayItemPayload::FillRect { .. }))
+        .expect("background item");
+    let spatial = display_list
+        .spatial_tree
+        .nodes
+        .iter()
+        .find(|node| node.id == item.spatial_id)
+        .expect("spatial node");
+    let expected = spatial
+        .world_transform
+        .map_rect(zeno_core::Rect::new(0.0, 0.0, 120.0, 40.0));
+
+    assert!((item.visual_rect.origin.x - expected.origin.x).abs() < 0.001);
+    assert!((item.visual_rect.origin.y - expected.origin.y).abs() < 0.001);
+    assert!((item.visual_rect.size.width - expected.size.width).abs() < 0.001);
+    assert!((item.visual_rect.size.height - expected.size.height).abs() < 0.001);
+    assert!(item.visual_rect.size.height > item.visual_rect.size.width);
 }
 
 #[test]
@@ -277,4 +406,120 @@ fn effect_modifiers_emit_layer_blend_and_effect_stack() {
         ]
     );
     assert!(layer.needs_offscreen);
+}
+
+#[test]
+fn font_family_modifier_flows_into_text_paragraph() {
+    let node = text("Hello").font_family("Helvetica");
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.paragraph.font.family, "Helvetica");
+}
+
+#[test]
+fn font_weight_modifier_flows_into_text_paragraph() {
+    let node = text("Hello").font_weight(FontWeight::BOLD);
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.paragraph.font.weight, FontWeight::BOLD);
+}
+
+#[test]
+fn italic_modifier_flows_into_text_paragraph() {
+    let node = text("Hello").italic();
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert!(text_layout.paragraph.font.italic);
+}
+
+#[test]
+fn letter_spacing_modifier_flows_into_text_paragraph() {
+    let node = text("Hello").letter_spacing(2.0);
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.paragraph.letter_spacing, Some(2.0));
+}
+
+#[test]
+fn line_height_modifier_flows_into_text_paragraph() {
+    let node = text("Hello\nWorld").line_height(28.0);
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.paragraph.line_height, Some(28.0));
+    assert_eq!(text_layout.metrics.line_height, 28.0);
+}
+
+#[test]
+fn text_align_modifier_flows_into_display_list() {
+    let node = text("Hello").text_align(crate::TextAlign::Center);
+    let display_list = ComposeRenderer::new(&FallbackTextSystem)
+        .compose_display_list(&node, Size::new(320.0, 240.0));
+    let text_item = display_list
+        .items
+        .iter()
+        .find(|item| matches!(item.payload, zeno_scene::DisplayItemPayload::TextRun(_)))
+        .expect("text item");
+    let zeno_scene::DisplayItemPayload::TextRun(ref text_run) = text_item.payload else {
+        panic!("expected TextRun");
+    };
+
+    assert_eq!(text_run.text_align, Some(zeno_scene::TextAlign::Center));
+}
+
+#[test]
+fn text_style_merge_preserves_unoverwritten_fields() {
+    let base = TextStyle::default()
+        .font_family("Inter")
+        .font_weight(FontWeight::BOLD)
+        .font_feature(FontFeature::TabularNumbers);
+    let overlay = TextStyle::default().font_size(20.0);
+    let mut merged = base.clone();
+    merged.merge(&overlay);
+
+    assert_eq!(merged.font.family, "Inter");
+    assert_eq!(merged.font.weight, FontWeight::BOLD);
+    assert!(merged.font.features.contains(FontFeature::TabularNumbers));
+    assert_eq!(merged.font_size, Some(20.0));
+}
+
+#[test]
+fn text_style_merge_overlays_font_weight_without_losing_family() {
+    let base = TextStyle::default().font_family("Inter");
+    let overlay = TextStyle::default().font_weight(FontWeight::SEMI_BOLD);
+    let mut merged = base.clone();
+    merged.merge(&overlay);
+
+    assert_eq!(merged.font.family, "Inter");
+    assert_eq!(merged.font.weight, FontWeight::SEMI_BOLD);
+}
+
+#[test]
+fn text_style_modifier_merges_instead_of_replacing() {
+    let node = text("Hello")
+        .font_family("Inter")
+        .text_style(TextStyle::default().font_weight(FontWeight::BOLD));
+    let style = node.resolved_style();
+
+    assert_eq!(style.text.font.family, "Inter");
+    assert_eq!(style.text.font.weight, FontWeight::BOLD);
 }

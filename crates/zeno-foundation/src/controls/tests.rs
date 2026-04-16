@@ -18,7 +18,7 @@ fn button_applies_default_visual_style_and_role() {
 
     assert_eq!(role_of(&node), Some(InteractionRole::Button));
     assert_eq!(style.background, Some(Color::rgba(39, 110, 241, 255)));
-    assert_eq!(style.foreground, Color::WHITE);
+    assert_eq!(style.text.color, Color::WHITE);
     assert_eq!(style.corner_radius, 10.0);
 }
 
@@ -32,7 +32,7 @@ fn button_style_can_be_overridden_explicitly() {
     let style = node.resolved_style();
 
     assert_eq!(style.background, Some(Color::BLACK));
-    assert_eq!(style.foreground, Color::rgba(240, 200, 10, 255));
+    assert_eq!(style.text.color, Color::rgba(240, 200, 10, 255));
     assert_eq!(style.corner_radius, 24.0);
 }
 

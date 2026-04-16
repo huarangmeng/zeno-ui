@@ -4,6 +4,7 @@ use crate::modifier::{
     Alignment, Arrangement, BlendMode, ClipMode, CrossAxisAlignment, DropShadow, Modifier,
     Modifiers, TransformOrigin,
 };
+use crate::TextStyle;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Axis {
@@ -61,12 +62,15 @@ impl Default for EdgeInsets {
 pub struct Style {
     pub padding: EdgeInsets,
     pub background: Option<Color>,
-    pub foreground: Color,
-    pub font_size: Option<f32>,
+    pub text: TextStyle,
     pub corner_radius: f32,
     pub spacing: f32,
     pub width: Option<f32>,
     pub height: Option<f32>,
+    pub min_width: Option<f32>,
+    pub min_height: Option<f32>,
+    pub max_width: Option<f32>,
+    pub max_height: Option<f32>,
     pub clip: Option<ClipMode>,
     pub transform: Transform2D,
     pub transform_origin: TransformOrigin,
@@ -85,12 +89,15 @@ impl Default for Style {
         Self {
             padding: EdgeInsets::default(),
             background: None,
-            foreground: Color::BLACK,
-            font_size: None,
+            text: TextStyle::default(),
             corner_radius: 0.0,
             spacing: 0.0,
             width: None,
             height: None,
+            min_width: None,
+            min_height: None,
+            max_width: None,
+            max_height: None,
             clip: None,
             transform: Transform2D::identity(),
             transform_origin: TransformOrigin::new(0.0, 0.0),
@@ -111,16 +118,29 @@ impl Style {
         match modifier {
             Modifier::Padding(padding) => self.padding = *padding,
             Modifier::Background(color) => self.background = Some(*color),
-            Modifier::Foreground(color) => self.foreground = *color,
-            Modifier::FontSize(font_size) => self.font_size = Some((*font_size).max(0.0)),
+            Modifier::Foreground(color) => self.text.color = *color,
+            Modifier::FontSize(font_size) => self.text.font_size = Some((*font_size).max(0.0)),
+            Modifier::FontFamily(family) => self.text.font.family = family.clone(),
+            Modifier::FontWeight(weight) => self.text.font.weight = *weight,
+            Modifier::Italic => self.text.font.italic = true,
+            Modifier::LetterSpacing(spacing) => self.text.letter_spacing = Some(*spacing),
+            Modifier::LineHeight(height) => self.text.line_height = Some((*height).max(0.0)),
+            Modifier::TextAlign(align) => self.text.text_align = Some(*align),
             Modifier::CornerRadius(radius) => self.corner_radius = *radius,
             Modifier::Spacing(spacing) => self.spacing = *spacing,
             Modifier::FixedSize { width, height } => {
                 self.width = Some((*width).max(0.0));
                 self.height = Some((*height).max(0.0));
             }
-            Modifier::Width(width) => self.width = Some(*width),
-            Modifier::Height(height) => self.height = Some(*height),
+            Modifier::Width(width) => self.width = Some((*width).max(0.0)),
+            Modifier::Height(height) => self.height = Some((*height).max(0.0)),
+            Modifier::MinWidth(width) => self.min_width = Some((*width).max(0.0)),
+            Modifier::MinHeight(height) => self.min_height = Some((*height).max(0.0)),
+            Modifier::MaxWidth(width) => self.max_width = Some((*width).max(0.0)),
+            Modifier::MaxHeight(height) => self.max_height = Some((*height).max(0.0)),
+            Modifier::TextStyle(text_style) => self.text.merge(text_style),
+            Modifier::FontFeatures(features) => self.text.font.features = *features,
+            Modifier::FontFeature(feature) => self.text.font.features.insert(*feature),
             Modifier::ClipBounds => self.clip = Some(ClipMode::Bounds),
             Modifier::ClipRounded(radius) => {
                 self.clip = Some(ClipMode::RoundedBounds { radius: *radius });

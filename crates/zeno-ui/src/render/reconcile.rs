@@ -162,9 +162,22 @@ fn style_change_reason(
     text_node: bool,
     stack_node: bool,
 ) -> Option<DirtyReason> {
+    let text_layout_changed = text_node
+        && (previous_style.text.font_size != current_style.text.font_size
+            || previous_style.text.font != current_style.text.font
+            || previous_style.text.letter_spacing != current_style.text.letter_spacing
+            || previous_style.text.line_height != current_style.text.line_height);
+    let text_paint_changed = text_node
+        && (previous_style.text.color != current_style.text.color
+            || previous_style.text.text_align != current_style.text.text_align);
     if previous_style.padding != current_style.padding
         || previous_style.width != current_style.width
         || previous_style.height != current_style.height
+        || previous_style.min_width != current_style.min_width
+        || previous_style.min_height != current_style.min_height
+        || previous_style.max_width != current_style.max_width
+        || previous_style.max_height != current_style.max_height
+        || text_layout_changed
         || (stack_node
             && (previous_style.spacing != current_style.spacing
                 || previous_style.arrangement != current_style.arrangement
@@ -182,7 +195,7 @@ fn style_change_reason(
         || previous_style.blend_mode != current_style.blend_mode
         || previous_style.blur != current_style.blur
         || previous_style.drop_shadow != current_style.drop_shadow
-        || (text_node && previous_style.foreground != current_style.foreground)
+        || text_paint_changed
     {
         return Some(DirtyReason::Paint);
     }

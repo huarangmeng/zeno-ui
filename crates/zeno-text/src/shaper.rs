@@ -35,7 +35,7 @@ impl TextShaper for SystemTextShaper {
 }
 
 fn fallback_shape(paragraph: TextParagraph) -> TextLayout {
-    let line_height = paragraph.font_size * 1.4;
+    let line_height = paragraph.line_height.unwrap_or(paragraph.font_size * 1.4);
     let ascent = paragraph.font_size * 0.8;
     let descent = paragraph.font_size * 0.2;
     let wrap_width = if paragraph.max_width <= 0.0 {
@@ -57,7 +57,8 @@ fn fallback_shape(paragraph: TextParagraph) -> TextLayout {
             line_count += 1;
             continue;
         }
-        let advance = estimated_advance(glyph, paragraph.font_size);
+        let advance = estimated_advance(glyph, paragraph.font_size)
+            + paragraph.letter_spacing.unwrap_or(0.0);
         if pen_x > 0.0 && pen_x + advance > wrap_width {
             max_width = max_width.max(pen_x);
             pen_x = 0.0;
@@ -93,9 +94,10 @@ fn shape_with_system_font(paragraph: &TextParagraph) -> Option<TextLayout> {
     let face = system_font_face()?;
     let units_per_em = face.units_per_em() as f32;
     let scale = paragraph.font_size.max(1.0) / units_per_em.max(1.0);
-    let line_height = paragraph.font_size * 1.4;
+    let line_height = paragraph.line_height.unwrap_or(paragraph.font_size * 1.4);
     let ascent = face.ascender() as f32 * scale;
     let descent = (-(face.descender() as f32)).max(0.0) * scale;
+    let letter_spacing = paragraph.letter_spacing.unwrap_or(0.0);
     let wrap_width = if paragraph.max_width <= 0.0 {
         f32::MAX
     } else {
@@ -113,7 +115,7 @@ fn shape_with_system_font(paragraph: &TextParagraph) -> Option<TextLayout> {
         let mut pen_x = 0.0f32;
         let mut baseline_y = line_count as f32 * line_height;
         for (info, position) in infos.iter().zip(positions.iter()) {
-            let advance = position.x_advance as f32 * scale;
+            let advance = position.x_advance as f32 * scale + letter_spacing;
             let x_offset = position.x_offset as f32 * scale;
             let y_offset = -(position.y_offset as f32 * scale);
             if pen_x > 0.0 && pen_x + advance > wrap_width {

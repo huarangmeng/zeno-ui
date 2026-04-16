@@ -57,11 +57,19 @@ pub enum DisplayItemPayload {
     Custom,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextAlign {
+    Start,
+    Center,
+    End,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DisplayTextRun {
     pub position: Point,
     pub layout: TextLayout,
     pub color: Color,
+    pub text_align: Option<TextAlign>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

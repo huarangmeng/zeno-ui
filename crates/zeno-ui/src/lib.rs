@@ -9,6 +9,7 @@ mod node;
 mod render;
 pub mod semantics;
 mod style;
+mod text_style;
 mod tree;
 
 #[doc(hidden)]
@@ -31,7 +32,10 @@ pub use render::{
     InteractionTargetFrame, dump_layout,
 };
 pub use style::{Axis, EdgeInsets, Style};
+pub use text_style::TextStyle;
+pub use text_style::TextAlign;
 pub use zeno_core::Color;
+pub use zeno_text::{FontFeature, FontFeatures, FontWeight};
 
 #[cfg(test)]
 mod tests;

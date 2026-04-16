@@ -1,5 +1,5 @@
 use zeno_core::Color;
-use zeno_text::FontDescriptor;
+use zeno_text::FontWeight;
 
 use crate::{
     image::ImageSource,
@@ -8,6 +8,8 @@ use crate::{
         Modifiers, TransformOrigin,
     },
     style::{Axis, EdgeInsets, Style},
+    text_style::TextAlign,
+    TextStyle,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -16,8 +18,6 @@ pub struct NodeId(pub u64);
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextNode {
     pub content: String,
-    pub font: FontDescriptor,
-    pub font_size: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,6 +116,41 @@ impl Node {
     }
 
     #[must_use]
+    pub fn font_family(self, family: impl Into<String>) -> Self {
+        self.modifier(Modifier::FontFamily(family.into()))
+    }
+
+    #[must_use]
+    pub fn font_weight(self, weight: FontWeight) -> Self {
+        self.modifier(Modifier::FontWeight(weight))
+    }
+
+    #[must_use]
+    pub fn italic(self) -> Self {
+        self.modifier(Modifier::Italic)
+    }
+
+    #[must_use]
+    pub fn letter_spacing(self, spacing: f32) -> Self {
+        self.modifier(Modifier::LetterSpacing(spacing))
+    }
+
+    #[must_use]
+    pub fn line_height(self, height: f32) -> Self {
+        self.modifier(Modifier::LineHeight(height))
+    }
+
+    #[must_use]
+    pub fn text_align(self, align: TextAlign) -> Self {
+        self.modifier(Modifier::TextAlign(align))
+    }
+
+    #[must_use]
+    pub fn text_style(self, text_style: TextStyle) -> Self {
+        self.modifier(Modifier::TextStyle(text_style))
+    }
+
+    #[must_use]
     pub fn corner_radius(self, radius: f32) -> Self {
         self.modifier(Modifier::CornerRadius(radius))
     }
@@ -133,6 +168,26 @@ impl Node {
     #[must_use]
     pub fn height(self, height: f32) -> Self {
         self.modifier(Modifier::Height(height))
+    }
+
+    #[must_use]
+    pub fn min_width(self, width: f32) -> Self {
+        self.modifier(Modifier::MinWidth(width))
+    }
+
+    #[must_use]
+    pub fn min_height(self, height: f32) -> Self {
+        self.modifier(Modifier::MinHeight(height))
+    }
+
+    #[must_use]
+    pub fn max_width(self, width: f32) -> Self {
+        self.modifier(Modifier::MaxWidth(width))
+    }
+
+    #[must_use]
+    pub fn max_height(self, height: f32) -> Self {
+        self.modifier(Modifier::MaxHeight(height))
     }
 
     #[must_use]

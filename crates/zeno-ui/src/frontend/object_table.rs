@@ -261,8 +261,6 @@ mod tests {
             next_node_id(),
             NodeKind::Text(TextNode {
                 content: content.into(),
-                font: zeno_text::FontDescriptor::default(),
-                font_size: 16.0,
             }),
         )
     }

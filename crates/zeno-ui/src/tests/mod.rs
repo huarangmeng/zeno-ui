@@ -7,8 +7,8 @@ mod smoke;
 
 use crate::{
     Alignment, Arrangement, BlendMode, ComposeEngine, ComposeRenderer, ComposeUpdate,
-    CrossAxisAlignment, DirtyReason, EdgeInsets, ImageNode, Modifier, Node, NodeId, NodeKind,
-    SpacerNode, TextNode, dump_layout,
+    CrossAxisAlignment, DirtyReason, EdgeInsets, FontFeature, FontFeatures, FontWeight,
+    ImageNode, Modifier, Node, NodeId, NodeKind, SpacerNode, TextNode, TextStyle, dump_layout,
 };
 use zeno_core::{Color, Point, Size, Transform2D};
 use zeno_scene::{ClipRegion, DisplayList, Effect};
@@ -18,8 +18,6 @@ use zeno_text::FallbackTextSystem;
 // preventing duplicate zeno-ui crate instances in the dev dependency graph.
 mod helpers {
     use std::sync::atomic::{AtomicU64, Ordering};
-
-    use zeno_text::FontDescriptor;
 
     use super::{ImageNode, Node, NodeId, NodeKind, SpacerNode, TextNode};
     use crate::ImageSource;
@@ -36,8 +34,6 @@ mod helpers {
             next_node_id(),
             NodeKind::Text(TextNode {
                 content: content.into(),
-                font: FontDescriptor::default(),
-                font_size: 16.0,
             }),
         )
     }

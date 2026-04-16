@@ -415,7 +415,8 @@ damage 生成规则：
 - `transform / transform_origin` -> `SpatialTree`
 - `clip` -> `ClipChainStore`
 - `opacity / blend_mode / blur / drop_shadow / layer` -> `StackingContext`
-- `background / foreground / corner_radius / text/image payload` -> `DisplayItemPayload`
+- `background / corner_radius / text/image payload` -> `DisplayItemPayload`
+- `TextStyle.color / font_size / font_family / font_weight / italic / font_feature(s) / letter_spacing / line_height / text_align` -> `Style.text -> TextParagraph / DisplayTextRun`
 
 这保持了 `Modifier -> Style -> Render Protocol` 的单向依赖，不引入第二语义真相源。
 

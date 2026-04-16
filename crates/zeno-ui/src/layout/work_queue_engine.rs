@@ -188,9 +188,16 @@ fn measure_task(
             let inner_available = content_available_for_style(&object.style, available);
             let paragraph = TextParagraph {
                 text: text.content.clone(),
-                font: text.font.clone(),
-                font_size: object.style.font_size.unwrap_or(text.font_size),
+                font: object.style.text.font.clone(),
+                font_size: object.style.text.font_size.unwrap_or(16.0),
                 max_width: inner_available.width.max(1.0),
+                letter_spacing: object.style.text.letter_spacing,
+                line_height: object.style.text.line_height,
+                text_align: object.style.text.text_align.map(|a| match a {
+                    crate::TextAlign::Start => zeno_text::TextAlign::Start,
+                    crate::TextAlign::Center => zeno_text::TextAlign::Center,
+                    crate::TextAlign::End => zeno_text::TextAlign::End,
+                }),
             };
             let text_layout_started = Instant::now();
             let layout = text_system.layout(paragraph);
@@ -204,7 +211,7 @@ fn measure_task(
                     op = "text_layout_node",
                     index,
                     element_id = object.element_id.0,
-                    font_size = object.style.font_size.unwrap_or(text.font_size),
+                    font_size = object.style.text.font_size.unwrap_or(16.0),
                     max_width = inner_available.width.max(1.0),
                     text_len = text.content.len(),
                     text_layout_ms,
@@ -222,29 +229,33 @@ fn measure_task(
         }
         FrontendObjectKind::Image(image) => {
             let (intrinsic_width, intrinsic_height) = image.source.dimensions();
-            let width = object
-                .style
-                .width
-                .unwrap_or(intrinsic_width as f32)
-                .min(available.width.max(0.0));
-            let height = object
-                .style
-                .height
-                .unwrap_or(intrinsic_height as f32)
-                .min(available.height.max(0.0));
+            let width = clamp_axis_size(
+                object.style.width.unwrap_or(intrinsic_width as f32),
+                object.style.min_width,
+                object.style.max_width,
+                available.width,
+            );
+            let height = clamp_axis_size(
+                object.style.height.unwrap_or(intrinsic_height as f32),
+                object.style.min_height,
+                object.style.max_height,
+                available.height,
+            );
             arena.upsert(index, Rect::new(origin.x, origin.y, width, height), None);
         }
         FrontendObjectKind::Spacer(spacer) => {
-            let width = object
-                .style
-                .width
-                .unwrap_or(spacer.width)
-                .min(available.width.max(0.0));
-            let height = object
-                .style
-                .height
-                .unwrap_or(spacer.height)
-                .min(available.height.max(0.0));
+            let width = clamp_axis_size(
+                object.style.width.unwrap_or(spacer.width),
+                object.style.min_width,
+                object.style.max_width,
+                available.width,
+            );
+            let height = clamp_axis_size(
+                object.style.height.unwrap_or(spacer.height),
+                object.style.min_height,
+                object.style.max_height,
+                available.height,
+            );
             arena.upsert(index, Rect::new(origin.x, origin.y, width, height), None);
         }
         FrontendObjectKind::Container => {
@@ -528,9 +539,10 @@ fn shift_subtree(
 }
 
 fn content_available_for_style(style: &Style, available: Size) -> Size {
+    let outer = bounded_available_for_style(style, available);
     Size::new(
-        (available.width - style.padding.horizontal()).max(0.0),
-        (available.height - style.padding.vertical()).max(0.0),
+        (outer.width - style.padding.horizontal()).max(0.0),
+        (outer.height - style.padding.vertical()).max(0.0),
     )
 }
 
@@ -540,15 +552,46 @@ fn finalize_size_for_style(style: &Style, available: Size, content: Size) -> Siz
         content.height + style.padding.vertical(),
     );
     Size::new(
-        style
-            .width
-            .unwrap_or(natural.width)
-            .min(available.width.max(0.0)),
-        style
-            .height
-            .unwrap_or(natural.height)
-            .min(available.height.max(0.0)),
+        clamp_axis_size(
+            style.width.unwrap_or(natural.width),
+            style.min_width,
+            style.max_width,
+            available.width,
+        ),
+        clamp_axis_size(
+            style.height.unwrap_or(natural.height),
+            style.min_height,
+            style.max_height,
+            available.height,
+        ),
     )
+}
+
+fn bounded_available_for_style(style: &Style, available: Size) -> Size {
+    Size::new(
+        upper_bound_for_axis(style.width, style.max_width, available.width),
+        upper_bound_for_axis(style.height, style.max_height, available.height),
+    )
+}
+
+fn upper_bound_for_axis(explicit: Option<f32>, max: Option<f32>, available: f32) -> f32 {
+    explicit
+        .or(max)
+        .unwrap_or(available)
+        .min(available.max(0.0))
+        .max(0.0)
+}
+
+fn clamp_axis_size(value: f32, min: Option<f32>, max: Option<f32>, available: f32) -> f32 {
+    let available = available.max(0.0);
+    let mut resolved = value.max(0.0).min(available);
+    if let Some(max) = max {
+        resolved = resolved.min(max.max(0.0));
+    }
+    if let Some(min) = min {
+        resolved = resolved.max(min.max(0.0).min(available));
+    }
+    resolved
 }
 
 fn position_stack_children(

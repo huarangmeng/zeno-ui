@@ -131,3 +131,46 @@ fn compose_submit_treats_arrangement_change_as_layout_work() {
     assert!(display_list.items.is_empty());
     assert_eq!(engine.stats().layout_passes, 2);
 }
+
+#[test]
+fn layout_branch_damage_keeps_paint_only_siblings() {
+    let first = column(vec![
+        container(spacer(0.0, 0.0).key("card-inner"))
+            .fixed_size(160.0, 80.0)
+            .background(Color::rgba(28, 54, 118, 255))
+            .opacity(1.0)
+            .key("card"),
+        text("A").key("label"),
+    ])
+    .spacing(8.0)
+    .key("root");
+    let second = column(vec![
+        container(spacer(0.0, 0.0).key("card-inner"))
+            .fixed_size(160.0, 80.0)
+            .background(Color::rgba(28, 54, 118, 255))
+            .opacity(0.5)
+            .key("card"),
+        text("A much longer label").key("label"),
+    ])
+    .spacing(8.0)
+    .key("root");
+    let mut engine = ComposeEngine::new(&FallbackTextSystem);
+
+    let _ = engine.compose_update(&first, Size::new(320.0, 240.0));
+    let (submit, _) = snapshot_outputs(engine.compose_update(&second, Size::new(320.0, 240.0)));
+
+    match submit {
+        ComposeUpdate::Delta { damage, .. } => match damage {
+            DamageRegion::Rects(rects) => {
+                assert!(
+                    rects
+                        .iter()
+                        .any(|rect| rect.origin.y <= 1.0 && rect.bottom() >= 79.0),
+                    "damage should include the paint-only card bounds"
+                );
+            }
+            other => panic!("expected rect damage, got {other:?}"),
+        },
+        ComposeUpdate::Full { .. } => panic!("mixed layout/paint change should stay incremental"),
+    }
+}

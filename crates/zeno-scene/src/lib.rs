@@ -23,7 +23,7 @@ pub use display_list::{
     BlendMode, ClipChain, ClipChainId, ClipChainStore, ClipRegion, DisplayImage, DisplayItem,
     DisplayItemId, DisplayItemPayload, DisplayList, DisplayTextRun, Effect, ImageCacheKey,
     RetainedDisplayList, SpatialNode, SpatialNodeId, SpatialTree, StackingContext,
-    StackingContextId, TextCacheKey,
+    StackingContextId, TextCacheKey, TextAlign,
 };
 pub use renderer::{GraphicsBackend, RenderSession, Renderer};
 pub use scene::{
