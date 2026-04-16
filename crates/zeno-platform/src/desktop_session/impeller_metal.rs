@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc, time::Instant};
+use std::{collections::{BTreeSet, HashMap}, rc::Rc, time::Instant};
 
 #[allow(deprecated)]
 use cocoa::{appkit::NSView, base::id as cocoa_id};
@@ -9,11 +9,10 @@ use winit::dpi::LogicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 use zeno_backend_impeller::{CompositeParams, CompositeTextureTile, MetalSceneRenderer};
-use zeno_core::{Backend, Color, Size, ZenoError, ZenoErrorCode, zeno_session_log};
+use zeno_core::{Backend, Color, Rect, Size, ZenoError, ZenoErrorCode, zeno_session_log};
 use zeno_scene::{
-    CompositeExecutor, CompositeLayerJob, CompositorBlendMode, CompositorEffect, CompositorPlanner,
-    CompositorService, DisplayList, FrameReport, RenderSurface, SceneBlendMode, TileCache,
-    TileContentHandle, TileGrid, TileResourcePool,
+    CompositeExecutor, CompositorPlanner, CompositorService, DisplayList, FrameReport,
+    RenderSurface, SceneBlendMode, TileCache, TileContentHandle, TileGrid, TileResourcePool,
 };
 
 use super::{default_clear_color, desktop_session_error};
@@ -220,31 +219,10 @@ impl ImpellerMetalSession {
         }
         let raster_ms = raster_started.elapsed().as_secs_f64() * 1000.0;
         let build_tiles_started = Instant::now();
-        let composite_tiles = composite_plan
-            .jobs
-            .iter()
-            .filter_map(|job| {
-                let texture = self.tile_textures.get(&job.content_handle)?;
-                Some(CompositeTextureTile {
-                    texture,
-                    rect: job.rect,
-                    opacity: job.opacity,
-                    blend_mode: layer_job_blend_mode(
-                        composite_plan
-                            .layer_jobs
-                            .iter()
-                            .find(|layer| layer.layer_id == job.layer_id)?,
-                    ),
-                    params: layer_job_composite_params(
-                        composite_plan
-                            .layer_jobs
-                            .iter()
-                            .find(|layer| layer.layer_id == job.layer_id)?,
-                        job.rect,
-                    ),
-                })
-            })
-            .collect::<Vec<_>>();
+        let composite_tiles = build_drawable_composite_tiles(
+            composite_plan.jobs.iter().map(|job| (job.content_handle, job.rect)),
+            &self.tile_textures,
+        );
         let build_tiles_ms = build_tiles_started.elapsed().as_secs_f64() * 1000.0;
         let drawable_submit_started = Instant::now();
         if submission.raster_batch.full_raster && composite_tiles.is_empty() {
@@ -339,47 +317,38 @@ impl ImpellerMetalSession {
     }
 }
 
-fn layer_job_blend_mode(layer: &CompositeLayerJob) -> SceneBlendMode {
-    match layer.blend_mode {
-        CompositorBlendMode::Normal => SceneBlendMode::Normal,
-        CompositorBlendMode::Multiply => SceneBlendMode::Multiply,
-        CompositorBlendMode::Screen => SceneBlendMode::Screen,
-    }
+fn build_drawable_composite_tiles<'a>(
+    jobs: impl IntoIterator<Item = (TileContentHandle, Rect)>,
+    tile_textures: &'a HashMap<TileContentHandle, metal::Texture>,
+) -> Vec<CompositeTextureTile<'a>> {
+    unique_tile_jobs(jobs)
+        .into_iter()
+        .filter_map(|(content_handle, rect)| {
+            let texture = tile_textures.get(&content_handle)?;
+            // Tile textures already contain the fully composited scene for that tile. The final
+            // drawable pass must only blit each tile once instead of reapplying layer effects.
+            Some(CompositeTextureTile {
+                texture,
+                rect,
+                opacity: 1.0,
+                blend_mode: SceneBlendMode::Normal,
+                params: CompositeParams::default(),
+            })
+        })
+        .collect()
 }
 
-fn layer_job_composite_params(layer: &CompositeLayerJob, rect: zeno_core::Rect) -> CompositeParams {
-    let mut params = CompositeParams {
-        inv_texture_size: [
-            1.0 / rect.size.width.max(1.0),
-            1.0 / rect.size.height.max(1.0),
-        ],
-        ..CompositeParams::default()
-    };
-    for effect in &layer.effects {
-        match effect {
-            CompositorEffect::Blur { sigma } => {
-                params.blur_sigma = *sigma;
-                params.flags |= 1;
-            }
-            CompositorEffect::DropShadow {
-                dx,
-                dy,
-                blur,
-                color,
-            } => {
-                params.shadow_blur = *blur;
-                params.shadow_offset = [*dx, *dy];
-                params.shadow_color = [
-                    f32::from(color.red) / 255.0,
-                    f32::from(color.green) / 255.0,
-                    f32::from(color.blue) / 255.0,
-                    f32::from(color.alpha) / 255.0,
-                ];
-                params.flags |= 2;
-            }
+fn unique_tile_jobs(
+    jobs: impl IntoIterator<Item = (TileContentHandle, Rect)>,
+) -> Vec<(TileContentHandle, Rect)> {
+    let mut seen_handles = BTreeSet::new();
+    let mut unique = Vec::new();
+    for (content_handle, rect) in jobs {
+        if seen_handles.insert(content_handle) {
+            unique.push((content_handle, rect));
         }
     }
-    params
+    unique
 }
 
 #[allow(deprecated)]

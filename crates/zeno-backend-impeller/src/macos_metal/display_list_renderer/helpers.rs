@@ -50,10 +50,10 @@ pub(super) fn clip_scissor_with_lookups(
             ClipRegion::Rect(rect) => *rect,
             ClipRegion::RoundedRect { rect, .. } => *rect,
         };
-        let transform = parent_transform.then(world_transform_with_lookups(
-            render_lookups,
-            chain.spatial_id,
-        ));
+        // Apply the tile/root translation after the clip's world transform. See
+        // display_list_renderer/item.rs for the reasoning.
+        let transform =
+            world_transform_with_lookups(render_lookups, chain.spatial_id).then(parent_transform);
         scissor = intersect_scissor(
             scissor,
             scissor_for_rect(transform.map_rect(rect), viewport_width, viewport_height),

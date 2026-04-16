@@ -206,11 +206,24 @@ impl<'a> ComposeEngine<'a> {
             let branch_started = Instant::now();
             let retained = self.retained.as_mut().expect("retained tree must exist");
             let dirty_flags = retained.dirty();
+            let all_dirty_indices = retained.dirty_indices();
             let layout_dirty_roots = retained.layout_dirty_root_indices();
             let layout_dirty_element_ids: Vec<_> = layout_dirty_roots
                 .iter()
                 .copied()
                 .map(|index| retained.layout().object_table().element_id_at(index))
+                .collect();
+            let dirty_element_ids: Vec<_> = all_dirty_indices
+                .iter()
+                .copied()
+                .map(|index| retained.layout().object_table().element_id_at(index))
+                .collect();
+            let damage_element_ids: Vec<_> = layout_dirty_element_ids
+                .iter()
+                .copied()
+                .chain(dirty_element_ids.iter().copied())
+                .collect::<HashSet<_>>()
+                .into_iter()
                 .collect();
             let layout_dirty_root_summary: Vec<_> = layout_dirty_roots
                 .iter()
@@ -253,7 +266,7 @@ impl<'a> ComposeEngine<'a> {
                 previous_object_table.as_ref(),
                 retained.display_list(),
                 retained.layout().object_table().as_ref(),
-                layout_dirty_element_ids.iter().copied(),
+                damage_element_ids.iter().copied(),
             );
             let branch_ms = branch_started.elapsed().as_secs_f64() * 1000.0;
             if damage.is_empty() {

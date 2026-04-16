@@ -50,12 +50,14 @@ fn build_retained_display_list_from_frontend(
                 objects,
                 index,
                 layout,
+                &list.spatial_tree,
                 image_resources,
                 stacking_context_map[index],
             ),
         );
     }
     list.compact_if_needed();
+
     list
 }
 
@@ -95,9 +97,11 @@ fn build_spatial_tree(objects: &FrontendObjectTable, layout: &LayoutArena) -> Ve
                 slot.frame.origin.x - parent_origin.x,
                 slot.frame.origin.y - parent_origin.y,
             ));
+        // For a point in local space, we apply the node's local transform first, then its parent
+        // world transform to reach scene space.
         let world_transform = objects
             .parent_index_of(index)
-            .map(|parent| nodes[parent].world_transform.then(local_transform))
+            .map(|parent| local_transform.then(nodes[parent].world_transform))
             .unwrap_or(local_transform);
         nodes.push(SpatialNode {
             id: SpatialNodeId(index as u32),
@@ -189,6 +193,7 @@ fn items_for_object(
     objects: &FrontendObjectTable,
     index: usize,
     layout: &LayoutArena,
+    spatial_tree: &SpatialTree,
     image_resources: &ImageResourceTable,
     stacking_context: Option<StackingContextId>,
 ) -> Vec<DisplayItem> {
@@ -199,6 +204,12 @@ fn items_for_object(
     } else {
         ClipChainId(0)
     };
+    let local_visual_rect = Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height);
+    let visual_rect = spatial_tree
+        .nodes
+        .get(index)
+        .map(|node| node.world_transform.map_rect(local_visual_rect))
+        .unwrap_or(slot.frame);
     let mut items = Vec::new();
     if let Some(background) = object.style.background {
         items.push(DisplayItem {
@@ -206,7 +217,7 @@ fn items_for_object(
             spatial_id: SpatialNodeId(index as u32),
             clip_chain_id,
             stacking_context,
-            visual_rect: slot.frame,
+            visual_rect,
             payload: if object.style.corner_radius > 0.0 {
                 DisplayItemPayload::FillRoundedRect {
                     rect: Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height),
@@ -232,14 +243,14 @@ fn items_for_object(
             spatial_id: SpatialNodeId(index as u32),
             clip_chain_id,
             stacking_context,
-            visual_rect: slot.frame,
+            visual_rect,
             payload: DisplayItemPayload::TextRun(DisplayTextRun {
                 position: Point::new(
                     object.style.padding.left,
                     object.style.padding.top + text_layout.metrics.ascent,
                 ),
                 layout: text_layout,
-                color: object.style.foreground,
+                color: object.style.text.color,
             }),
         });
     }
@@ -253,7 +264,7 @@ fn items_for_object(
             spatial_id: SpatialNodeId(index as u32),
             clip_chain_id,
             stacking_context,
-            visual_rect: slot.frame,
+            visual_rect,
             payload: DisplayItemPayload::Image(DisplayImage::new_rgba8(
                 ImageCacheKey(resource_key.0),
                 Rect::new(0.0, 0.0, slot.frame.size.width, slot.frame.size.height),

@@ -94,7 +94,17 @@ pub(super) fn render_offscreen_context(
         return;
     }
     let requested_texture_scene_bounds = raster_scene_rect;
-    let cache_hit_entry = offscreen_context_cache.get(context_id);
+    // Effects like blur/drop-shadow need neighborhood samples outside the currently visible tile.
+    // Reusing a progressively-grown patch cache and compositing each tile immediately causes the
+    // earlier tiles to sample from an incomplete texture, which shows up as tile seams and
+    // incorrect bleed. Keep the patch cache for pure offscreen layers, but render effect layers
+    // tile-locally for correctness.
+    let allow_patch_cache = context.effects.is_empty();
+    let cache_hit_entry = if allow_patch_cache {
+        offscreen_context_cache.get(context_id)
+    } else {
+        None
+    };
     let requested_texture_width = requested_texture_scene_bounds.size.width.max(1.0).ceil() as u64;
     let requested_texture_height =
         requested_texture_scene_bounds.size.height.max(1.0).ceil() as u64;
@@ -126,7 +136,7 @@ pub(super) fn render_offscreen_context(
         offscreen_scope_ms,
         cache_hit,
         covered_rect,
-    ) = if let Some(entry) = cache_hit_entry {
+    ) = if let Some(entry) = cache_hit_entry.clone() {
         if rect_contains_rect(entry.covered_rect, raster_scene_rect) {
             (
                 entry.texture,
@@ -212,16 +222,18 @@ pub(super) fn render_offscreen_context(
                     )
                 })
                 .sum();
-            offscreen_context_cache.insert(
-                context_id,
-                CachedOffscreenContext {
-                    texture: texture.clone(),
-                    texture_scene_bounds,
-                    texture_width,
-                    texture_height,
-                    covered_rect: patch_scene_rect,
-                },
-            );
+            if allow_patch_cache {
+                offscreen_context_cache.insert(
+                    context_id,
+                    CachedOffscreenContext {
+                        texture: texture.clone(),
+                        texture_scene_bounds,
+                        texture_width,
+                        texture_height,
+                        covered_rect: patch_scene_rect,
+                    },
+                );
+            }
             (
                 texture,
                 texture_scene_bounds,
@@ -265,16 +277,18 @@ pub(super) fn render_offscreen_context(
             offscreen_context_cache,
             false,
         );
-        offscreen_context_cache.insert(
-            context_id,
-            CachedOffscreenContext {
-                texture: texture.clone(),
-                texture_scene_bounds,
-                texture_width,
-                texture_height,
-                covered_rect: texture_scene_bounds,
-            },
-        );
+        if allow_patch_cache {
+            offscreen_context_cache.insert(
+                context_id,
+                CachedOffscreenContext {
+                    texture: texture.clone(),
+                    texture_scene_bounds,
+                    texture_width,
+                    texture_height,
+                    covered_rect: texture_scene_bounds,
+                },
+            );
+        }
         (
             texture,
             texture_scene_bounds,
@@ -288,25 +302,29 @@ pub(super) fn render_offscreen_context(
         )
     };
 
-    let composite_rect = parent_transform.map_rect(visible_scene_rect);
+    // Composite the padded raster rect back into the parent scope, then rely on the parent/tile
+    // scissor to clip to the actually visible region. This preserves blur/shadow sampling across
+    // tile boundaries instead of reapplying effects on a tightly cropped visible rect.
+    let composite_source_scene_rect = raster_scene_rect;
+    let composite_rect = parent_transform.map_rect(composite_source_scene_rect);
     let composite_scissor = intersect_scissor(
         parent_scissor,
         scissor_for_rect(composite_rect, viewport_width, viewport_height),
     );
     encoder.set_scissor_rect(composite_scissor);
     let uv_min = [
-        ((visible_scene_rect.origin.x - cached_texture_scene_bounds.origin.x)
+        ((composite_source_scene_rect.origin.x - cached_texture_scene_bounds.origin.x)
             / cached_texture_scene_bounds.size.width.max(1.0))
         .clamp(0.0, 1.0),
-        ((visible_scene_rect.origin.y - cached_texture_scene_bounds.origin.y)
+        ((composite_source_scene_rect.origin.y - cached_texture_scene_bounds.origin.y)
             / cached_texture_scene_bounds.size.height.max(1.0))
         .clamp(0.0, 1.0),
     ];
     let uv_max = [
-        ((visible_scene_rect.right() - cached_texture_scene_bounds.origin.x)
+        ((composite_source_scene_rect.right() - cached_texture_scene_bounds.origin.x)
             / cached_texture_scene_bounds.size.width.max(1.0))
         .clamp(0.0, 1.0),
-        ((visible_scene_rect.bottom() - cached_texture_scene_bounds.origin.y)
+        ((composite_source_scene_rect.bottom() - cached_texture_scene_bounds.origin.y)
             / cached_texture_scene_bounds.size.height.max(1.0))
         .clamp(0.0, 1.0),
     ];

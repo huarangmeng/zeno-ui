@@ -39,10 +39,11 @@ pub(super) fn render_item(
     render_lookups: &RenderLookupTables,
     image_texture_cache: &mut ImageTextureCache,
 ) {
-    let transform = parent_transform.then(world_transform_with_lookups(
-        render_lookups,
-        item.spatial_id,
-    ));
+    // NOTE: `Transform2D::then` composes as "apply self, then next".
+    // We want the tile/root translation (`parent_transform`) to be applied AFTER the item's world
+    // transform, otherwise the translation gets rotated/scaled by the item's transform and causes
+    // repeated/stretched content across tiles when nodes animate transforms.
+    let transform = world_transform_with_lookups(render_lookups, item.spatial_id).then(parent_transform);
     let scissor = intersect_scissor(
         parent_scissor,
         clip_scissor_with_lookups(
