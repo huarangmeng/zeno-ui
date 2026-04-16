@@ -487,6 +487,68 @@ fn text_align_modifier_flows_into_display_list() {
 }
 
 #[test]
+fn constrained_text_align_shifts_glyph_positions() {
+    let node = text("Hello").width(120.0).text_align(crate::TextAlign::Center);
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(measured.frame.size.width, 120.0);
+    assert_eq!(text_layout.metrics.width, 120.0);
+    assert!(text_layout.glyphs.first().expect("first glyph").x > 0.0);
+}
+
+#[test]
+fn max_lines_and_ellipsis_truncate_text_layout() {
+    let node = text("wrap me into a single visible line")
+        .width(40.0)
+        .max_lines(1)
+        .ellipsis();
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.metrics.line_count, 1);
+    assert_eq!(text_layout.glyphs.last().expect("ellipsis glyph").glyph, '…');
+    assert!(text_layout.metrics.width <= 40.0);
+}
+
+#[test]
+fn soft_wrap_false_keeps_text_on_single_line() {
+    let node = text("wrap me please")
+        .width(40.0)
+        .soft_wrap(false)
+        .text_overflow(crate::TextOverflow::Clip);
+    let measured =
+        crate::layout::measure_node(&node, Point::new(0.0, 0.0), Size::new(320.0, 240.0), &FallbackTextSystem);
+    let crate::layout::MeasuredKind::Text(text_layout) = measured.kind else {
+        panic!("text node should measure into text layout");
+    };
+
+    assert_eq!(text_layout.metrics.line_count, 1);
+}
+
+#[test]
+fn text_style_merge_preserves_new_paragraph_fields() {
+    let base = TextStyle::default().soft_wrap(false).overflow(crate::TextOverflow::Clip);
+    let overlay = TextStyle::default()
+        .max_lines(2)
+        .ellipsis()
+        .text_align(crate::TextAlign::End);
+    let mut merged = base.clone();
+    merged.merge(&overlay);
+
+    assert_eq!(merged.max_lines, Some(2));
+    assert_eq!(merged.soft_wrap, Some(false));
+    assert_eq!(merged.overflow, Some(crate::TextOverflow::Ellipsis));
+    assert_eq!(merged.text_align, Some(crate::TextAlign::End));
+}
+
+#[test]
 fn text_style_merge_preserves_unoverwritten_fields() {
     let base = TextStyle::default()
         .font_family("Inter")

@@ -166,7 +166,10 @@ fn style_change_reason(
         && (previous_style.text.font_size != current_style.text.font_size
             || previous_style.text.font != current_style.text.font
             || previous_style.text.letter_spacing != current_style.text.letter_spacing
-            || previous_style.text.line_height != current_style.text.line_height);
+            || previous_style.text.line_height != current_style.text.line_height
+            || previous_style.text.max_lines != current_style.text.max_lines
+            || previous_style.text.soft_wrap != current_style.text.soft_wrap
+            || previous_style.text.overflow != current_style.text.overflow);
     let text_paint_changed = text_node
         && (previous_style.text.color != current_style.text.color
             || previous_style.text.text_align != current_style.text.text_align);

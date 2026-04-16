@@ -8,6 +8,12 @@ pub enum TextAlign {
     End,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TextOverflow {
+    Clip,
+    Ellipsis,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextStyle {
     pub color: Color,
@@ -16,6 +22,9 @@ pub struct TextStyle {
     pub letter_spacing: Option<f32>,
     pub line_height: Option<f32>,
     pub text_align: Option<TextAlign>,
+    pub max_lines: Option<usize>,
+    pub soft_wrap: Option<bool>,
+    pub overflow: Option<TextOverflow>,
 }
 
 impl Default for TextStyle {
@@ -27,6 +36,9 @@ impl Default for TextStyle {
             letter_spacing: None,
             line_height: None,
             text_align: None,
+            max_lines: None,
+            soft_wrap: None,
+            overflow: None,
         }
     }
 }
@@ -92,6 +104,30 @@ impl TextStyle {
         self
     }
 
+    #[must_use]
+    pub fn max_lines(mut self, max_lines: usize) -> Self {
+        self.max_lines = Some(max_lines.max(1));
+        self
+    }
+
+    #[must_use]
+    pub fn soft_wrap(mut self, soft_wrap: bool) -> Self {
+        self.soft_wrap = Some(soft_wrap);
+        self
+    }
+
+    #[must_use]
+    pub fn overflow(mut self, overflow: TextOverflow) -> Self {
+        self.overflow = Some(overflow);
+        self
+    }
+
+    #[must_use]
+    pub fn ellipsis(mut self) -> Self {
+        self.overflow = Some(TextOverflow::Ellipsis);
+        self
+    }
+
     pub fn merge(&mut self, other: &Self) {
         self.color = other.color;
         if other.font_size.is_some() {
@@ -117,6 +153,15 @@ impl TextStyle {
         }
         if other.text_align.is_some() {
             self.text_align = other.text_align;
+        }
+        if other.max_lines.is_some() {
+            self.max_lines = other.max_lines;
+        }
+        if other.soft_wrap.is_some() {
+            self.soft_wrap = other.soft_wrap;
+        }
+        if other.overflow.is_some() {
+            self.overflow = other.overflow;
         }
     }
 }

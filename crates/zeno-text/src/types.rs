@@ -60,7 +60,7 @@ impl FontFeatures {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FontDescriptor {
     pub family: String,
     pub weight: FontWeight,
@@ -79,11 +79,27 @@ impl Default for FontDescriptor {
     }
 }
 
+impl FontDescriptor {
+    #[must_use]
+    pub fn cache_hash(&self) -> u64 {
+        stable_hash(self.family.as_bytes())
+            ^ ((self.weight.0 as u64) << 32)
+            ^ ((self.italic as u64) << 48)
+            ^ ((self.features.bits() as u64) << 56)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextAlign {
     Start,
     Center,
     End,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextOverflow {
+    Clip,
+    Ellipsis,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +111,10 @@ pub struct TextParagraph {
     pub letter_spacing: Option<f32>,
     pub line_height: Option<f32>,
     pub text_align: Option<TextAlign>,
+    pub max_lines: Option<usize>,
+    pub soft_wrap: bool,
+    pub overflow: TextOverflow,
+    pub alignment_width: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -109,6 +129,10 @@ pub struct TextParagraphKey {
     pub letter_spacing_bits: Option<u32>,
     pub line_height_bits: Option<u32>,
     pub text_align_bits: Option<u8>,
+    pub max_lines: Option<usize>,
+    pub soft_wrap: bool,
+    pub overflow_bits: u8,
+    pub alignment_width_bits: Option<u32>,
 }
 
 impl TextParagraph {
@@ -122,6 +146,10 @@ impl TextParagraph {
             letter_spacing: None,
             line_height: None,
             text_align: None,
+            max_lines: None,
+            soft_wrap: true,
+            overflow: TextOverflow::Clip,
+            alignment_width: None,
         }
     }
 
@@ -138,6 +166,10 @@ impl TextParagraph {
             letter_spacing_bits: self.letter_spacing.map(f32::to_bits),
             line_height_bits: self.line_height.map(f32::to_bits),
             text_align_bits: self.text_align.map(|a| a as u8),
+            max_lines: self.max_lines,
+            soft_wrap: self.soft_wrap,
+            overflow_bits: self.overflow as u8,
+            alignment_width_bits: self.alignment_width.map(f32::to_bits),
         }
     }
 }
@@ -190,6 +222,14 @@ impl TextParagraphKey {
             Some(b) => (b as u64) << 24,
             None => 0u64,
         };
+        let ml_hash = match self.max_lines {
+            Some(lines) => (lines as u64).rotate_left(29),
+            None => 0u64,
+        };
+        let aw_hash = match self.alignment_width_bits {
+            Some(bits) => (bits as u64).rotate_left(11),
+            None => 0u64,
+        };
         self.text_hash
             ^ self.family_hash.rotate_left(7)
             ^ ((self.weight.0 as u64) << 32)
@@ -200,6 +240,10 @@ impl TextParagraphKey {
             ^ ls_hash
             ^ lh_hash
             ^ ta_hash
+            ^ ml_hash
+            ^ ((self.soft_wrap as u64) << 20)
+            ^ ((self.overflow_bits as u64) << 28)
+            ^ aw_hash
     }
 }
 

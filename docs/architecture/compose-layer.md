@@ -13,7 +13,7 @@
 - `Node` 作为统一声明式节点。
 - `zeno-ui` 保留节点模型、modifier、layout、retained tree 与 display-list 翻译；`text / container / box / column / row / spacer` 等首批基础构件已迁入 `zeno-foundation`，作为更接近 Compose Foundation 的稳定入口。
 - `zeno-foundation` 已补齐第一批基础交互组件：`button / toggle_button / checkbox / switch / scroll`，当前以受控组件形态提供默认组合结构、默认视觉样式与交互角色标记，状态仍由上层 `App` 持有；`button / toggle_button / checkbox / switch` 已切到类型化控件包装，label/content slot 与 `on_click / checked / selected / on_checked_change / on_toggle` 等控件专属 API 收敛在 foundation 层，而不是暴露为通用 `Node` modifier。
-- `Modifier` 链是节点装饰的唯一真相源；padding、background、corner radius、spacing、显式/约束尺寸、content alignment、stack arrangement、stack cross-axis alignment、clip、2D transform、transform origin、opacity、layer、effect 以及 interaction role / action / checked / focus / text-input capability 都在布局、绘制或 runtime 事件阶段按需解析与透传。文本相关能力不再继续堆叠零散 modifier，而是通过 `TextStyle` 汇总 `color / font_size / font_family / font_weight / italic / font_feature(s) / letter_spacing / line_height / text_align` 等排版语义，再由 `Style.text` 单一路径进入 layout / display-list / backend；`Modifier::TextStyle` 采用 merge 语义（仅覆盖已设置的字段），同时保留 `FontFamily / FontWeight / Italic / LetterSpacing / LineHeight / TextAlign` 等细粒度 modifier 作为独立入口。
+- `Modifier` 链是节点装饰的唯一真相源；padding、background、corner radius、spacing、显式/约束尺寸、content alignment、stack arrangement、stack cross-axis alignment、clip、2D transform、transform origin、opacity、layer、effect 以及 interaction role / action / checked / focus / text-input capability 都在布局、绘制或 runtime 事件阶段按需解析与透传。文本相关能力不再继续堆叠零散 modifier，而是通过 `TextStyle` 汇总 `color / font_size / font_family / font_weight / italic / font_feature(s) / letter_spacing / line_height / text_align / max_lines / soft_wrap / overflow` 等排版语义，再由 `Style.text` 单一路径进入 layout / display-list / backend；`Modifier::TextStyle` 采用 merge 语义（仅覆盖已设置的字段），同时保留 `FontFamily / FontWeight / Italic / LetterSpacing / LineHeight / TextAlign / MaxLines / SoftWrap / TextOverflow` 等细粒度 modifier 作为独立入口。
 - `ComposeRenderer` / `ComposeEngine` 负责把节点树测量并转换为 `RetainedDisplayList + DisplayList` 更新；测试侧也已经统一改为 `DisplayList` 断言。
 - 当前文本测量依赖 `TextSystem`；默认门面路径可选择 fallback/system shaping 实现。
 
@@ -35,7 +35,7 @@
 - 文本布局结果在 `DisplayList` 发射阶段仍会复制，缺少缓存与共享引用结构。
 - 跨 crate 协议层已切换为 `LayerObject/RenderObject`，`node_id` 仅在调试/对照表边界可见；runtime identity 已全面切换为对象表稠密索引。
 - 文本对象尚未独立维护 `TextObjectTable`（paragraph hash / shaping handle / glyph run handle），当前文本测量结果在 layout / display-list / backend 之间仍存在复制；后续可引入独立文本对象表以实现 paragraph cache、glyph cache 的跨阶段共享。
-- `TextStyle` 当前已覆盖 `color / font_size / font_family / font_weight / italic / font_feature(s) / letter_spacing / line_height / text_align`，但 `Typography` 主题层与 OpenType 特性的真实 shaping 映射仍待补齐。
+- `TextStyle` 当前已覆盖 `color / font_size / font_family / font_weight / italic / font_feature(s) / letter_spacing / line_height / text_align / max_lines / soft_wrap / overflow`；系统 shaping 已按 `family / weight / italic / feature` 选择字体并传入 OpenType feature，但 `Typography` 主题层、bidi/locale/fallback run 与富文本 span 仍待补齐。
 
 ## Next Steps
 - 继续把当前“最小容器根 + 结构 patch”策略扩展到更复杂的 layer/effect tree，进一步减少高阶结构编辑时的 patch 面积。

@@ -1,7 +1,7 @@
 use zeno_core::Color;
 use zeno_text::{FontFeature, FontFeatures, FontWeight};
 
-use crate::{EdgeInsets, Style, TextAlign, TextStyle};
+use crate::{EdgeInsets, Style, TextAlign, TextOverflow, TextStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ClipMode {
@@ -164,6 +164,9 @@ pub enum Modifier {
     LetterSpacing(f32),
     LineHeight(f32),
     TextAlign(TextAlign),
+    MaxLines(usize),
+    SoftWrap(bool),
+    TextOverflow(TextOverflow),
     CornerRadius(f32),
     Spacing(f32),
     FixedSize { width: f32, height: f32 },

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use skia_safe as sk;
 use zeno_core::{Color, Point};
 use zeno_scene::SceneResourceKey;
-use zeno_text::preferred_font_families;
+use zeno_text::{FontDescriptor, preferred_font_families};
 
 use crate::canvas::mapping::sk_color;
 
@@ -36,7 +36,7 @@ impl SkiaTextCache {
     pub(crate) fn resolve_font(
         &mut self,
         resource_key: Option<SceneResourceKey>,
-        requested_family: &str,
+        descriptor: &FontDescriptor,
         font_size: f32,
     ) -> sk::Font {
         if let Some(resource_key) = resource_key {
@@ -47,30 +47,30 @@ impl SkiaTextCache {
 
             // 文本资源键稳定时直接复用字体对象，避免一帧内重复走系统字体解析。
             let font = build_font(
-                self.resolve_typeface(Some(resource_key), requested_family),
+                self.resolve_typeface(Some(resource_key), descriptor),
                 font_size,
             );
             self.fonts.insert(resource_key, font.clone());
             return font;
         }
-        build_font(self.resolve_typeface(None, requested_family), font_size)
+        build_font(self.resolve_typeface(None, descriptor), font_size)
     }
 
     fn resolve_typeface(
         &mut self,
         resource_key: Option<SceneResourceKey>,
-        requested_family: &str,
+        descriptor: &FontDescriptor,
     ) -> Option<sk::Typeface> {
         if let Some(resource_key) = resource_key {
             if let Some(typeface) = self.typefaces.get(&resource_key) {
                 self.stats.typeface_hits += 1;
                 return typeface.clone();
             }
-            let resolved = resolve_typeface_uncached(requested_family);
+            let resolved = resolve_typeface_uncached(descriptor);
             self.typefaces.insert(resource_key, resolved.clone());
             return resolved;
         }
-        resolve_typeface_uncached(requested_family)
+        resolve_typeface_uncached(descriptor)
     }
 }
 
@@ -86,7 +86,7 @@ pub(crate) fn draw_text_layout(
     paint.set_color(sk_color(color));
     let mut font = text_cache.resolve_font(
         Some(SceneResourceKey(layout.cache_key().stable_hash())),
-        &layout.paragraph.font.family,
+        &layout.paragraph.font,
         layout.paragraph.font_size.max(12.0),
     );
     font.set_edging(sk::font::Edging::AntiAlias);
@@ -119,15 +119,27 @@ fn build_font(typeface: Option<sk::Typeface>, font_size: f32) -> sk::Font {
     }
 }
 
-fn resolve_typeface_uncached(requested_family: &str) -> Option<sk::Typeface> {
+fn resolve_typeface_uncached(descriptor: &FontDescriptor) -> Option<sk::Typeface> {
     let font_mgr = sk::FontMgr::default();
-    for family in preferred_font_families(requested_family) {
-        if let Some(typeface) = font_mgr.match_family_style(family, sk::FontStyle::normal()) {
+    for family in preferred_font_families(&descriptor.family) {
+        if let Some(typeface) = font_mgr.match_family_style(family, font_style(descriptor)) {
             return Some(typeface);
         }
     }
 
     None
+}
+
+fn font_style(descriptor: &FontDescriptor) -> sk::FontStyle {
+    sk::FontStyle::new(
+        i32::from(descriptor.weight.0).into(),
+        sk::font_style::Width::NORMAL,
+        if descriptor.italic {
+            sk::font_style::Slant::Italic
+        } else {
+            sk::font_style::Slant::Upright
+        },
+    )
 }
 
 fn flush_glyph_run(

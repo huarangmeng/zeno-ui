@@ -10,6 +10,7 @@ use crate::{
     style::{Axis, EdgeInsets, Style},
     text_style::TextAlign,
     TextStyle,
+    TextOverflow,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -143,6 +144,26 @@ impl Node {
     #[must_use]
     pub fn text_align(self, align: TextAlign) -> Self {
         self.modifier(Modifier::TextAlign(align))
+    }
+
+    #[must_use]
+    pub fn max_lines(self, max_lines: usize) -> Self {
+        self.modifier(Modifier::MaxLines(max_lines))
+    }
+
+    #[must_use]
+    pub fn soft_wrap(self, soft_wrap: bool) -> Self {
+        self.modifier(Modifier::SoftWrap(soft_wrap))
+    }
+
+    #[must_use]
+    pub fn text_overflow(self, overflow: TextOverflow) -> Self {
+        self.modifier(Modifier::TextOverflow(overflow))
+    }
+
+    #[must_use]
+    pub fn ellipsis(self) -> Self {
+        self.modifier(Modifier::TextOverflow(TextOverflow::Ellipsis))
     }
 
     #[must_use]

@@ -126,6 +126,9 @@ impl Style {
             Modifier::LetterSpacing(spacing) => self.text.letter_spacing = Some(*spacing),
             Modifier::LineHeight(height) => self.text.line_height = Some((*height).max(0.0)),
             Modifier::TextAlign(align) => self.text.text_align = Some(*align),
+            Modifier::MaxLines(lines) => self.text.max_lines = Some((*lines).max(1)),
+            Modifier::SoftWrap(soft_wrap) => self.text.soft_wrap = Some(*soft_wrap),
+            Modifier::TextOverflow(overflow) => self.text.overflow = Some(*overflow),
             Modifier::CornerRadius(radius) => self.corner_radius = *radius,
             Modifier::Spacing(spacing) => self.spacing = *spacing,
             Modifier::FixedSize { width, height } => {

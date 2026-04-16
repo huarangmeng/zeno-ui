@@ -2,7 +2,7 @@ use fontdue::Font;
 use metal::{Device, MTLScissorRect, RenderPipelineState};
 use zeno_core::Transform2D;
 use zeno_scene::{DisplayItem, DisplayItemPayload, DisplayList};
-use zeno_text::GlyphRasterCache;
+use zeno_text::{GlyphRasterCache, load_system_font_for};
 
 use super::super::draw::{
     build_composite_vertices, build_shape_vertices, build_text_vertices, make_text_texture,
@@ -102,13 +102,15 @@ pub(super) fn render_item(
             }
         }
         DisplayItemPayload::TextRun(text) => {
-            let Some(font) = font else {
+            let resolved_font = load_system_font_for(&text.layout.paragraph.font);
+            let Some(font) = resolved_font.as_ref().or(font) else {
                 encoder.set_scissor_rect(parent_scissor);
                 return;
             };
+            let font_hash = text.layout.paragraph.font.cache_hash();
             let Some((mask, width, height)) =
                 rasterize_layout(&text.layout, |glyph_id, glyph, font_size| {
-                    Some(glyph_cache.get_or_rasterize(font, glyph_id, glyph, font_size))
+                    Some(glyph_cache.get_or_rasterize(font, font_hash, glyph_id, glyph, font_size))
                 })
             else {
                 encoder.set_scissor_rect(parent_scissor);

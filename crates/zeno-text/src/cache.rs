@@ -24,6 +24,7 @@ pub trait TextCache: Send + Sync {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GlyphRasterKey {
+    pub font_hash: u64,
     pub glyph_id: u16,
     pub glyph: char,
     pub font_size_bits: u32,
@@ -103,8 +104,9 @@ impl TextCache for ParagraphTextCache {
 
 impl GlyphRasterCache {
     #[must_use]
-    pub fn glyph_key(glyph_id: u16, glyph: char, font_size: f32) -> GlyphRasterKey {
+    pub fn glyph_key(font_hash: u64, glyph_id: u16, glyph: char, font_size: f32) -> GlyphRasterKey {
         GlyphRasterKey {
+            font_hash,
             glyph_id,
             glyph,
             font_size_bits: font_size.max(12.0).to_bits(),
@@ -114,11 +116,12 @@ impl GlyphRasterCache {
     pub fn get_or_rasterize(
         &self,
         font: &Font,
+        font_hash: u64,
         glyph_id: u16,
         glyph: char,
         font_size: f32,
     ) -> CachedGlyph {
-        let key = Self::glyph_key(glyph_id, glyph, font_size);
+        let key = Self::glyph_key(font_hash, glyph_id, glyph, font_size);
         let mut inner = self.inner.lock().expect("glyph raster cache");
         if let Some(cached) = inner.glyphs.get(&key).cloned() {
             inner.hits += 1;

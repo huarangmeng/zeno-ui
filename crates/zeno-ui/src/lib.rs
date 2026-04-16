@@ -34,6 +34,7 @@ pub use render::{
 pub use style::{Axis, EdgeInsets, Style};
 pub use text_style::TextStyle;
 pub use text_style::TextAlign;
+pub use text_style::TextOverflow;
 pub use zeno_core::Color;
 pub use zeno_text::{FontFeature, FontFeatures, FontWeight};
 

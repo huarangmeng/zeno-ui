@@ -198,6 +198,23 @@ fn measure_task(
                     crate::TextAlign::Center => zeno_text::TextAlign::Center,
                     crate::TextAlign::End => zeno_text::TextAlign::End,
                 }),
+                max_lines: object.style.text.max_lines,
+                soft_wrap: object.style.text.soft_wrap.unwrap_or(true),
+                overflow: match object.style.text.overflow.unwrap_or(crate::TextOverflow::Clip) {
+                    crate::TextOverflow::Clip => zeno_text::TextOverflow::Clip,
+                    crate::TextOverflow::Ellipsis => zeno_text::TextOverflow::Ellipsis,
+                },
+                alignment_width: if object.style.text.text_align.is_some()
+                    && (object.style.width.is_some()
+                        || object.style.max_width.is_some()
+                        || object.style.text.max_lines.is_some()
+                        || object.style.text.overflow.is_some()
+                        || object.style.text.soft_wrap == Some(false))
+                {
+                    Some(inner_available.width.max(1.0))
+                } else {
+                    None
+                },
             };
             let text_layout_started = Instant::now();
             let layout = text_system.layout(paragraph);
